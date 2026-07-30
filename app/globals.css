@@ -1,0 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #EEE9DF;
+  color: #1B2632;
+  font-family: 'Inter', sans-serif;
+}
+
+.chiffre {
+  font-family: 'IBM Plex Mono', monospace;
+}
