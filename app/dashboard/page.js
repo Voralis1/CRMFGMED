@@ -249,13 +249,13 @@ export default function DashboardFGMED() {
 
       const role = roleData?.role;
 
-      // 🚫 Rediriger l'agent vers son centre d'appel
+      //  Rediriger l'agent vers son centre d'appel
       if (role === 'agent') {
         router.push('/centre-appel');
         return;
       }
 
-      // 🚫 Rediriger le livreur vers son espace de livraison
+      //  Rediriger le livreur vers son espace de livraison
       if (role === 'livreur') {
         router.push('/livraisons');
         return;

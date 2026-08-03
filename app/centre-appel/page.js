@@ -100,10 +100,15 @@ export default function CentreAppelAgent() {
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
 
-    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
-    let requeteData = supabase.from('commandes').select('id, lead_id, date_commande, created_at, produit, quantite, statut_confirmation, client_nom, client_telephone, ville_zone, pays(nom)')
+    // 1. Charger la liste de tous les pays configurés en base
+    const { data: paysList } = await supabase
+      .from('pays')
+      .select('id, nom, code, devise')
 
-    // 1. Appliquer les filtres d'onglets
+    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
+    let requeteData = supabase.from('commandes').select('id, lead_id, date_commande, created_at, produit, quantite, statut_confirmation, client_nom, client_telephone, ville_zone, pays(id, nom, code, devise)')
+
+    // 2. Appliquer les filtres d'onglets
     if (onglet === 'a_traiter') {
       requeteBase = requeteBase.is('statut_confirmation', null)
       requeteData = requeteData.is('statut_confirmation', null)
@@ -112,7 +117,7 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.not('statut_confirmation', 'is', null)
     }
 
-    // 2. Appliquer les filtres de date de manière stricte (avant la pagination)
+    // 3. Appliquer les filtres de date
     if (dateDebut) {
       requeteBase = requeteBase.gte('created_at', dateDebut)
       requeteData = requeteData.gte('created_at', dateDebut)
@@ -122,7 +127,7 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.lte('created_at', `${dateFin}T23:59:59`)
     }
 
-    // 3. Appliquer le tri et la pagination
+    // 4. Appliquer le tri et la pagination
     requeteData = requeteData
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
@@ -131,8 +136,48 @@ export default function CentreAppelAgent() {
     const { count } = await requeteBase
     const { data } = await requeteData
 
+    // 5. Détection ultra-stricte et exacte par indicatif téléphonique (Regex avec ^)
+    const commandesIntelligentes = (data || []).map(cmd => {
+      let tel = cmd.client_telephone ? cmd.client_telephone.trim().replace(/\s+/g, '') : ''
+      if (tel.startsWith('00')) {
+        tel = '+' + tel.slice(2)
+      }
+
+      let paysNomParDefaut = null
+
+      if (/^(\+?223)/.test(tel)) {
+        paysNomParDefaut = 'Mali'
+      } else if (/^(\+?221)/.test(tel)) {
+        paysNomParDefaut = 'Sénégal'
+      } else if (/^(\+?224)/.test(tel)) {
+        paysNomParDefaut = 'Guinée'
+      } else if (/^(\+?226)/.test(tel)) {
+        paysNomParDefaut = 'Burkina Faso'
+      } else if (/^(\+?241)/.test(tel)) {
+        paysNomParDefaut = 'Gabon'
+      } else if (/^(\+?242|\+?243)/.test(tel)) {
+        paysNomParDefaut = 'Congo'
+      } else if (/^(\+?237)/.test(tel)) {
+        paysNomParDefaut = 'Cameroun'
+      } else if (/^(\+?244)/.test(tel)) {
+        paysNomParDefaut = 'Angola'
+      }
+
+      let paysTrouve = null
+      if (paysNomParDefaut && paysList) {
+        paysTrouve = paysList.find(p => p.nom.toLowerCase().includes(paysNomParDefaut.toLowerCase()))
+      }
+
+      const paysFinal = paysTrouve || (paysNomParDefaut ? { nom: paysNomParDefaut } : (cmd.pays?.nom ? cmd.pays : { nom: 'Non spécifié' }))
+
+      return {
+        ...cmd,
+        pays: paysFinal
+      }
+    })
+
     setTotalItems(count || 0)
-    setCommandes(data || [])
+    setCommandes(commandesIntelligentes)
     setLoading(false)
   }
 
@@ -220,7 +265,7 @@ export default function CentreAppelAgent() {
             </button>
           </div>
 
-          {/* Filtre de dates stylisé pour s'intégrer au design */}
+          {/* Filtre de dates */}
           <div className="flex items-center gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm">
             <div className="flex items-center gap-2 px-3 py-1.5">
               <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest">Du</span>
@@ -254,7 +299,6 @@ export default function CentreAppelAgent() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                  {/* AJOUT : Toutes les colonnes demandées séparément */}
                   <th className="px-6 py-4">Lead ID</th>
                   <th className="px-6 py-4">Date</th>
                   <th className="px-6 py-4">Client</th>
@@ -268,7 +312,6 @@ export default function CentreAppelAgent() {
               <tbody className="divide-y divide-[#C9C1B1]/30">
                 {loading ? (
                   <tr>
-                    {/* colSpan="8" car il y a maintenant 8 colonnes */}
                     <td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">
                       Chargement...
                     </td>
@@ -295,7 +338,7 @@ export default function CentreAppelAgent() {
                           {cmd.date_commande ? new Date(cmd.date_commande).toLocaleDateString('fr-FR') : (cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-FR') : '-')}
                         </td>
 
-                        {/* 3. Client (Nom + Téléphone) */}
+                        {/* 3. Client */}
                         <td className="px-6 py-4">
                           <div className="font-bold text-[#1B2632]">
                             {cmd.client_nom || 'Client inconnu'}
