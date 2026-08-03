@@ -13,7 +13,9 @@ const TOUS_LES_LIENS = [
   { href: '/livraisons', label: 'Livraisons', roles: ['admin', 'livreur'] },
   { href: '/paiements', label: 'Paiements', roles: ['admin', 'livreur'] },
   { href: '/utilisateurs', label: 'Utilisateurs', roles: ['admin'] },
-  { href: '/parametres', label: ' Paramètres', roles: ['admin'] },
+  { href: '/parametres', label: 'Paramètres', roles: ['admin'] },
+  // Ajout du lien Profil (accessible par la plupart des rôles)
+  { href: '/profile', label: 'Profil', roles: ['admin', 'agent', 'livreur', 'superviseur', 'commercial', 'comptable', 'chef_equipe', 'support'] },
 ]
 
 export default function NavBar({ isOpen, toggleMenu }) {
