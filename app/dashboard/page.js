@@ -49,16 +49,16 @@ function formatMontant(n, devise) {
 // ==================================================================
 
 // AJOUT : Prise en compte des dates personnalisées
+// AJOUT : Prise en compte des dates personnalisées et tri chronologique
 async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
   // 1. Total exact des commandes
   const { count: vraiTotalCommandes } = await supabase
     .from("commandes")
     .select("*", { count: "exact", head: true });
 
-  // Calcul de la date de début selon la période sélectionnée
   const maintenant = new Date();
   let dateDebut = new Date(0); 
-  let dateFin = new Date(); // Par défaut, jusqu'à maintenant
+  let dateFin = new Date();
 
   if (periode === "Aujourd'hui") {
     dateDebut = new Date();
@@ -70,7 +70,6 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     dateDebut = new Date();
     dateDebut.setDate(maintenant.getDate() - 30);
   } else if (periode === "Personnalisé") {
-    // Application stricte des dates choisies par l'utilisateur
     if (dateDebutPerso) dateDebut = new Date(dateDebutPerso);
     if (dateFinPerso) {
       dateFin = new Date(dateFinPerso);
@@ -78,7 +77,6 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     }
   }
 
-  // 2. Récupération ciblée du nombre exact de commandes créées aujourd'hui (indépendant de la limite de 5000)
   const todayYMD = `${maintenant.getFullYear()}-${String(maintenant.getMonth() + 1).padStart(2, '0')}-${String(maintenant.getDate()).padStart(2, '0')}`;
   
   const { count: commandesAujourdhuiExact } = await supabase
@@ -86,24 +84,28 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     .select("*", { count: "exact", head: true })
     .gte("created_at", `${todayYMD}T00:00:00`);
 
-  // 3. Récupération croisée des données pour les graphiques et autres KPIs
+  // CORRECTION ICI : Ajout de .order('created_at', { ascending: false }) pour garantir d'avoir les nouvelles données
   const [resCmds, resLivs, resPays, resAppels, resAgents] = await Promise.all([
     supabase
       .from("commandes")
       .select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit")
+      .order('created_at', { ascending: false })
       .limit(5000),
     supabase
       .from("livraisons")
       .select("statut, commande_id")
+      .order('created_at', { ascending: false })
       .limit(5000),
     supabase
       .from("paiements")
       .select("montant")
       .in("statut", ["en_attente", "encaisse", "remis"])
+      .order('created_at', { ascending: false })
       .limit(5000),
     supabase
       .from("appels")
       .select("agent_id, commande_id, created_at, statut")
+      .order('created_at', { ascending: false })
       .limit(5000),
     supabase
       .from("agents")
@@ -118,8 +120,6 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
   const agents = resAgents.data || [];
 
   const totalCmds = vraiTotalCommandes || cmds.length;
-
-  // --- CALCUL DES KPIs ---
   
   const commandesAujourdhui = commandesAujourdhuiExact !== null ? commandesAujourdhuiExact : cmds.filter((c) => {
     const dateCible = c.created_at || c.date_commande;
@@ -132,30 +132,17 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
 
   const livrees = livs.filter((l) => l.statut === "livre" || l.statut === "livrée"); 
   const tauxLivraison = livs.length > 0 ? ((livrees.length / livs.length) * 100).toFixed(1) : 0;
-
   const caEncaisse = paiements.reduce((acc, curr) => acc + (Number(curr.montant) || 0), 0);
 
-  // --- CALCUL DES GRAPHIQUES ---
-
-  // Histogramme horaire basé sur la date de l'action (mise à jour)
   const hourly = Array.from({ length: 24 }, (_, h) => ({ heure: h, confirmees: 0, annulees: 0 }));
-  
   cmds.forEach((c) => {
-    // 1. On utilise en priorité updated_at (heure de la confirmation)
     const dateAction = c.updated_at || c.created_at || c.date_commande;
     if (!dateAction) return;
-    
     const dateCmd = new Date(dateAction);
-    
-    // 2. On vérifie que l'ACTION a bien eu lieu dans la période sélectionnée
     if (dateCmd < dateDebut) return; 
-    
-    // AJOUT : Vérification de la limite supérieure pour le filtre personnalisé
     if (periode === "Personnalisé" && dateFinPerso && dateCmd > dateFin) return;
 
     const hour = dateCmd.getHours();
-    
-    // 3. On place la commande dans la bonne barre horaire
     if (c.statut_confirmation === "confirmed") {
       hourly[hour].confirmees++;
     } else if (c.statut_confirmation === "cancelled") {
@@ -163,53 +150,20 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     }
   });
 
-  // Donut livraison : Logique corrigée avec fusion stricte des doublons
   const countLivs = {};
   livs.forEach((l) => {
-    // 1. On met en minuscules et on enlève les espaces autour
-    let s = (l.statut || "en_attente").toLowerCase().trim();
-    
-    // 2. On remplace les espaces au milieu par des tirets du bas
-    s = s.replace(/\s+/g, "_");
-
-    // 3. On fusionne l'ancien statut 'expedie' avec 'en_attente'
-    if (s.includes("expedi") || s === "a_expedier") {
-      s = "en_attente";
-    }
-
-    // 4. On harmonise les accents pour "livré"
-    if (s === "livrée" || s === "livree") {
-      s = "livre";
-    }
-
-    // On incrémente le compteur propre
+    let s = (l.statut || "en_attente").toLowerCase().trim().replace(/\s+/g, "_");
+    if (s.includes("expedi") || s === "a_expedier") s = "en_attente";
+    if (s === "livrée" || s === "livree") s = "livre";
     countLivs[s] = (countLivs[s] || 0) + 1;
   });
 
-  // Noms propres pour l'affichage final
-  const labelsLivraison = {
-    "en_attente": "En attente",
-    "livre": "Livrée",
-    "injoignable": "Injoignable",
-    "retour": "Retour"
-  };
-
-  // Couleurs associées
-  const couleursLivraison = { 
-    "en_attente": "#FFB162", 
-    "livre": "#1B2632", 
-    "injoignable": "#C9C1B1", 
-    "retour": "#A35139" 
-  };
-
-  // Construction des données du donut
+  const labelsLivraison = { "en_attente": "En attente", "livre": "Livrée", "injoignable": "Injoignable", "retour": "Retour" };
+  const couleursLivraison = { "en_attente": "#FFB162", "livre": "#1B2632", "injoignable": "#C9C1B1", "retour": "#A35139" };
   const statutsLivraison = Object.entries(countLivs).map(([cle, valeur]) => ({
-    nom: labelsLivraison[cle] || cle, 
-    valeur, 
-    couleur: couleursLivraison[cle] || "#C9C1B1" 
+    nom: labelsLivraison[cle] || cle, valeur, couleur: couleursLivraison[cle] || "#C9C1B1" 
   }));
 
-  // Overview Appels
   const appelCounts = {};
   cmds.forEach((c) => {
     const s = c.statut_confirmation || "en_attente";
@@ -218,39 +172,40 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
   const labelsAppels = { 'en_attente': "En file", 'unreached': "Injoignable", 'reminder': "À rappeler", 'double': "Doublon", 'confirmed': "Confirmée", 'cancelled': "Annulée", 'spam': "Spam", 'not_active_yet': "Attente activation" };
   const overviewAppels = Object.entries(appelCounts)
     .map(([statut, valeur]) => ({
-      label: labelsAppels[statut] || statut,
-      valeur,
+      label: labelsAppels[statut] || statut, valeur,
       pct: cmds.length > 0 ? Math.round((valeur / cmds.length) * 100) : 0
-    }))
-    .sort((a, b) => b.valeur - a.valeur);
+    })).sort((a, b) => b.valeur - a.valeur);
 
-  // Top Produits
   const prodCounts = {};
   cmds.forEach((c) => {
     if (!c.produit) return;
     prodCounts[c.produit] = (prodCounts[c.produit] || 0) + (Number(c.quantite) || 1);
   });
   const topProduits = Object.entries(prodCounts)
-    .map(([nom, qte]) => ({ nom, qte }))
-    .sort((a, b) => b.qte - a.qte)
-    .slice(0, 5)
+    .map(([nom, qte]) => ({ nom, qte })).sort((a, b) => b.qte - a.qte).slice(0, 5)
     .map((p, i) => ({ rang: i + 1, nom: p.nom, qte: p.qte }));
 
-  // Top Agents (Livrées)
+  // CORRECTION ICI : Éviter les points en double et prendre l'agent le plus récent
   const livreesCmdIds = new Set(livrees.map(l => l.commande_id));
   const agentDeliveredCounts = {};
-  
+  const commandesAttribuees = new Set(); // Stocke les commandes pour ne pas les compter 2 fois
+
+  // Grâce au tri chronologique au début, le premier appel croisé est le plus récent
   appels.forEach(appel => {
     if (livreesCmdIds.has(appel.commande_id)) {
-      agentDeliveredCounts[appel.agent_id] = (agentDeliveredCounts[appel.agent_id] || 0) + 1;
+      if (!commandesAttribuees.has(appel.commande_id)) {
+        agentDeliveredCounts[appel.agent_id] = (agentDeliveredCounts[appel.agent_id] || 0) + 1;
+        commandesAttribuees.add(appel.commande_id); // On verrouille cette commande
+      }
     }
   });
 
   const topAgents = Object.entries(agentDeliveredCounts)
     .map(([agentId, count]) => {
-      const agentObj = agents.find(a => String(a.id) === String(agentId));
+      const sansAgent = !agentId || agentId === "null" || agentId === "undefined";
+      const agentObj = sansAgent ? null : agents.find(a => String(a.id) === String(agentId));
       return { 
-        nom: agentObj ? (agentObj.nom || `Agent #${agentId}`) : `Agent #${agentId}`, 
+        nom: sansAgent ? "Agent non assigné" : (agentObj?.nom || `Agent #${agentId}`), 
         livrees: count 
       };
     })
@@ -258,23 +213,11 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     .slice(0, 5);
 
   return {
-    pays: "Angola", 
-    devise: "AOA",
-    kpis: {
-      commandesTotal: totalCmds,
-      commandesJour: commandesAujourdhui,
-      tauxConfirmation: Number(tauxConfirmation),
-      tauxLivraison: Number(tauxLivraison),
-      caEncaisse: caEncaisse,
-    },
-    confirmationParHeure: hourly,
-    statutsLivraison,
-    overviewAppels,
-    topProduits,
-    topAgents,
+    pays: "Angola", devise: "AOA",
+    kpis: { commandesTotal: totalCmds, commandesJour: commandesAujourdhui, tauxConfirmation: Number(tauxConfirmation), tauxLivraison: Number(tauxLivraison), caEncaisse: caEncaisse },
+    confirmationParHeure: hourly, statutsLivraison, overviewAppels, topProduits, topAgents,
   };
 }
-
 // ==================================================================
 //  PAGE PRINCIPALE
 // ==================================================================
