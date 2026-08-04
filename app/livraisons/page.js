@@ -64,13 +64,13 @@ export default function LivraisonsPage() {
     initialiser()
   }, [router])
 
-  // 2. Charger les livraisons depuis la table 'livraisons' en joignant 'commandes'
+  // 2. Charger les livraisons depuis la table 'livraisons' en joignant 'commandes' (avec le prix)
   const chargerLivraisons = useCallback(async (onglet) => {
     setChargement(true)
 
     let requete = supabase
       .from('livraisons')
-      .select('id, statut, created_at, commandes(id, client_nom, client_telephone, produit, ville_zone)')
+      .select('id, statut, created_at, commandes(id, client_nom, client_telephone, produit, ville_zone, prix)')
 
     if (onglet === 'en_attente') {
       // Uniquement les livraisons en cours / en attente à effectuer
@@ -104,7 +104,8 @@ export default function LivraisonsPage() {
     setLivraisonSelectionnee(liv)
     setStatutChoisi('livre')
     setMotifChoisi('')
-    setMontant('')
+    // Pré-remplit le montant avec le prix de la commande s'il existe
+    setMontant(liv.commandes?.prix !== null && liv.commandes?.prix !== undefined ? liv.commandes.prix : '')
   }
 
   // 3. Appel de l'Edge Function 'confirmer-livraison'
@@ -202,6 +203,7 @@ export default function LivraisonsPage() {
                   <th className="px-6 py-4">Téléphone</th>
                   <th className="px-6 py-4">Ville / Zone</th>
                   <th className="px-6 py-4">Produit</th>
+                  <th className="px-6 py-4">Prix</th> {/* ✅ Colonne Prix ajoutée */}
                   <th className="px-6 py-4">Statut</th>
                   <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
@@ -209,11 +211,11 @@ export default function LivraisonsPage() {
               <tbody className="divide-y divide-[#C9C1B1]/30">
                 {chargement ? (
                   <tr>
-                    <td colSpan="6" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td>
+                    <td colSpan="7" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td>
                   </tr>
                 ) : livraisons.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="px-6 py-12 text-center text-[#1B2632]/60">Aucune livraison dans cet onglet.</td>
+                    <td colSpan="7" className="px-6 py-12 text-center text-[#1B2632]/60">Aucune livraison dans cet onglet.</td>
                   </tr>
                 ) : (
                   livraisons.map((liv) => {
@@ -224,6 +226,10 @@ export default function LivraisonsPage() {
                         <td className="px-6 py-4 font-mono text-xs text-[#1B2632]/60">{liv.commandes?.client_telephone || '-'}</td>
                         <td className="px-6 py-4 text-[#1B2632]/70">{liv.commandes?.ville_zone || '-'}</td>
                         <td className="px-6 py-4 text-[#1B2632]/70">{liv.commandes?.produit || '-'}</td>
+                        {/* ✅ Affichage du prix */}
+                        <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
+                          {liv.commandes?.prix !== null && liv.commandes?.prix !== undefined ? liv.commandes.prix : '-'}
+                        </td>
                         <td className="px-6 py-4">
                           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase ${
                             liv.statut === 'en_attente' ? 'bg-amber-100 text-amber-800' :
@@ -271,7 +277,8 @@ export default function LivraisonsPage() {
             <div className="flex flex-col gap-5">
               <div className="bg-[#EEE9DF]/30 p-3 rounded-lg border border-[#C9C1B1]/30 text-sm">
                 <p className="text-xs text-[#1B2632]/60 mb-1">Client : <span className="font-semibold text-[#1B2632]">{livraisonSelectionnee.commandes?.client_nom}</span></p>
-                <p className="text-xs text-[#1B2632]/60">Produit : <span className="font-semibold text-[#1B2632]">{livraisonSelectionnee.commandes?.produit}</span></p>
+                <p className="text-xs text-[#1B2632]/60 mb-1">Produit : <span className="font-semibold text-[#1B2632]">{livraisonSelectionnee.commandes?.produit}</span></p>
+                <p className="text-xs text-[#1B2632]/60">Prix prévu : <span className="font-mono font-bold text-[#1B2632]">{livraisonSelectionnee.commandes?.prix ?? '-'}</span></p>
               </div>
 
               <div>
@@ -308,6 +315,7 @@ export default function LivraisonsPage() {
                   <label className="block text-sm font-medium text-[#1B2632] mb-2">Montant à encaisser</label>
                   <input
                     type="number"
+                    step="0.01"
                     value={montant}
                     onChange={(e) => setMontant(e.target.value)}
                     placeholder="0"

@@ -18,20 +18,54 @@ const STATUTS_APPEL = [
 
 function StatutPill({ statut }) {
   const configs = {
-    'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée', icon: '✓' },
-    'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente', icon: '⏳' },
-    'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Injoignable', icon: '📵' },
-    'reminder': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'À rappeler', icon: '🔔' },
-    'cancelled': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Annulée', icon: '✕' },
-    'spam': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Spam', icon: '🗑️' },
-    'double': { bg: 'bg-[#C9C1B1]/50', text: 'text-[#4a4437]', label: 'Doublon', icon: '📋' },
-    'out_of_stock': { bg: 'bg-[#FFB162]/30', text: 'text-[#8a5a1f]', label: 'Rupture', icon: '📦' },
-    'not_active_yet': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Inactif', icon: '🔒' },
+    'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée' },
+    'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente' },
+    'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Injoignable' },
+    'reminder': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'À rappeler' },
+    'cancelled': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Annulée' },
+    'spam': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Spam' },
+    'double': { bg: 'bg-[#C9C1B1]/50', text: 'text-[#4a4437]', label: 'Doublon' },
+    'out_of_stock': { bg: 'bg-[#FFB162]/30', text: 'text-[#8a5a1f]', label: 'Rupture' },
+    'not_active_yet': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Inactif' },
   }
   const conf = configs[statut] || configs['en_attente']
   return (
     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${conf.bg} ${conf.text} whitespace-nowrap flex items-center gap-1.5 w-fit`}>
-      <span>{conf.icon}</span> {conf.label}
+      {conf.label}
+    </span>
+  )
+}
+
+// ---- Nouveaux petits composants pour les filtres ----
+
+function SelectFiltre({ label, value, onChange, options, placeholder }) {
+  return (
+    <div>
+      <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-[#EEE9DF]/40 border border-[#C9C1B1]/60 rounded-lg px-3 py-2 text-sm font-medium text-[#1B2632] focus:outline-none focus:border-[#FFB162] cursor-pointer"
+      >
+        <option value="">{placeholder}</option>
+        {options.map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function ChipFiltre({ label, onClear }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full bg-[#1B2632]/5 border border-[#C9C1B1]/60 text-xs font-semibold text-[#1B2632] fade-in">
+      {label}
+      <button
+        onClick={onClear}
+        className="w-4 h-4 rounded-full hover:bg-[#A35139]/15 text-[#1B2632]/40 hover:text-[#A35139] flex items-center justify-center text-[10px] leading-none transition-colors"
+      >
+        ✕
+      </button>
     </span>
   )
 }
@@ -55,8 +89,8 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
   const phoneNumber = parsePhoneNumberFromString(tel)
   if (!phoneNumber || !phoneNumber.country) return null
 
-  const iso = phoneNumber.country                  
-  const indicatif = phoneNumber.countryCallingCode 
+  const iso = phoneNumber.country
+  const indicatif = phoneNumber.countryCallingCode
 
   const traducteur = new Intl.DisplayNames(['fr'], { type: 'region' })
   let nom = traducteur.of(iso)
@@ -87,18 +121,25 @@ export default function CentreAppelAgent() {
   const [dateFin, setDateFin] = useState('')
   const [recherche, setRecherche] = useState('')
   const [rechercheActive, setRechercheActive] = useState('')
-  const [filtreStatut, setFiltreStatut] = useState('') 
+  const [filtreStatut, setFiltreStatut] = useState('')
+
+  // ---- Nouveaux états pour les filtres ----
+  const [filtreProduit, setFiltreProduit] = useState('')
+  const [filtreAgent, setFiltreAgent] = useState('')
+  const [filtreVille, setFiltreVille] = useState('')
+  const [filtreSource, setFiltreSource] = useState('')
+  const [panneauFiltresOuvert, setPanneauFiltresOuvert] = useState(false)
+  const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], agents: [] })
 
   const [page, setPage] = useState(1)
   const [totalItems, setTotalItems] = useState(0)
   const ITEMS_PER_PAGE = 50
 
   const [agentActuel, setAgentActuel] = useState(null)
-  const [statsJour, setStatsJour] = useState({ total: 0, confirmed: 0, unreached: 0 })
-  
+
   const [commandeSelectionnee, setCommandeSelectionnee] = useState(null)
   const [statutChoisi, setStatutChoisi] = useState('confirmed')
-  
+
   const [historiqueLead, setHistoriqueLead] = useState([])
   const [loadingHistorique, setLoadingHistorique] = useState(false)
 
@@ -112,6 +153,7 @@ export default function CentreAppelAgent() {
     pays_id: '',
     produit: '',
     quantite: 1,
+    prix: 0,
     notes: '',
     date_rappel: ''
   })
@@ -146,7 +188,10 @@ export default function CentreAppelAgent() {
 
   useEffect(() => {
     function onKeyDown(e) {
-      if (e.key === 'Escape') setCommandeSelectionnee(null)
+      if (e.key === 'Escape') {
+        setCommandeSelectionnee(null)
+        setPanneauFiltresOuvert(false)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -172,12 +217,42 @@ export default function CentreAppelAgent() {
         `)
         .eq('commande_id', commandeSelectionnee.id)
         .order('created_at', { ascending: false })
-      
+
       setHistoriqueLead(data || [])
       setLoadingHistorique(false)
     }
     chargerHistorique()
   }, [commandeSelectionnee?.id])
+
+  // ---- Charge une seule fois les options des filtres (produits, villes, sources, agents) ----
+  useEffect(() => {
+    async function chargerOptionsFiltres() {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const [{ data: produits }, { data: villes }, { data: sources }, { data: agents }] = await Promise.all([
+        supabase.from('commandes').select('produit').not('produit', 'is', null).limit(2000),
+        supabase.from('commandes').select('ville_zone').not('ville_zone', 'is', null).limit(2000),
+        supabase.from('commandes').select('source').not('source', 'is', null).limit(2000),
+        supabase.from('agents').select('id, nom, name, full_name')
+      ])
+
+      const uniques = (rows, key) =>
+        [...new Set((rows || []).map(r => (r[key] || '').trim()).filter(Boolean))]
+          .sort((a, b) => a.localeCompare(b, 'fr'))
+
+      setOptionsFiltres({
+        produits: uniques(produits, 'produit'),
+        villes: uniques(villes, 'ville_zone'),
+        sources: uniques(sources, 'source'),
+        agents: (agents || []).map(a => ({
+          id: a.id,
+          nom: a.nom || a.name || a.full_name || 'Agent'
+        }))
+      })
+    }
+    chargerOptionsFiltres()
+  }, [])
 
   useEffect(() => {
     async function verifierAccesEtCharger() {
@@ -207,37 +282,13 @@ export default function CentreAppelAgent() {
 
       if (agentData) {
         setAgentActuel(agentData)
-        chargerStatsJour(agentData.id)
       }
 
       await chargerCommandes(page, ongletActif)
     }
 
     verifierAccesEtCharger()
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, router])
-
-  async function chargerStatsJour(idAgent) {
-    if (!idAgent) return
-    
-    const startOfDay = new Date()
-    startOfDay.setHours(0, 0, 0, 0)
-
-    const { data } = await supabase
-      .from('appels')
-      .select('statut')
-      .eq('agent_id', idAgent)
-      .gte('created_at', startOfDay.toISOString())
-
-    if (data) {
-      const confirmed = data.filter(a => a.statut === 'confirmed').length
-      const unreached = data.filter(a => a.statut === 'unreached').length
-      setStatsJour({
-        total: data.length,
-        confirmed,
-        unreached
-      })
-    }
-  }
+  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, router])
 
   async function chargerCommandes(pageActuelle, onglet) {
     setLoading(true)
@@ -250,8 +301,11 @@ export default function CentreAppelAgent() {
 
     setListePays(paysListDB || [])
 
-    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
-    let requeteData = supabase.from('commandes').select('id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, statut_confirmation, client_nom, client_telephone, ville_zone, pays_id, notes, pays(id, nom, code, devise)')
+    // Si on filtre par agent, on doit joindre la table appels (inner join filtrant)
+    const jointureAppels = filtreAgent ? ', appels!inner(agent_id)' : ''
+
+    let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true })
+    let requeteData = supabase.from('commandes').select(`id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, pays_id, notes, pays(id, nom, code, devise)${jointureAppels}`)
 
     if (onglet === 'a_traiter') {
       requeteBase = requeteBase.is('statut_confirmation', null)
@@ -277,11 +331,37 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.lte(dateField, `${dateFin}T23:59:59`)
     }
 
+    // ---- Recherche : nom client, téléphone, numéro de commande ----
     if (rechercheActive) {
-      const r = rechercheActive.replace(/[%,()]/g, '')
-      const filtre = `client_nom.ilike.%${r}%,client_telephone.ilike.%${r}%,lead_id.ilike.%${r}%`
+      const r = rechercheActive.replace(/[%,()#]/g, '')
+      const rTel = r.replace(/[\s.\-]/g, '')
+      const conditions = [
+        `client_nom.ilike.%${r}%`,
+        `client_telephone.ilike.%${r}%`,
+        `lead_id.ilike.%${r}%`
+      ]
+      if (rTel && rTel !== r) conditions.push(`client_telephone.ilike.%${rTel}%`)
+      const filtre = conditions.join(',')
       requeteBase = requeteBase.or(filtre)
       requeteData = requeteData.or(filtre)
+    }
+
+    // ---- Nouveaux filtres ----
+    if (filtreProduit) {
+      requeteBase = requeteBase.eq('produit', filtreProduit)
+      requeteData = requeteData.eq('produit', filtreProduit)
+    }
+    if (filtreVille) {
+      requeteBase = requeteBase.eq('ville_zone', filtreVille)
+      requeteData = requeteData.eq('ville_zone', filtreVille)
+    }
+    if (filtreSource) {
+      requeteBase = requeteBase.eq('source', filtreSource)
+      requeteData = requeteData.eq('source', filtreSource)
+    }
+    if (filtreAgent) {
+      requeteBase = requeteBase.eq('appels.agent_id', filtreAgent)
+      requeteData = requeteData.eq('appels.agent_id', filtreAgent)
     }
 
     if (onglet === 'historique') {
@@ -296,7 +376,8 @@ export default function CentreAppelAgent() {
     const { data } = await requeteData
 
     const commandesIntelligentes = (data || []).map(cmd => {
-      const detection = detecterPaysDepuisTelephone(cmd, paysListDB)
+      const { appels, ...cmdSansJointure } = cmd // on retire la jointure technique
+      const detection = detecterPaysDepuisTelephone(cmdSansJointure, paysListDB)
 
       let paysFinal
       if (detection?.paysTrouve) {
@@ -304,10 +385,10 @@ export default function CentreAppelAgent() {
       } else if (detection) {
         paysFinal = { nom: detection.nom, iso: detection.iso }
       } else {
-        paysFinal = cmd.pays?.nom ? cmd.pays : { nom: 'Non spécifié' }
+        paysFinal = cmdSansJointure.pays?.nom ? cmdSansJointure.pays : { nom: 'Non spécifié' }
       }
 
-      return { ...cmd, pays: paysFinal }
+      return { ...cmdSansJointure, pays: paysFinal }
     })
 
     setTotalItems(count || 0)
@@ -347,6 +428,7 @@ export default function CentreAppelAgent() {
       pays_id: paysId,
       produit: commande.produit || '',
       quantite: commande.quantite || 1,
+      prix: commande.prix || 0,
       notes: commande.notes || '',
       date_rappel: ''
     })
@@ -385,8 +467,6 @@ export default function CentreAppelAgent() {
       return
     }
 
-    if (agentActuel) chargerStatsJour(agentActuel.id)
-
     const indexActuel = commandes.findIndex(c => c.id === commandeSelectionnee.id)
     if (indexActuel !== -1 && indexActuel < commandes.length - 1) {
       ouvrirPanneau(commandes[indexActuel + 1])
@@ -397,12 +477,25 @@ export default function CentreAppelAgent() {
     await chargerCommandes(page, ongletActif)
   }
 
+  // ---- Helpers filtres ----
+  const appliquer = (setter) => (v) => { setter(v); setPage(1) }
+
+  function reinitialiserFiltres() {
+    setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut('')
+    setFiltreProduit(''); setFiltreAgent(''); setFiltreVille(''); setFiltreSource('')
+    setPage(1)
+  }
+
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
-  const filtresActifs = dateDebut || dateFin || recherche || filtreStatut
+  const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource].filter(Boolean).length
+  const filtresActifs = dateDebut || dateFin || recherche || nombreFiltresActifs > 0
 
   const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation FGMED. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
 
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
+
+  const labelStatut = (v) => STATUTS_APPEL.find(s => s.value === v)?.label || v
+  const nomAgent = (id) => optionsFiltres.agents.find(a => a.id === id)?.nom || 'Agent'
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-16 px-6 pb-10">
@@ -410,15 +503,17 @@ export default function CentreAppelAgent() {
       <style>{`
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes popIn { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .drawer-in { animation: drawerIn 0.25s ease-out; }
         .fade-in { animation: fadeIn 0.2s ease-out; }
+        .pop-in { animation: popIn 0.18s ease-out; }
         .timeline-line::before {
           content: ''; position: absolute; left: 11px; top: 24px; bottom: -8px; width: 2px; background: #C9C1B1; opacity: 0.3;
         }
         .timeline-item:last-child .timeline-line::before { display: none; }
       `}</style>
 
-      <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
+      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
         <div className="flex justify-between items-start">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1 flex items-center gap-2">
@@ -426,27 +521,13 @@ export default function CentreAppelAgent() {
             </p>
             <h1 className="text-3xl font-bold text-[#1B2632]">Centre de confirmation</h1>
           </div>
-          
-          <div className="flex items-center gap-3">
-            <div className="flex bg-white border border-[#C9C1B1] rounded-xl shadow-sm overflow-hidden text-sm font-medium">
-              <div className="px-4 py-2 bg-[#EEE9DF]/30 text-[#1B2632]/70 border-r border-[#C9C1B1]/50">
-                Aujourd'hui : <span className="font-bold text-[#1B2632] ml-1">{statsJour.total}</span> traités
-              </div>
-              <div className="px-4 py-2 text-emerald-700 bg-emerald-50 border-r border-[#C9C1B1]/50 flex items-center gap-1.5">
-                <span className="text-xs">✓</span> {statsJour.confirmed}
-              </div>
-              <div className="px-4 py-2 text-gray-600 bg-gray-50 flex items-center gap-1.5">
-                <span className="text-xs">📵</span> {statsJour.unreached}
-              </div>
-            </div>
-          </div>
         </div>
 
         <div className="flex justify-between items-center mt-2 flex-wrap gap-4">
           <div className="flex items-center gap-4">
             <div className="flex gap-2">
               <button
-                onClick={() => { setOngletActif('a_traiter'); setPage(1); setCommandeSelectionnee(null); setFiltreStatut(''); }}
+                onClick={() => { setOngletActif('a_traiter'); setPage(1); setCommandeSelectionnee(null); setFiltreStatut(''); setFiltreAgent(''); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
                   ongletActif === 'a_traiter' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
@@ -462,20 +543,23 @@ export default function CentreAppelAgent() {
                 Historique global
               </button>
             </div>
-            
+
             <div className="h-6 w-px bg-[#C9C1B1]/50"></div>
-            
+
             <div className="text-sm text-[#1B2632]/60 font-medium">
               {totalItems} commande{totalItems > 1 ? 's' : ''} dans cette vue
             </div>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-[#C9C1B1] shadow-sm w-[260px] focus-within:border-[#FFB162] transition-colors">
-              <span className="text-[#1B2632]/40 text-sm">🔍</span>
+            {/* ---- Recherche (nom, téléphone, N° commande) ---- */}
+            <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-[#C9C1B1] shadow-sm w-[280px] focus-within:border-[#FFB162] transition-colors">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/30 shrink-0">
+                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+              </svg>
               <input
                 type="text"
-                placeholder="Nom, téléphone, lead ID..."
+                placeholder="Nom, téléphone, N° commande..."
                 value={recherche}
                 onChange={(e) => setRecherche(e.target.value)}
                 className="outline-none bg-transparent text-sm text-[#1B2632] font-medium w-full placeholder:text-[#1B2632]/30"
@@ -485,19 +569,100 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
-            {ongletActif === 'historique' && (
-              <select
-                value={filtreStatut}
-                onChange={(e) => { setFiltreStatut(e.target.value); setPage(1); }}
-                className="bg-white border border-[#C9C1B1] rounded-xl px-4 py-2.5 text-sm font-medium text-[#1B2632] shadow-sm focus:outline-none focus:border-[#FFB162]"
+            {/* ---- Bouton Filtres + panneau déroulant ---- */}
+            <div className="relative">
+              <button
+                onClick={() => setPanneauFiltresOuvert(o => !o)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border transition-all ${
+                  panneauFiltresOuvert || nombreFiltresActifs > 0
+                    ? 'bg-[#1B2632] text-white border-[#1B2632]'
+                    : 'bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+                }`}
               >
-                <option value="">Tous les statuts</option>
-                {STATUTS_APPEL.map(s => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
-                ))}
-              </select>
-            )}
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                Filtres
+                {nombreFiltresActifs > 0 && (
+                  <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FFB162] text-[#1B2632] text-[11px] font-bold flex items-center justify-center">
+                    {nombreFiltresActifs}
+                  </span>
+                )}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={`transition-transform ${panneauFiltresOuvert ? 'rotate-180' : ''}`}>
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
 
+              {panneauFiltresOuvert && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setPanneauFiltresOuvert(false)} />
+                  <div className="absolute right-0 top-full mt-2 w-[300px] bg-white rounded-2xl border border-[#C9C1B1] shadow-xl z-30 p-5 pop-in">
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">Filtres</span>
+                      {nombreFiltresActifs > 0 && (
+                        <button
+                          onClick={reinitialiserFiltres}
+                          className="text-xs font-semibold text-[#A35139] hover:underline"
+                        >
+                          Tout effacer
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-4">
+                      {ongletActif === 'historique' && (
+                        <SelectFiltre
+                          label="Statut"
+                          value={filtreStatut}
+                          onChange={appliquer(setFiltreStatut)}
+                          options={STATUTS_APPEL}
+                          placeholder="Tous les statuts"
+                        />
+                      )}
+                      {ongletActif === 'historique' && (
+                        <SelectFiltre
+                          label="Agent"
+                          value={filtreAgent}
+                          onChange={appliquer(setFiltreAgent)}
+                          options={optionsFiltres.agents.map(a => ({ value: a.id, label: a.nom }))}
+                          placeholder="Tous les agents"
+                        />
+                      )}
+                      <SelectFiltre
+                        label="Produit"
+                        value={filtreProduit}
+                        onChange={appliquer(setFiltreProduit)}
+                        options={optionsFiltres.produits.map(p => ({ value: p, label: p }))}
+                        placeholder="Tous les produits"
+                      />
+                      <SelectFiltre
+                        label="Ville"
+                        value={filtreVille}
+                        onChange={appliquer(setFiltreVille)}
+                        options={optionsFiltres.villes.map(v => ({ value: v, label: v }))}
+                        placeholder="Toutes les villes"
+                      />
+                      <SelectFiltre
+                        label="Source"
+                        value={filtreSource}
+                        onChange={appliquer(setFiltreSource)}
+                        options={optionsFiltres.sources.map(s => ({ value: s, label: s }))}
+                        placeholder="Toutes les sources"
+                      />
+                    </div>
+
+                    <button
+                      onClick={() => setPanneauFiltresOuvert(false)}
+                      className="w-full mt-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors"
+                    >
+                      Appliquer
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* ---- Dates ---- */}
             <div className="flex items-center gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm">
               <div className="flex items-center gap-2 px-3 py-1.5">
                 <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest">Du</span>
@@ -512,7 +677,7 @@ export default function CentreAppelAgent() {
 
             {filtresActifs && (
               <button
-                onClick={() => { setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut(''); setPage(1); }}
+                onClick={reinitialiserFiltres}
                 className="text-xs font-semibold text-[#A35139] hover:underline"
               >
                 Réinitialiser
@@ -520,6 +685,17 @@ export default function CentreAppelAgent() {
             )}
           </div>
         </div>
+
+        {/* ---- Chips des filtres actifs ---- */}
+        {nombreFiltresActifs > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {filtreStatut && <ChipFiltre label={`Statut : ${labelStatut(filtreStatut)}`} onClear={() => appliquer(setFiltreStatut)('')} />}
+            {filtreAgent && <ChipFiltre label={`Agent : ${nomAgent(filtreAgent)}`} onClear={() => appliquer(setFiltreAgent)('')} />}
+            {filtreProduit && <ChipFiltre label={`Produit : ${filtreProduit}`} onClear={() => appliquer(setFiltreProduit)('')} />}
+            {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
+            {filtreSource && <ChipFiltre label={`Source : ${filtreSource}`} onClear={() => appliquer(setFiltreSource)('')} />}
+          </div>
+        )}
       </header>
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
@@ -533,15 +709,16 @@ export default function CentreAppelAgent() {
                 <th className="px-6 py-4">Pays</th>
                 <th className="px-6 py-4">Ville / Zone</th>
                 <th className="px-6 py-4">Produit</th>
+                <th className="px-6 py-4">Prix</th>
                 <th className="px-6 py-4">Statut</th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {loading ? (
-                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">Aucune commande trouvée.</td></tr>
+                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Aucune commande trouvée.</td></tr>
               ) : (
                 commandes.map((cmd) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
@@ -567,6 +744,9 @@ export default function CentreAppelAgent() {
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium text-[#1B2632] max-w-[180px] truncate" title={cmd.produit}>{cmd.produit || '-'}</div>
                         <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté: {cmd.quantite || 1}</div>
+                      </td>
+                      <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
+                        {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
                       </td>
                       <td className="px-6 py-4"><StatutPill statut={cmd.statut_confirmation} /></td>
                       <td className="px-6 py-4 text-right">
@@ -615,7 +795,7 @@ export default function CentreAppelAgent() {
 
               <div className="flex items-center gap-3">
                 <span className={`font-mono font-bold text-sm ${tempsRestant < 60 ? 'text-red-600 animate-pulse' : 'text-[#1B2632]/60'}`}>
-                  ⏳ {formatTemps(tempsRestant)}
+                  {formatTemps(tempsRestant)}
                 </span>
                 <button onClick={() => setCommandeSelectionnee(null)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">
                   ✕
@@ -625,7 +805,6 @@ export default function CentreAppelAgent() {
 
             {estUnDoublon && (
               <div className="mx-6 mt-5 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-800">
-                <span className="text-lg">⚠️</span>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wider mb-0.5">Alerte Doublon</p>
                   <p className="text-[11px] leading-tight opacity-90">Ce numéro de téléphone apparaît plusieurs fois dans la liste actuelle. Vérifiez avant de valider l'expédition.</p>
@@ -655,8 +834,8 @@ export default function CentreAppelAgent() {
                       onChange={(e) => setFormData({...formData, client_telephone: e.target.value})}
                       className="flex-1 border-b border-[#C9C1B1] py-2 text-sm font-mono font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                     />
-                    <a href={`tel:${formData.client_telephone}`} title="Appeler" className="w-9 h-9 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg flex items-center justify-center transition-colors">📞</a>
-                    <a href={`https://wa.me/${formData.client_telephone.replace(/[+\s]/g, '')}?text=${whatsappTexte}`} target="_blank" rel="noreferrer" title="WhatsApp avec template" className="w-9 h-9 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 rounded-lg flex items-center justify-center transition-colors">💬</a>
+                    <a href={`tel:${formData.client_telephone}`} title="Appeler" className="px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-semibold transition-colors">Appeler</a>
+                    <a href={`https://wa.me/${formData.client_telephone.replace(/[+\s]/g, '')}?text=${whatsappTexte}`} target="_blank" rel="noreferrer" title="WhatsApp" className="px-3 py-1.5 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 rounded-lg text-xs font-semibold transition-colors">WhatsApp</a>
                   </div>
                 </div>
 
@@ -711,6 +890,17 @@ export default function CentreAppelAgent() {
                 </div>
 
                 <div>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Prix total (Modifiable)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.prix}
+                    onChange={(e) => setFormData({...formData, prix: parseFloat(e.target.value) || 0})}
+                    className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Source (Optionnel)</label>
                   <input
                     type="text"
@@ -719,7 +909,7 @@ export default function CentreAppelAgent() {
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Notes</label>
                   <textarea
@@ -763,7 +953,7 @@ export default function CentreAppelAgent() {
                 <h3 className="text-[11px] font-bold text-[#1B2632]/50 uppercase tracking-widest mb-4 border-b border-[#C9C1B1]/30 pb-2">
                   Historique des actions
                 </h3>
-                
+
                 {loadingHistorique ? (
                   <div className="text-center text-xs text-[#1B2632]/40 py-4">Chargement de l'historique...</div>
                 ) : historiqueLead.length === 0 ? (
@@ -775,7 +965,7 @@ export default function CentreAppelAgent() {
                       const isToday = date.toDateString() === new Date().toDateString()
                       const dateText = isToday ? "Aujourd'hui" : date.toLocaleDateString('fr-FR')
                       const timeText = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-                      
+
                       return (
                         <div key={log.id} className="timeline-item relative pl-6 pb-5">
                           <div className="timeline-line"></div>

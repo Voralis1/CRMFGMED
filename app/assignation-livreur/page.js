@@ -38,13 +38,13 @@ export default function AssignationLivreurPage() {
 
     const idsExclus = (idsAvecLivraison || []).map((l) => l.commande_id)
 
-    // AJOUT : Ajout de pays(nom) et modification du tri pour éviter les bugs de pagination
+    // ✅ AJOUT DE "prix" dans le select de la requête Supabase
     let requete = supabase
       .from('commandes')
-      .select('*, pays(nom)', { count: 'exact' })
+      .select('*, prix, pays(nom)', { count: 'exact' })
       .eq('statut_confirmation', 'confirmed')
-      .order('created_at', { ascending: false }) // Trie par la date la plus récente
-      .order('id', { ascending: false })         // Sécurité anti-doublons de pagination
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
       .range(debut, fin)
 
     if (idsExclus.length > 0) {
@@ -122,7 +122,6 @@ export default function AssignationLivreurPage() {
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
       
-      {/* En-tête simple de la page */}
       <header className="flex flex-col gap-1 border-b border-[#C9C1B1]/50 pb-4">
         <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
           Centre Logistique
@@ -132,7 +131,6 @@ export default function AssignationLivreurPage() {
         </h1>
       </header>
 
-      {/* Carte principale contenant le tableau et la pagination en bas */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
         {chargement ? (
           <p className="text-sm text-[#1B2632]/60 p-6">Chargement...</p>
@@ -144,13 +142,13 @@ export default function AssignationLivreurPage() {
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                    {/* AJOUT : Nouvelles colonnes alignées sur le Centre d'Appel */}
                     <th className="px-6 py-4">Lead ID</th>
                     <th className="px-6 py-4">Date</th>
                     <th className="px-6 py-4">Client</th>
                     <th className="px-6 py-4">Pays</th>
                     <th className="px-6 py-4">Ville / Zone</th>
                     <th className="px-6 py-4">Produit</th>
+                    <th className="px-6 py-4">Prix</th> {/* ✅ Colonne Prix ajoutée */}
                     <th className="px-6 py-4">Livreur</th>
                     <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
@@ -166,17 +164,14 @@ export default function AssignationLivreurPage() {
                     return (
                       <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
                         
-                        {/* 1. Lead ID */}
                         <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80">
                           #{cmd.lead_id || 'N/A'}
                         </td>
 
-                        {/* 2. Date */}
                         <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
                           {cmd.date_commande ? new Date(cmd.date_commande).toLocaleDateString('fr-FR') : (cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-FR') : '-')}
                         </td>
 
-                        {/* 3. Client (Nom + Téléphone) */}
                         <td className="px-6 py-4">
                           <div className="font-bold text-[#1B2632]">
                             {cmd.client_nom || 'Client inconnu'}
@@ -186,23 +181,24 @@ export default function AssignationLivreurPage() {
                           </div>
                         </td>
 
-                        {/* 4. Pays */}
                         <td className="px-6 py-4 text-sm font-medium text-[#1B2632]">
                           {cmd.pays?.nom || '-'}
                         </td>
 
-                        {/* 5. Ville / Zone */}
                         <td className="px-6 py-4">
                           <div className="text-sm font-medium text-[#1B2632]">{cmd.ville_zone || '-'}</div>
                         </td>
 
-                        {/* 6. Produit & Quantité */}
                         <td className="px-6 py-4">
                           <div className="text-sm font-medium text-[#1B2632]">{cmd.produit || '-'}</div>
                           <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté: {cmd.quantite || 1}</div>
                         </td>
 
-                        {/* 7. Livreur (Sélection) */}
+                        {/* ✅ Affichage du Prix dans sa propre colonne */}
+                        <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
+                          {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
+                        </td>
+
                         <td className="px-6 py-4">
                           <select
                             value={livreurChoisiParCommande[cmd.id] || ''}
@@ -221,7 +217,6 @@ export default function AssignationLivreurPage() {
                           )}
                         </td>
 
-                        {/* 8. Actions */}
                         <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => assigner(cmd.id)}
@@ -238,7 +233,6 @@ export default function AssignationLivreurPage() {
               </table>
             </div>
 
-            {/* Pagination positionnée en bas du tableau */}
             <div className="flex items-center justify-between px-6 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20">
               <span className="text-sm text-[#1B2632]/70 font-medium">
                 Page {pageActuelle + 1} sur {totalPages}
