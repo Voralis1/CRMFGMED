@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
+import * as XLSX from 'xlsx'
 
 const STATUTS_APPEL = [
   { value: 'confirmed', label: 'Confirmée' },
@@ -35,8 +36,6 @@ function StatutPill({ statut }) {
     </span>
   )
 }
-
-// ---- Nouveaux petits composants pour les filtres ----
 
 function SelectFiltre({ label, value, onChange, options, placeholder }) {
   return (
@@ -123,7 +122,6 @@ export default function CentreAppelAgent() {
   const [rechercheActive, setRechercheActive] = useState('')
   const [filtreStatut, setFiltreStatut] = useState('')
 
-  // ---- Nouveaux états pour les filtres ----
   const [filtreProduit, setFiltreProduit] = useState('')
   const [filtreAgent, setFiltreAgent] = useState('')
   const [filtreVille, setFiltreVille] = useState('')
@@ -224,7 +222,6 @@ export default function CentreAppelAgent() {
     chargerHistorique()
   }, [commandeSelectionnee?.id])
 
-  // ---- Charge une seule fois les options des filtres (produits, villes, sources, agents) ----
   useEffect(() => {
     async function chargerOptionsFiltres() {
       const { data: { session } } = await supabase.auth.getSession()
@@ -301,7 +298,6 @@ export default function CentreAppelAgent() {
 
     setListePays(paysListDB || [])
 
-    // Si on filtre par agent, on doit joindre la table appels (inner join filtrant)
     const jointureAppels = filtreAgent ? ', appels!inner(agent_id)' : ''
 
     let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true })
@@ -331,7 +327,6 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.lte(dateField, `${dateFin}T23:59:59`)
     }
 
-    // ---- Recherche : nom client, téléphone, numéro de commande ----
     if (rechercheActive) {
       const r = rechercheActive.replace(/[%,()#]/g, '')
       const rTel = r.replace(/[\s.\-]/g, '')
@@ -346,7 +341,6 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.or(filtre)
     }
 
-    // ---- Nouveaux filtres ----
     if (filtreProduit) {
       requeteBase = requeteBase.eq('produit', filtreProduit)
       requeteData = requeteData.eq('produit', filtreProduit)
@@ -376,7 +370,7 @@ export default function CentreAppelAgent() {
     const { data } = await requeteData
 
     const commandesIntelligentes = (data || []).map(cmd => {
-      const { appels, ...cmdSansJointure } = cmd // on retire la jointure technique
+      const { appels, ...cmdSansJointure } = cmd
       const detection = detecterPaysDepuisTelephone(cmdSansJointure, paysListDB)
 
       let paysFinal
@@ -477,13 +471,113 @@ export default function CentreAppelAgent() {
     await chargerCommandes(page, ongletActif)
   }
 
-  // ---- Helpers filtres ----
   const appliquer = (setter) => (v) => { setter(v); setPage(1) }
 
   function reinitialiserFiltres() {
     setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut('')
     setFiltreProduit(''); setFiltreAgent(''); setFiltreVille(''); setFiltreSource('')
     setPage(1)
+  }
+
+  // --- FONCTION EXPORT CSV ---
+  function exporterCSV() {
+    if (commandes.length === 0) {
+      alert("Aucune commande à exporter dans cette vue.")
+      return
+    }
+
+    const entetes = ["Lead ID", "Date", "Client", "Telephone", "Pays", "Ville", "Produit", "Quantite", "Prix", "Statut"]
+    const lignes = commandes.map(c => [
+      c.lead_id || "",
+      c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : "",
+      `"${(c.client_nom || "").replace(/"/g, '""')}"`,
+      `"${(c.client_telephone || "").replace(/"/g, '""')}"`,
+      `"${(c.pays?.nom || "").replace(/"/g, '""')}"`,
+      `"${(c.ville_zone || "").replace(/"/g, '""')}"`,
+      `"${(c.produit || "").replace(/"/g, '""')}"`,
+      c.quantite || 1,
+      c.prix || 0,
+      c.statut_confirmation || "en_attente"
+    ])
+
+    const contenuCSV = [entetes.join(","), ...lignes.map(l => l.join(","))].join("\n")
+    const blob = new Blob([contenuCSV], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const lien = document.createElement("a")
+    lien.setAttribute("href", url)
+    lien.setAttribute("download", `commandes_${new Date().toISOString().slice(0, 10)}.csv`)
+    document.body.appendChild(lien)
+    lien.click()
+    document.body.removeChild(lien)
+  }
+
+  // --- FONCTION IMPORT (SANS BESOIN DE COLONNE SOURCE) ---
+  async function importerFichier(event) {
+    const fichier = event.target.files[0]
+    if (!fichier) return
+
+    const lecteur = new FileReader()
+    
+    lecteur.onload = async function (e) {
+      try {
+        const data = new Uint8Array(e.target.result)
+        const classeur = XLSX.read(data, { type: 'array' })
+        
+        const nomFeuille = classeur.SheetNames[0]
+        const feuille = classeur.Sheets[nomFeuille]
+        
+        const lignes = XLSX.utils.sheet_to_json(feuille, { defval: "" })
+
+        if (lignes.length === 0) {
+          alert("Le fichier est vide ou mal formaté.")
+          return
+        }
+
+        let nouvellesCommandes = lignes.map(ligne => {
+          const ligneNormalisee = {}
+          for (let cle in ligne) {
+            ligneNormalisee[cle.toLowerCase().trim()] = ligne[cle]
+          }
+
+          return {
+            client_nom: ligneNormalisee['client_nom'] || ligneNormalisee['nom'] || ligneNormalisee['client'] || 'Inconnu',
+            client_telephone: String(ligneNormalisee['client_telephone'] || ligneNormalisee['telephone'] || ligneNormalisee['tel'] || ''),
+            ville_zone: ligneNormalisee['ville_zone'] || ligneNormalisee['ville'] || ligneNormalisee['zone'] || '',
+            produit: ligneNormalisee['produit'] || 'Produit standard',
+            quantite: parseInt(ligneNormalisee['quantite']) || 1,
+            prix: parseFloat(ligneNormalisee['prix']) || 0,
+            
+            // LA CORRECTION FINALE : 
+            // On s'en fiche si le partenaire a mis une source ou non.
+            // On force la valeur 'csv' pour que Supabase l'accepte sans bloquer.
+            source: 'csv', 
+            
+            notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
+            lead_id: `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+          }
+        }).filter(cmd => cmd.client_telephone !== '')
+
+        if (nouvellesCommandes.length === 0) {
+          alert("Aucune donnée valide trouvée dans le fichier.")
+          return
+        }
+
+        const { error } = await supabase.from('commandes').insert(nouvellesCommandes)
+        if (error) {
+          alert("Erreur lors de l'import : " + error.message)
+        } else {
+          alert(`Import réussi : ${nouvellesCommandes.length} commandes ajoutées.`)
+          window.location.reload()
+        }
+
+      } catch (erreur) {
+        alert("Erreur lors de la lecture du fichier. Assurez-vous qu'il s'agit d'un fichier CSV ou Excel valide.")
+        console.error(erreur)
+      }
+    }
+
+    lecteur.readAsArrayBuffer(fichier)
+    event.target.value = null
   }
 
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
@@ -514,15 +608,50 @@ export default function CentreAppelAgent() {
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
-        <div className="flex justify-between items-start">
+
+        {/* ---- Ligne 1 : Titre à gauche, actions CSV à droite ---- */}
+        <div className="flex justify-between items-center flex-wrap gap-3">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1 flex items-center gap-2">
               Espace Agent <span className="text-[#1B2632]/30">•</span> {agentActuel?.nom || agentActuel?.name || 'Connecté'}
             </p>
             <h1 className="text-3xl font-bold text-[#1B2632]">Centre de confirmation</h1>
           </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={exporterCSV}
+              title="Exporter la vue actuelle en CSV"
+              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Exporter CSV
+            </button>
+            <label
+              title="Importer des commandes depuis un fichier CSV ou Excel"
+              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              Importer CSV/Excel
+              <input
+                type="file"
+                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                onChange={importerFichier}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
 
+        {/* ---- Ligne 2 : Onglets à gauche, recherche + filtres + dates à droite ---- */}
         <div className="flex justify-between items-center mt-2 flex-wrap gap-4">
           <div className="flex items-center gap-4">
             <div className="flex gap-2">
@@ -576,7 +705,7 @@ export default function CentreAppelAgent() {
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border transition-all ${
                   panneauFiltresOuvert || nombreFiltresActifs > 0
                     ? 'bg-[#1B2632] text-white border-[#1B2632]'
-                    : 'bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+                    : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -909,7 +1038,7 @@ export default function CentreAppelAgent() {
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
                 </div>
-
+                
                 <div>
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Notes</label>
                   <textarea
