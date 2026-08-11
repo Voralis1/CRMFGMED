@@ -3,14 +3,14 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
-import { useAuth } from '../context/AuthContext' // 👈 Conservé pour le tenantId
-import { usePermissions } from '../context/PermissionsContext' // 🚀 Ajout du Contexte des permissions
+import { useAuth } from '../context/AuthContext'
+import { usePermissions } from '../context/PermissionsContext'
 
 const TAILLE_PAGE = 50
 
 export default function AssignationLivreurPage() {
-  const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde tenantId pour l'isolation des données
-  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits d'accès
+  const { user, tenantId, loading: authLoading } = useAuth()
+  const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
   const [commandes, setCommandes] = useState([])
@@ -21,14 +21,13 @@ export default function AssignationLivreurPage() {
   const [livreurChoisiParCommande, setLivreurChoisiParCommande] = useState({})
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
 
-  // 🚀 NOUVELLE REDIRECTION SÉCURISÉE (RBAC)
+  // 🚀 REDIRECTION SÉCURISÉE (RBAC)
   useEffect(() => {
-    // On attend que l'auth ET les permissions soient chargés
     if (!authLoading && !permsLoading) {
       if (!user) {
-        router.replace('/') // Pas connecté -> Accueil
+        router.replace('/')
       } else if (!hasPermission('menu_assignation_livreur')) {
-        router.replace('/dashboard') // Connecté mais pas le droit -> Dashboard
+        router.replace('/dashboard')
       }
     }
   }, [user, authLoading, permsLoading, hasPermission, router])
@@ -85,7 +84,6 @@ export default function AssignationLivreurPage() {
   }
 
   useEffect(() => {
-    // On ne charge les données que si on a passé les barrières de chargement et qu'on a le tenantId
     if (authLoading || permsLoading || !user || !tenantId) return
 
     async function initialiser() {
@@ -118,7 +116,11 @@ export default function AssignationLivreurPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ commande_id: commandeId, livreur_id: livreurId }),
+        body: JSON.stringify({ 
+          commande_id: commandeId, 
+          livreur_id: livreurId,
+          tenant_id: tenantId // 🚀 CORRECTION : Le tenant_id est maintenant envoyé à l'Edge Function !
+        }),
       }
     )
 
@@ -135,7 +137,6 @@ export default function AssignationLivreurPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
 
-  // 🚀 Si on est encore en train de vérifier les permissions, on affiche un écran d'attente
   if (authLoading || permsLoading || !hasPermission('menu_assignation_livreur')) {
     return <div className="p-8 text-[#1B2632] font-medium">Vérification des accès...</div>
   }

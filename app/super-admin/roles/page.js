@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabaseClient'
-import { useAuth } from '../../context/AuthContext' // 👈 Import de l'auth de base
-import { usePermissions } from '../../context/PermissionsContext' // 🚀 Import des permissions dynamiques
+import { useAuth } from '../../context/AuthContext'
+import { usePermissions } from '../../context/PermissionsContext'
 
 export default function SuperAdminRoles() {
   const { user, loading: authLoading } = useAuth()
@@ -15,19 +15,19 @@ export default function SuperAdminRoles() {
   const [permissions, setPermissions] = useState([])
   const [loading, setLoading] = useState(true)
   
-  // États pour les modales
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState({ text: '', type: '' })
 
-  // États pour la gestion des données
   const [selectedRole, setSelectedRole] = useState(null)
   const [rolePerms, setRolePerms] = useState([]) 
   const [newRoleData, setNewRoleData] = useState({ nom: '', description: '' })
 
-  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
+  // État pour désactiver le bouton "Supprimer" du rôle en cours de suppression
+  const [suppressionEnCours, setSuppressionEnCours] = useState(null) // id du rôle, ou null
+
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
@@ -54,14 +54,12 @@ export default function SuperAdminRoles() {
     }
   }, [user, hasPermission])
 
-  // --- CRÉER UN NOUVEAU RÔLE ---
   const handleCreateRole = async (e) => {
     e.preventDefault()
     setSubmitting(true)
     setMessage({ text: '', type: '' })
 
     try {
-      // Insertion dans la table 'roles'
       const { error } = await supabase.from('roles').insert([
         { 
           nom: newRoleData.nom.toUpperCase(), 
@@ -84,7 +82,6 @@ export default function SuperAdminRoles() {
     }
   }
 
-  // --- OUVRIR LA MODALE D'ÉDITION DES PERMISSIONS ---
   const handleOpenEdit = async (role) => {
     setSelectedRole(role)
     setRolePerms([]) 
@@ -101,7 +98,6 @@ export default function SuperAdminRoles() {
     }
   }
 
-  // --- GÉRER LES CHECKBOXES ---
   const togglePermission = (permCode) => {
     if (rolePerms.includes(permCode)) {
       setRolePerms(rolePerms.filter(code => code !== permCode))
@@ -110,7 +106,6 @@ export default function SuperAdminRoles() {
     }
   }
 
-  // --- SAUVEGARDER LES PERMISSIONS DU RÔLE ---
   const handleUpdateRolePermissions = async (e) => {
     e.preventDefault()
     setSubmitting(true)
@@ -138,7 +133,43 @@ export default function SuperAdminRoles() {
     }
   }
 
-  // 🚀 Écran de chargement et de vérification sécurisée
+  // --- SUPPRIMER UN RÔLE (nouveau, seul ajout) ---
+  const handleDeleteRole = async (role) => {
+    const confirmation = window.confirm(
+      `Supprimer définitivement le rôle "${role.nom}" ?\n\nCette action est irréversible. Si des utilisateurs ont encore ce rôle, la suppression sera refusée automatiquement.`
+    )
+    if (!confirmation) return
+
+    setSuppressionEnCours(role.id)
+    try {
+      // On retire d'abord ses permissions liées, pour ne pas laisser
+      // de lignes orphelines dans role_permissions
+      await supabase.from('role_permissions').delete().eq('role_id', role.id)
+
+      const { error } = await supabase.from('roles').delete().eq('id', role.id)
+
+      if (error) {
+        // Code Postgres 23503 = violation de clé étrangère :
+        // des utilisateurs (user_roles) référencent encore ce rôle
+        if (error.code === '23503') {
+          alert(
+            `Impossible de supprimer "${role.nom}" : des utilisateurs ont encore ce rôle.\n\nRéassignez-les à un autre rôle avant de le supprimer.`
+          )
+        } else {
+          throw error
+        }
+        return
+      }
+
+      setRoles(roles.filter((r) => r.id !== role.id))
+    } catch (error) {
+      console.error("Erreur suppression rôle :", JSON.stringify(error, null, 2))
+      alert("Erreur lors de la suppression du rôle.")
+    } finally {
+      setSuppressionEnCours(null)
+    }
+  }
+
   if (authLoading || permsLoading || !hasPermission('menu_gestion_roles')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
   }
@@ -169,12 +200,22 @@ export default function SuperAdminRoles() {
                   <h3 className="text-lg font-bold text-[#1B2632] uppercase">{role.nom}</h3>
                   <p className="text-sm text-gray-500 mt-2 line-clamp-2">{role.description || 'Aucune description'}</p>
                 </div>
-                <button 
-                  onClick={() => handleOpenEdit(role)} 
-                  className="mt-6 bg-[#1B2632]/10 hover:bg-[#1B2632] hover:text-white text-[#1B2632] px-4 py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
-                >
-                  Gérer les permissions
-                </button>
+                <div className="mt-6 flex gap-2">
+                  <button 
+                    onClick={() => handleOpenEdit(role)} 
+                    className="flex-1 bg-[#1B2632]/10 hover:bg-[#1B2632] hover:text-white text-[#1B2632] px-4 py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
+                  >
+                    Gérer les permissions
+                  </button>
+                  <button
+                    onClick={() => handleDeleteRole(role)}
+                    disabled={suppressionEnCours === role.id}
+                    title="Supprimer ce rôle"
+                    className="bg-[#A35139]/10 hover:bg-[#A35139] hover:text-white text-[#A35139] px-3 py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {suppressionEnCours === role.id ? '…' : 'Supprimer'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

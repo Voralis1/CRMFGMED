@@ -1,6 +1,2 @@
-client_nom,client_telephone,ville_zone,produit,quantite,prix
-Ahmed Test,0612345678,Casablanca,Produit Alpha,1,250
-Sara Random,0698765432,Rabat,Produit Beta,2,500
-Karim Fake,+212611223344,Marrakech,Produit Alpha,1,250
-Fatima Demo,0700112233,Tanger,Produit Gamma,3,750
-Omar التجربة,0655443322,Agadir,Produit Beta,1,250
+lead_id,date, client_nom,client_telephone,pays,ville_zone,produit,quantite,prix
+lead-faux1,11/08/2026,Ahmed Test,0612345678,Maroc,Agadir,voralis comfort,1,800

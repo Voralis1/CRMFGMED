@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
-import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
+import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import * as XLSX from 'xlsx'
 
@@ -113,8 +113,8 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
 }
 
 export default function CentreAppelAgent() {
-  const { user, tenantId, loading: authLoading } = useAuth() // 👈 Conservation pour le tenantId
-  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Les droits d'accès
+  const { user, tenantId, loading: authLoading } = useAuth() 
+  const { hasPermission, loading: permsLoading } = usePermissions() 
   const router = useRouter()
 
   const [commandes, setCommandes] = useState([])
@@ -156,7 +156,7 @@ export default function CentreAppelAgent() {
 
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
-  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE
+  // REDIRECTION SÉCURISÉE VIA LA MATRICE
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
@@ -447,6 +447,7 @@ export default function CentreAppelAgent() {
         body: JSON.stringify({
           commande_id: commandeSelectionnee.id,
           statut: statutChoisi,
+          tenant_id: tenantId, // 🚀 CORRECTION : Ajout du tenant_id pour éviter l'erreur not-null constraint
           ...formData
         }),
       }
@@ -577,7 +578,7 @@ export default function CentreAppelAgent() {
   const labelStatut = (v) => STATUTS_APPEL.find(s => s.value === v)?.label || v
   const nomAgent = (id) => optionsFiltres.agents.find(a => a.id === id)?.nom || 'Agent'
 
-  // 🚀 ÉCRAN D'ATTENTE OU DE BLOCAGE
+  // ÉCRAN D'ATTENTE OU DE BLOCAGE
   if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
   }
@@ -607,7 +608,7 @@ export default function CentreAppelAgent() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* 🚀 BOUTON EXPORT SÉCURISÉ */}
+            {/* BOUTON EXPORT SÉCURISÉ */}
             {hasPermission('exporter_csv') && (
               <button
                 onClick={exporterCSV}
@@ -623,7 +624,7 @@ export default function CentreAppelAgent() {
               </button>
             )}
 
-            {/* 🚀 BOUTON IMPORT SÉCURISÉ */}
+            {/* BOUTON IMPORT SÉCURISÉ */}
             {hasPermission('importer_csv') && (
               <label
                 title="Importer des commandes depuis un fichier CSV ou Excel"
