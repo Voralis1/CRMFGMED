@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
+import { useAuth } from '../context/AuthContext'
+import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import * as XLSX from 'xlsx'
 
@@ -111,8 +113,13 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
 }
 
 export default function CentreAppelAgent() {
+  const { user, tenantId, loading: authLoading } = useAuth() // 👈 Conservation pour le tenantId
+  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Les droits d'accès
+  const router = useRouter()
+
   const [commandes, setCommandes] = useState([])
   const [listePays, setListePays] = useState([])
+  const [listeZones, setListeZones] = useState([])
   const [loading, setLoading] = useState(true)
   const [ongletActif, setOngletActif] = useState('a_traiter')
 
@@ -126,38 +133,39 @@ export default function CentreAppelAgent() {
   const [filtreAgent, setFiltreAgent] = useState('')
   const [filtreVille, setFiltreVille] = useState('')
   const [filtreSource, setFiltreSource] = useState('')
+  const [filtrePays, setFiltrePays] = useState('')
   const [panneauFiltresOuvert, setPanneauFiltresOuvert] = useState(false)
-  const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], agents: [] })
+  const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], agents: [], pays: [] })
 
   const [page, setPage] = useState(1)
   const [totalItems, setTotalItems] = useState(0)
   const ITEMS_PER_PAGE = 50
 
   const [agentActuel, setAgentActuel] = useState(null)
-
   const [commandeSelectionnee, setCommandeSelectionnee] = useState(null)
   const [statutChoisi, setStatutChoisi] = useState('confirmed')
 
   const [historiqueLead, setHistoriqueLead] = useState([])
   const [loadingHistorique, setLoadingHistorique] = useState(false)
-
   const [tempsRestant, setTempsRestant] = useState(300)
 
   const [formData, setFormData] = useState({
-    source: '',
-    client_nom: '',
-    client_telephone: '',
-    ville_zone: '',
-    pays_id: '',
-    produit: '',
-    quantite: 1,
-    prix: 0,
-    notes: '',
-    date_rappel: ''
+    source: '', client_nom: '', client_telephone: '', ville_zone: '',
+    zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: ''
   })
 
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
-  const router = useRouter()
+
+  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE
+  useEffect(() => {
+    if (!authLoading && !permsLoading) {
+      if (!user) {
+        router.replace('/')
+      } else if (!hasPermission('menu_centre_appel')) {
+        router.replace('/dashboard')
+      }
+    }
+  }, [user, authLoading, permsLoading, hasPermission, router])
 
   useEffect(() => {
     let interval = null
@@ -209,10 +217,7 @@ export default function CentreAppelAgent() {
       setLoadingHistorique(true)
       const { data } = await supabase
         .from('appels')
-        .select(`
-          id, statut, notes, date_rappel, created_at,
-          agents ( nom, name, full_name )
-        `)
+        .select(`id, statut, notes, date_rappel, created_at, agents ( nom, name, full_name )`)
         .eq('commande_id', commandeSelectionnee.id)
         .order('created_at', { ascending: false })
 
@@ -224,14 +229,14 @@ export default function CentreAppelAgent() {
 
   useEffect(() => {
     async function chargerOptionsFiltres() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
+      if (!user || !tenantId) return
 
-      const [{ data: produits }, { data: villes }, { data: sources }, { data: agents }] = await Promise.all([
-        supabase.from('commandes').select('produit').not('produit', 'is', null).limit(2000),
-        supabase.from('commandes').select('ville_zone').not('ville_zone', 'is', null).limit(2000),
-        supabase.from('commandes').select('source').not('source', 'is', null).limit(2000),
-        supabase.from('agents').select('id, nom, name, full_name')
+      const [{ data: produits }, { data: villes }, { data: sources }, { data: agents }, { data: pays }] = await Promise.all([
+        supabase.from('commandes').select('produit').eq('tenant_id', tenantId).not('produit', 'is', null).limit(2000),
+        supabase.from('commandes').select('ville_zone').eq('tenant_id', tenantId).not('ville_zone', 'is', null).limit(2000),
+        supabase.from('commandes').select('source').eq('tenant_id', tenantId).not('source', 'is', null).limit(2000),
+        supabase.from('agents').select('id, nom, name, full_name').eq('tenant_id', tenantId),
+        supabase.from('pays').select('id, nom').eq('tenant_id', tenantId).order('nom')
       ])
 
       const uniques = (rows, key) =>
@@ -245,36 +250,22 @@ export default function CentreAppelAgent() {
         agents: (agents || []).map(a => ({
           id: a.id,
           nom: a.nom || a.name || a.full_name || 'Agent'
-        }))
+        })),
+        pays: (pays || []).map(p => ({ id: p.id, nom: p.nom }))
       })
     }
     chargerOptionsFiltres()
-  }, [])
+  }, [user, tenantId])
 
   useEffect(() => {
-    async function verifierAccesEtCharger() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        router.push('/')
-        return
-      }
+    if (authLoading || permsLoading || !user || !tenantId) return
 
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', session.user.id)
-        .maybeSingle()
-
-      if (roleData?.role !== 'admin' && roleData?.role !== 'agent') {
-        alert("Accès non autorisé à l'espace agent.")
-        router.push('/')
-        return
-      }
-
+    async function verifierAgentEtCharger() {
       const { data: agentData } = await supabase
         .from('agents')
         .select('*')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
+        .eq('tenant_id', tenantId)
         .maybeSingle()
 
       if (agentData) {
@@ -284,24 +275,25 @@ export default function CentreAppelAgent() {
       await chargerCommandes(page, ongletActif)
     }
 
-    verifierAccesEtCharger()
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, router])
+    verifierAgentEtCharger()
+  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantId])
 
   async function chargerCommandes(pageActuelle, onglet) {
+    if (!tenantId) return
     setLoading(true)
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
 
-    const { data: paysListDB } = await supabase
-      .from('pays')
-      .select('id, nom, code, devise')
-
+    const { data: paysListDB } = await supabase.from('pays').select('id, nom, code, devise').eq('tenant_id', tenantId)
     setListePays(paysListDB || [])
+
+    const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantId)
+    setListeZones(zonesListDB || [])
 
     const jointureAppels = filtreAgent ? ', appels!inner(agent_id)' : ''
 
-    let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true })
-    let requeteData = supabase.from('commandes').select(`id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, pays_id, notes, pays(id, nom, code, devise)${jointureAppels}`)
+    let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true }).eq('tenant_id', tenantId)
+    let requeteData = supabase.from('commandes').select(`id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)${jointureAppels}`).eq('tenant_id', tenantId)
 
     if (onglet === 'a_traiter') {
       requeteBase = requeteBase.is('statut_confirmation', null)
@@ -330,33 +322,17 @@ export default function CentreAppelAgent() {
     if (rechercheActive) {
       const r = rechercheActive.replace(/[%,()#]/g, '')
       const rTel = r.replace(/[\s.\-]/g, '')
-      const conditions = [
-        `client_nom.ilike.%${r}%`,
-        `client_telephone.ilike.%${r}%`,
-        `lead_id.ilike.%${r}%`
-      ]
+      const conditions = [`client_nom.ilike.%${r}%`, `client_telephone.ilike.%${r}%`, `lead_id.ilike.%${r}%`]
       if (rTel && rTel !== r) conditions.push(`client_telephone.ilike.%${rTel}%`)
       const filtre = conditions.join(',')
       requeteBase = requeteBase.or(filtre)
       requeteData = requeteData.or(filtre)
     }
 
-    if (filtreProduit) {
-      requeteBase = requeteBase.eq('produit', filtreProduit)
-      requeteData = requeteData.eq('produit', filtreProduit)
-    }
-    if (filtreVille) {
-      requeteBase = requeteBase.eq('ville_zone', filtreVille)
-      requeteData = requeteData.eq('ville_zone', filtreVille)
-    }
-    if (filtreSource) {
-      requeteBase = requeteBase.eq('source', filtreSource)
-      requeteData = requeteData.eq('source', filtreSource)
-    }
-    if (filtreAgent) {
-      requeteBase = requeteBase.eq('appels.agent_id', filtreAgent)
-      requeteData = requeteData.eq('appels.agent_id', filtreAgent)
-    }
+    if (filtreProduit) { requeteBase = requeteBase.eq('produit', filtreProduit); requeteData = requeteData.eq('produit', filtreProduit); }
+    if (filtreVille) { requeteBase = requeteBase.eq('ville_zone', filtreVille); requeteData = requeteData.eq('ville_zone', filtreVille); }
+    if (filtreSource) { requeteBase = requeteBase.eq('source', filtreSource); requeteData = requeteData.eq('source', filtreSource); }
+    if (filtreAgent) { requeteBase = requeteBase.eq('appels.agent_id', filtreAgent); requeteData = requeteData.eq('appels.agent_id', filtreAgent); }
 
     if (onglet === 'historique') {
       requeteData = requeteData.order('updated_at', { ascending: false }).order('id', { ascending: false })
@@ -364,7 +340,11 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.order('created_at', { ascending: false }).order('id', { ascending: false })
     }
 
-    requeteData = requeteData.range(debut, fin)
+    if (!filtrePays) {
+      requeteData = requeteData.range(debut, fin)
+    } else {
+      requeteData = requeteData.limit(5000)
+    }
 
     const { count } = await requeteBase
     const { data } = await requeteData
@@ -385,8 +365,26 @@ export default function CentreAppelAgent() {
       return { ...cmdSansJointure, pays: paysFinal }
     })
 
-    setTotalItems(count || 0)
-    setCommandes(commandesIntelligentes)
+    if (filtrePays) {
+      const paysSelectionne = paysListDB.find(p => String(p.id) === String(filtrePays))
+      const resFiltre = commandesIntelligentes.filter(cmd => {
+        if (!paysSelectionne) return false
+        return (
+          String(cmd.pays_id) === String(filtrePays) ||
+          cmd.pays?.id === paysSelectionne.id ||
+          cmd.pays?.nom === paysSelectionne.nom ||
+          cmd.pays?.iso === paysSelectionne.code ||
+          cmd.pays?.code === paysSelectionne.code
+        )
+      })
+
+      setTotalItems(resFiltre.length)
+      setCommandes(resFiltre.slice(debut, debut + ITEMS_PER_PAGE))
+    } else {
+      setTotalItems(count || 0)
+      setCommandes(commandesIntelligentes)
+    }
+    
     setLoading(false)
   }
 
@@ -402,7 +400,7 @@ export default function CentreAppelAgent() {
       if (!pays) {
         const { data } = await supabase
           .from('pays')
-          .insert({ nom: commande.pays.nom, code: commande.pays.iso })
+          .insert({ nom: commande.pays.nom, code: commande.pays.iso, tenant_id: tenantId })
           .select('id, nom, code, devise')
           .single()
 
@@ -419,6 +417,7 @@ export default function CentreAppelAgent() {
       client_nom: commande.client_nom || '',
       client_telephone: commande.client_telephone || '',
       ville_zone: commande.ville_zone || '',
+      zone_id: commande.zone_id || '',
       pays_id: paysId,
       produit: commande.produit || '',
       quantite: commande.quantite || 1,
@@ -475,11 +474,10 @@ export default function CentreAppelAgent() {
 
   function reinitialiserFiltres() {
     setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut('')
-    setFiltreProduit(''); setFiltreAgent(''); setFiltreVille(''); setFiltreSource('')
+    setFiltreProduit(''); setFiltreAgent(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays('')
     setPage(1)
   }
 
-  // --- FONCTION EXPORT CSV ---
   function exporterCSV() {
     if (commandes.length === 0) {
       alert("Aucune commande à exporter dans cette vue.")
@@ -511,21 +509,17 @@ export default function CentreAppelAgent() {
     document.body.removeChild(lien)
   }
 
-  // --- FONCTION IMPORT (SANS BESOIN DE COLONNE SOURCE) ---
   async function importerFichier(event) {
     const fichier = event.target.files[0]
-    if (!fichier) return
+    if (!fichier || !tenantId) return
 
     const lecteur = new FileReader()
-    
     lecteur.onload = async function (e) {
       try {
         const data = new Uint8Array(e.target.result)
         const classeur = XLSX.read(data, { type: 'array' })
-        
         const nomFeuille = classeur.SheetNames[0]
         const feuille = classeur.Sheets[nomFeuille]
-        
         const lignes = XLSX.utils.sheet_to_json(feuille, { defval: "" })
 
         if (lignes.length === 0) {
@@ -546,14 +540,10 @@ export default function CentreAppelAgent() {
             produit: ligneNormalisee['produit'] || 'Produit standard',
             quantite: parseInt(ligneNormalisee['quantite']) || 1,
             prix: parseFloat(ligneNormalisee['prix']) || 0,
-            
-            // LA CORRECTION FINALE : 
-            // On s'en fiche si le partenaire a mis une source ou non.
-            // On force la valeur 'csv' pour que Supabase l'accepte sans bloquer.
             source: 'csv', 
-            
             notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
-            lead_id: `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+            lead_id: `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+            tenant_id: tenantId
           }
         }).filter(cmd => cmd.client_telephone !== '')
 
@@ -569,31 +559,31 @@ export default function CentreAppelAgent() {
           alert(`Import réussi : ${nouvellesCommandes.length} commandes ajoutées.`)
           window.location.reload()
         }
-
       } catch (erreur) {
-        alert("Erreur lors de la lecture du fichier. Assurez-vous qu'il s'agit d'un fichier CSV ou Excel valide.")
-        console.error(erreur)
+        alert("Erreur lors de la lecture du fichier.")
       }
     }
-
     lecteur.readAsArrayBuffer(fichier)
     event.target.value = null
   }
 
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
-  const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource].filter(Boolean).length
+  const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, filtrePays].filter(Boolean).length
   const filtresActifs = dateDebut || dateFin || recherche || nombreFiltresActifs > 0
 
-  const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation FGMED. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
-
+  const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
 
   const labelStatut = (v) => STATUTS_APPEL.find(s => s.value === v)?.label || v
   const nomAgent = (id) => optionsFiltres.agents.find(a => a.id === id)?.nom || 'Agent'
 
+  // 🚀 ÉCRAN D'ATTENTE OU DE BLOCAGE
+  if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+  }
+
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-16 px-6 pb-10">
-
       <style>{`
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -608,8 +598,6 @@ export default function CentreAppelAgent() {
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
-
-        {/* ---- Ligne 1 : Titre à gauche, actions CSV à droite ---- */}
         <div className="flex justify-between items-center flex-wrap gap-3">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1 flex items-center gap-2">
@@ -619,39 +607,45 @@ export default function CentreAppelAgent() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={exporterCSV}
-              title="Exporter la vue actuelle en CSV"
-              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Exporter CSV
-            </button>
-            <label
-              title="Importer des commandes depuis un fichier CSV ou Excel"
-              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-              Importer CSV/Excel
-              <input
-                type="file"
-                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-                onChange={importerFichier}
-                className="hidden"
-              />
-            </label>
+            {/* 🚀 BOUTON EXPORT SÉCURISÉ */}
+            {hasPermission('exporter_csv') && (
+              <button
+                onClick={exporterCSV}
+                title="Exporter la vue actuelle en CSV"
+                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Exporter CSV
+              </button>
+            )}
+
+            {/* 🚀 BOUTON IMPORT SÉCURISÉ */}
+            {hasPermission('importer_csv') && (
+              <label
+                title="Importer des commandes depuis un fichier CSV ou Excel"
+                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                Importer CSV/Excel
+                <input
+                  type="file"
+                  accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                  onChange={importerFichier}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
         </div>
 
-        {/* ---- Ligne 2 : Onglets à gauche, recherche + filtres + dates à droite ---- */}
         <div className="flex justify-between items-center mt-2 flex-wrap gap-4">
           <div className="flex items-center gap-4">
             <div className="flex gap-2">
@@ -681,7 +675,6 @@ export default function CentreAppelAgent() {
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            {/* ---- Recherche (nom, téléphone, N° commande) ---- */}
             <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-[#C9C1B1] shadow-sm w-[280px] focus-within:border-[#FFB162] transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/30 shrink-0">
                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
@@ -698,7 +691,6 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
-            {/* ---- Bouton Filtres + panneau déroulant ---- */}
             <div className="relative">
               <button
                 onClick={() => setPanneauFiltresOuvert(o => !o)}
@@ -708,18 +700,12 @@ export default function CentreAppelAgent() {
                     : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                </svg>
                 Filtres
                 {nombreFiltresActifs > 0 && (
                   <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FFB162] text-[#1B2632] text-[11px] font-bold flex items-center justify-center">
                     {nombreFiltresActifs}
                   </span>
                 )}
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={`transition-transform ${panneauFiltresOuvert ? 'rotate-180' : ''}`}>
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
               </button>
 
               {panneauFiltresOuvert && (
@@ -729,10 +715,7 @@ export default function CentreAppelAgent() {
                     <div className="flex items-center justify-between mb-4">
                       <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">Filtres</span>
                       {nombreFiltresActifs > 0 && (
-                        <button
-                          onClick={reinitialiserFiltres}
-                          className="text-xs font-semibold text-[#A35139] hover:underline"
-                        >
+                        <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">
                           Tout effacer
                         </button>
                       )}
@@ -740,50 +723,18 @@ export default function CentreAppelAgent() {
 
                     <div className="flex flex-col gap-4">
                       {ongletActif === 'historique' && (
-                        <SelectFiltre
-                          label="Statut"
-                          value={filtreStatut}
-                          onChange={appliquer(setFiltreStatut)}
-                          options={STATUTS_APPEL}
-                          placeholder="Tous les statuts"
-                        />
+                        <SelectFiltre label="Statut" value={filtreStatut} onChange={appliquer(setFiltreStatut)} options={STATUTS_APPEL} placeholder="Tous les statuts" />
                       )}
                       {ongletActif === 'historique' && (
-                        <SelectFiltre
-                          label="Agent"
-                          value={filtreAgent}
-                          onChange={appliquer(setFiltreAgent)}
-                          options={optionsFiltres.agents.map(a => ({ value: a.id, label: a.nom }))}
-                          placeholder="Tous les agents"
-                        />
+                        <SelectFiltre label="Agent" value={filtreAgent} onChange={appliquer(setFiltreAgent)} options={optionsFiltres.agents.map(a => ({ value: a.id, label: a.nom }))} placeholder="Tous les agents" />
                       )}
-                      <SelectFiltre
-                        label="Produit"
-                        value={filtreProduit}
-                        onChange={appliquer(setFiltreProduit)}
-                        options={optionsFiltres.produits.map(p => ({ value: p, label: p }))}
-                        placeholder="Tous les produits"
-                      />
-                      <SelectFiltre
-                        label="Ville"
-                        value={filtreVille}
-                        onChange={appliquer(setFiltreVille)}
-                        options={optionsFiltres.villes.map(v => ({ value: v, label: v }))}
-                        placeholder="Toutes les villes"
-                      />
-                      <SelectFiltre
-                        label="Source"
-                        value={filtreSource}
-                        onChange={appliquer(setFiltreSource)}
-                        options={optionsFiltres.sources.map(s => ({ value: s, label: s }))}
-                        placeholder="Toutes les sources"
-                      />
+                      <SelectFiltre label="Pays" value={filtrePays} onChange={appliquer(setFiltrePays)} options={optionsFiltres.pays.map(p => ({ value: p.id, label: p.nom }))} placeholder="Tous les pays" />
+                      <SelectFiltre label="Produit" value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={optionsFiltres.produits.map(p => ({ value: p, label: p }))} placeholder="Tous les produits" />
+                      <SelectFiltre label="Ville" value={filtreVille} onChange={appliquer(setFiltreVille)} options={optionsFiltres.villes.map(v => ({ value: v, label: v }))} placeholder="Toutes les villes" />
+                      <SelectFiltre label="Source" value={filtreSource} onChange={appliquer(setFiltreSource)} options={optionsFiltres.sources.map(s => ({ value: s, label: s }))} placeholder="Toutes les sources" />
                     </div>
 
-                    <button
-                      onClick={() => setPanneauFiltresOuvert(false)}
-                      className="w-full mt-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors"
-                    >
+                    <button onClick={() => setPanneauFiltresOuvert(false)} className="w-full mt-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors">
                       Appliquer
                     </button>
                   </div>
@@ -791,7 +742,6 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
-            {/* ---- Dates ---- */}
             <div className="flex items-center gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm">
               <div className="flex items-center gap-2 px-3 py-1.5">
                 <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest">Du</span>
@@ -805,21 +755,18 @@ export default function CentreAppelAgent() {
             </div>
 
             {filtresActifs && (
-              <button
-                onClick={reinitialiserFiltres}
-                className="text-xs font-semibold text-[#A35139] hover:underline"
-              >
+              <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">
                 Réinitialiser
               </button>
             )}
           </div>
         </div>
 
-        {/* ---- Chips des filtres actifs ---- */}
         {nombreFiltresActifs > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             {filtreStatut && <ChipFiltre label={`Statut : ${labelStatut(filtreStatut)}`} onClear={() => appliquer(setFiltreStatut)('')} />}
             {filtreAgent && <ChipFiltre label={`Agent : ${nomAgent(filtreAgent)}`} onClear={() => appliquer(setFiltreAgent)('')} />}
+            {filtrePays && <ChipFiltre label={`Pays : ${optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || ''}`} onClear={() => appliquer(setFiltrePays)('')} />}
             {filtreProduit && <ChipFiltre label={`Produit : ${filtreProduit}`} onClear={() => appliquer(setFiltreProduit)('')} />}
             {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
             {filtreSource && <ChipFiltre label={`Source : ${filtreSource}`} onClear={() => appliquer(setFiltreSource)('')} />}
@@ -902,13 +849,9 @@ export default function CentreAppelAgent() {
 
       {commandeSelectionnee && (
         <>
-          <div
-            className="fixed inset-0 bg-[#1B2632]/30 backdrop-blur-[2px] z-40 fade-in"
-            onClick={() => setCommandeSelectionnee(null)}
-          />
+          <div className="fixed inset-0 bg-[#1B2632]/30 backdrop-blur-[2px] z-40 fade-in" onClick={() => setCommandeSelectionnee(null)} />
 
           <div className="fixed top-0 right-0 h-screen w-[420px] max-w-full bg-white z-50 shadow-2xl border-l border-[#C9C1B1] flex flex-col drawer-in">
-
             <div className="flex justify-between items-start px-6 py-5 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
               <div>
                 <h2 className="text-lg font-bold text-[#1B2632] mb-1">
@@ -936,13 +879,12 @@ export default function CentreAppelAgent() {
               <div className="mx-6 mt-5 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-800">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wider mb-0.5">Alerte Doublon</p>
-                  <p className="text-[11px] leading-tight opacity-90">Ce numéro de téléphone apparaît plusieurs fois dans la liste actuelle. Vérifiez avant de valider l'expédition.</p>
+                  <p className="text-[11px] leading-tight opacity-90">Ce numéro de téléphone apparaît plusieurs fois dans la liste actuelle.</p>
                 </div>
               </div>
             )}
 
             <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-6">
-
               <div className="flex flex-col gap-5">
                 <div>
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Nom du client</label>
@@ -970,19 +912,23 @@ export default function CentreAppelAgent() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Ville / Zone</label>
-                    <input
-                      type="text"
-                      value={formData.ville_zone}
-                      onChange={(e) => setFormData({...formData, ville_zone: e.target.value})}
-                      className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
-                    />
+                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Zone officielle</label>
+                    <select
+                      value={formData.zone_id}
+                      onChange={(e) => setFormData({...formData, zone_id: e.target.value})}
+                      className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] font-bold bg-transparent focus:outline-none focus:border-[#FFB162]"
+                    >
+                      <option value="">Sélectionner...</option>
+                      {listeZones.filter(z => !formData.pays_id || z.pays_id === formData.pays_id).map((z) => (
+                        <option key={z.id} value={z.id}>{z.nom_zone}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Pays</label>
                     <select
                       value={formData.pays_id}
-                      onChange={(e) => setFormData({...formData, pays_id: e.target.value})}
+                      onChange={(e) => setFormData({...formData, pays_id: e.target.value, zone_id: ''})}
                       className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                     >
                       <option value="">Sélectionner</option>
@@ -1006,20 +952,20 @@ export default function CentreAppelAgent() {
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Quantité</label>
                     <div className="flex items-center border-b border-[#C9C1B1]">
-                      <button type="button" onClick={() => setFormData({...formData, quantite: Math.max(1, formData.quantite - 1)})} className="px-2 py-2 text-[#1B2632] font-bold hover:text-[#A35139]">-</button>
+                      <button type="button" onClick={() => setFormData({...formData, quantite: Math.max(1, formData.quantite - 1)})} className="px-2 py-2 text-[#1B2632] font-bold">-</button>
                       <input
                         type="number"
                         value={formData.quantite}
                         onChange={(e) => setFormData({...formData, quantite: parseInt(e.target.value) || 1})}
                         className="w-full text-center py-2 font-bold text-sm text-[#1B2632] outline-none bg-transparent"
                       />
-                      <button type="button" onClick={() => setFormData({...formData, quantite: formData.quantite + 1})} className="px-2 py-2 text-[#1B2632] font-bold hover:text-[#A35139]">+</button>
+                      <button type="button" onClick={() => setFormData({...formData, quantite: formData.quantite + 1})} className="px-2 py-2 text-[#1B2632] font-bold">+</button>
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Prix total (Modifiable)</label>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Prix total</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1028,37 +974,14 @@ export default function CentreAppelAgent() {
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Source (Optionnel)</label>
-                  <input
-                    type="text"
-                    value={formData.source}
-                    onChange={(e) => setFormData({...formData, source: e.target.value})}
-                    className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Notes</label>
-                  <textarea
-                    rows="2"
-                    placeholder="Ex: Client demande à être rappelé demain matin..."
-                    value={formData.notes}
-                    onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                    className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent resize-none"
-                  />
-                </div>
               </div>
 
               <div className="p-4 bg-[#EEE9DF]/30 rounded-xl border border-[#C9C1B1]/50">
-                <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">
-                  Résultat de l'appel
-                </label>
+                <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">Résultat de l'appel</label>
                 <select
                   value={statutChoisi}
                   onChange={(e) => setStatutChoisi(e.target.value)}
-                  className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2.5 text-sm font-bold text-[#1B2632] focus:outline-none focus:ring-2 focus:ring-[#FFB162] bg-white shadow-sm"
+                  className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2.5 text-sm font-bold text-[#1B2632] bg-white shadow-sm"
                 >
                   {STATUTS_APPEL.map((s) => (
                     <option key={s.value} value={s.value}>{s.label}</option>
@@ -1072,56 +995,11 @@ export default function CentreAppelAgent() {
                       type="datetime-local"
                       value={formData.date_rappel}
                       onChange={(e) => setFormData({...formData, date_rappel: e.target.value})}
-                      className="w-full border border-[#FFB162]/50 rounded-lg px-3 py-2 text-sm text-[#8a5a1f] bg-white outline-none focus:ring-1 focus:ring-[#FFB162]"
+                      className="w-full border border-[#FFB162]/50 rounded-lg px-3 py-2 text-sm text-[#8a5a1f] bg-white outline-none"
                     />
                   </div>
                 )}
               </div>
-
-              <div className="mt-2">
-                <h3 className="text-[11px] font-bold text-[#1B2632]/50 uppercase tracking-widest mb-4 border-b border-[#C9C1B1]/30 pb-2">
-                  Historique des actions
-                </h3>
-
-                {loadingHistorique ? (
-                  <div className="text-center text-xs text-[#1B2632]/40 py-4">Chargement de l'historique...</div>
-                ) : historiqueLead.length === 0 ? (
-                  <div className="text-center text-xs text-[#1B2632]/40 py-4 bg-[#EEE9DF]/20 rounded-lg border border-[#C9C1B1]/30">Aucun appel précédent enregistré.</div>
-                ) : (
-                  <div className="flex flex-col relative pl-1">
-                    {historiqueLead.map((log) => {
-                      const date = new Date(log.created_at)
-                      const isToday = date.toDateString() === new Date().toDateString()
-                      const dateText = isToday ? "Aujourd'hui" : date.toLocaleDateString('fr-FR')
-                      const timeText = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-
-                      return (
-                        <div key={log.id} className="timeline-item relative pl-6 pb-5">
-                          <div className="timeline-line"></div>
-                          <div className="absolute left-0 top-1 w-2.5 h-2.5 rounded-full bg-[#A35139] shadow-[0_0_0_3px_#fff]"></div>
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <StatutPill statut={log.statut} />
-                              <span className="text-[10px] text-[#1B2632]/50 font-medium">
-                                par <span className="font-bold text-[#1B2632]/70">{log.agents?.nom || log.agents?.name || 'Inconnu'}</span>
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-[#1B2632]/40 uppercase tracking-wider font-bold mt-0.5">
-                              {dateText} à {timeText}
-                            </div>
-                            {log.notes && (
-                              <div className="mt-1.5 p-2.5 bg-gray-50 rounded-lg border border-gray-100 text-xs text-[#1B2632]/80 italic">
-                                "{log.notes}"
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
             </div>
 
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
@@ -1132,9 +1010,6 @@ export default function CentreAppelAgent() {
               >
                 {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
               </button>
-              <p className="text-[10px] text-center text-[#1B2632]/40 mt-2 font-medium uppercase tracking-wider">
-                Échap pour fermer · Lead suivant après enregistrement
-              </p>
             </div>
           </div>
         </>

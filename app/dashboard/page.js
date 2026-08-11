@@ -7,9 +7,11 @@ import {
   PieChart, Pie, Cell,
 } from "recharts";
 import { supabase } from "../../lib/supabaseClient";
+import { useAuth } from "../context/AuthContext";
+import { usePermissions } from "../context/PermissionsContext"; // 🚀 Nouvel import
 
 // ==================================================================
-//  COMPOSANTS VISUELS
+//  COMPOSANTS VISUELS (StatCard, StatutPill, formatMontant restent identiques)
 // ==================================================================
 
 function StatCard({ label, valeur, sousLabel, accent }) {
@@ -41,20 +43,20 @@ function StatutPill({ children, ton }) {
 }
 
 function formatMontant(n, devise) {
-  return new Intl.NumberFormat("fr-FR").format(n || 0) + " " + devise;
+  return new Intl.NumberFormat("fr-FR").format(n || 0) + " " + (devise || "AOA");
 }
 
 // ==================================================================
 //  RÉCUPÉRATION ET CALCUL DES DONNÉES
 // ==================================================================
+// (La fonction chargerStats reste EXACTEMENT la même, aucune modification requise)
+async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
+  if (!tenantId) return null;
 
-// AJOUT : Prise en compte des dates personnalisées
-// AJOUT : Prise en compte des dates personnalisées et tri chronologique
-async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
-  // 1. Total exact des commandes
   const { count: vraiTotalCommandes } = await supabase
     .from("commandes")
-    .select("*", { count: "exact", head: true });
+    .select("*", { count: "exact", head: true })
+    .eq("tenant_id", tenantId);
 
   const maintenant = new Date();
   let dateDebut = new Date(0); 
@@ -82,35 +84,15 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
   const { count: commandesAujourdhuiExact } = await supabase
     .from("commandes")
     .select("*", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
     .gte("created_at", `${todayYMD}T00:00:00`);
 
-  // CORRECTION ICI : Ajout de .order('created_at', { ascending: false }) pour garantir d'avoir les nouvelles données
   const [resCmds, resLivs, resPays, resAppels, resAgents] = await Promise.all([
-    supabase
-      .from("commandes")
-      .select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit")
-      .order('created_at', { ascending: false })
-      .limit(5000),
-    supabase
-      .from("livraisons")
-      .select("statut, commande_id")
-      .order('created_at', { ascending: false })
-      .limit(5000),
-    supabase
-      .from("paiements")
-      .select("montant")
-      .in("statut", ["en_attente", "encaisse", "remis"])
-      .order('created_at', { ascending: false })
-      .limit(5000),
-    supabase
-      .from("appels")
-      .select("agent_id, commande_id, created_at, statut")
-      .order('created_at', { ascending: false })
-      .limit(5000),
-    supabase
-      .from("agents")
-      .select("id, nom")
-      .limit(1000)
+    supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
+    supabase.from("livraisons").select("statut, commande_id").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
+    supabase.from("paiements").select("montant").eq("tenant_id", tenantId).in("statut", ["en_attente", "encaisse", "remis"]).order('created_at', { ascending: false }).limit(5000),
+    supabase.from("appels").select("agent_id, commande_id, created_at, statut").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
+    supabase.from("agents").select("id, nom").eq("tenant_id", tenantId).limit(1000)
   ]);
 
   const cmds = resCmds.data || [];
@@ -185,17 +167,15 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     .map(([nom, qte]) => ({ nom, qte })).sort((a, b) => b.qte - a.qte).slice(0, 5)
     .map((p, i) => ({ rang: i + 1, nom: p.nom, qte: p.qte }));
 
-  // CORRECTION ICI : Éviter les points en double et prendre l'agent le plus récent
   const livreesCmdIds = new Set(livrees.map(l => l.commande_id));
   const agentDeliveredCounts = {};
-  const commandesAttribuees = new Set(); // Stocke les commandes pour ne pas les compter 2 fois
+  const commandesAttribuees = new Set();
 
-  // Grâce au tri chronologique au début, le premier appel croisé est le plus récent
   appels.forEach(appel => {
     if (livreesCmdIds.has(appel.commande_id)) {
       if (!commandesAttribuees.has(appel.commande_id)) {
         agentDeliveredCounts[appel.agent_id] = (agentDeliveredCounts[appel.agent_id] || 0) + 1;
-        commandesAttribuees.add(appel.commande_id); // On verrouille cette commande
+        commandesAttribuees.add(appel.commande_id);
       }
     }
   });
@@ -213,77 +193,62 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso) {
     .slice(0, 5);
 
   return {
-    pays: "Angola", devise: "AOA",
+    devise: "AOA",
     kpis: { commandesTotal: totalCmds, commandesJour: commandesAujourdhui, tauxConfirmation: Number(tauxConfirmation), tauxLivraison: Number(tauxLivraison), caEncaisse: caEncaisse },
     confirmationParHeure: hourly, statutsLivraison, overviewAppels, topProduits, topAgents,
   };
 }
+
 // ==================================================================
 //  PAGE PRINCIPALE
 // ==================================================================
 
 export default function DashboardFGMED() {
-  const [data, setData] = useState(null);
+  const { user, tenantId, loading: authLoading } = useAuth(); // 🚀 On retire "role"
+  const { roleNom, loading: permsLoading } = usePermissions(); // 🚀 On ajoute "roleNom"
   
-  // AJOUT : États pour la gestion des dates
+  const [data, setData] = useState(null);
   const [periode, setPeriode] = useState("Aujourd'hui");
   const [dateDebutPerso, setDateDebutPerso] = useState("");
   const [dateFinPerso, setDateFinPerso] = useState("");
   
   const router = useRouter();
   
+  const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
+
+  // 🚀 Redirection basée sur le NOUVEAU système
   useEffect(() => {
-    async function verifierAccesDashboard() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+    if (!authLoading && !permsLoading) {
+      if (!user) {
         router.push('/');
-        return;
-      }
-
-      // Récupérer le rôle de l'utilisateur connecté
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', session.user.id)
-        .maybeSingle();
-
-      const role = roleData?.role;
-
-      //  Rediriger l'agent vers son centre d'appel
-      if (role === 'agent') {
-        router.push('/centre-appel');
-        return;
-      }
-
-      //  Rediriger le livreur vers son espace de livraison
-      if (role === 'livreur') {
-        router.push('/livraisons');
-        return;
-      }
-
-      // Si ce n'est ni un admin, on sécurise en le renvoyant vers l'accueil
-      if (role !== 'admin') {
-        router.push('/');
+      } else if (roleNom === 'super_admin' || roleNom === 'SUPER_ADMIN') {
+        router.replace('/super-admin/tenants');
       }
     }
-    verifierAccesDashboard();
-  }, [router]);
-
-  // AJOUT : Dépendances mises à jour pour relancer la fonction si une date change
+  }, [user, authLoading, permsLoading, roleNom, router]);
+  
+  // 🚀 Attendre que l'auth ET les perms soient chargés
   useEffect(() => {
-    chargerStats(periode, dateDebutPerso, dateFinPerso).then(setData);
-  }, [periode, dateDebutPerso, dateFinPerso]);
+    if (authLoading || permsLoading || !tenantKey) return;
+    chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
+  }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading]);
 
-  if (!data) {
+  // 🚀 Affichage de chargement mis à jour
+  if (authLoading || permsLoading || (!data && roleNom !== 'super_admin' && roleNom !== 'SUPER_ADMIN')) {
     return (
-      <div className="flex items-center justify-center h-full text-[#1B2632] font-medium">
+      <div className="flex items-center justify-center h-full text-[#1B2632] font-medium p-20">
         <StyleFGMED />
         Chargement des statistiques...
       </div>
     );
   }
 
-  const { kpis, pays, devise } = data;
+  // 🚀 Cacher le dashboard classique au Super Admin
+  if (roleNom === 'super_admin' || roleNom === 'SUPER_ADMIN') {
+    return null;
+  }
+
+  const { kpis, devise } = data;
   const totalLivraison = data.statutsLivraison.reduce((s, x) => s + x.valeur, 0);
 
   return (
@@ -297,7 +262,6 @@ export default function DashboardFGMED() {
           <h1 className="fg-title">Tableau de bord</h1>
         </div>
         
-        {/* AJOUT : Intégration du filtre par date aux côtés des boutons existants */}
         <div className="fg-periode">
           {["Aujourd'hui", "7 jours", "30 jours"].map((p) => (
             <button
@@ -527,7 +491,6 @@ function StyleFGMED() {
       .fg-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--truffle);margin:0 0 6px;}
       .fg-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-.01em;margin:0;}
       
-      /* AJOUT : Mise à jour du conteneur de périodes pour inclure le champ de date en beauté */
       .fg-periode{display:flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--oatmeal);border-radius:12px;padding:4px;}
       .fg-periode-btn{border:none;background:transparent;padding:7px 14px;border-radius:9px;font-family:'Inter';font-size:13px;font-weight:500;color:#5c5648;cursor:pointer;transition:.15s;}
       .fg-periode-btn:hover{color:var(--abyssal);}
@@ -539,7 +502,6 @@ function StyleFGMED() {
 
       .fg-card{background:#fff;border:1px solid var(--oatmeal);border-radius:16px;padding:20px;box-shadow:0 1px 2px rgba(27,38,50,.04);}
 
-      /* Grille fluide pour les KPIs (5 éléments) */
       .fg-kpis{display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:16px;margin-bottom:16px;}
       .fg-stat{padding:0;overflow:hidden;display:flex;}
       .fg-stat-bar{width:5px;flex:none;}
@@ -549,8 +511,6 @@ function StyleFGMED() {
       .fg-stat-sub{font-size:12px;color:#9a9384;}
 
       .fg-grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px;}
-      
-      /* Nouvelle grille 3 colonnes pour le bas */
       .fg-grid-3{display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;}
 
       .fg-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;}

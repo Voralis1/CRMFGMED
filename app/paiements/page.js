@@ -1,22 +1,40 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
+import { useAuth } from '../context/AuthContext' // 👈 Conservé pour tenantId et user
+import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
 
 export default function PaiementsPage() {
+  const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde l'auth de base
+  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
+  const router = useRouter()
+
   const [paiements, setPaiements] = useState([])
   const [caissesParLivreur, setCaissesParLivreur] = useState([])
   const [chargement, setChargement] = useState(true)
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
   const [nomUtilisateur, setNomUtilisateur] = useState('Chargement...')
-  const [roleUtilisateur, setRoleUtilisateur] = useState('')
-  const router = useRouter()
 
-  async function chargerPaiements() {
+  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
+  useEffect(() => {
+    if (!authLoading && !permsLoading) {
+      if (!user) {
+        router.replace('/')
+      } else if (!hasPermission('menu_paiements')) {
+        router.replace('/dashboard')
+      }
+    }
+  }, [user, authLoading, permsLoading, hasPermission, router])
+
+  const chargerPaiements = useCallback(async () => {
+    if (!tenantId) return
+
     const { data, error } = await supabase
       .from('paiements')
       .select('id, montant, statut, livreurs(nom), commandes(client_nom)')
+      .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
       .eq('statut', 'en_attente')
       .order('created_at', { ascending: false })
 
@@ -25,12 +43,15 @@ export default function PaiementsPage() {
     } else {
       setPaiements(data || [])
     }
-  }
+  }, [tenantId])
 
-  async function chargerCaisses() {
+  const chargerCaisses = useCallback(async () => {
+    if (!tenantId) return
+
     const { data, error } = await supabase
       .from('paiements')
       .select('montant, livreurs(id, nom)')
+      .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
       .eq('statut', 'encaisse')
 
     if (error) {
@@ -48,53 +69,37 @@ export default function PaiementsPage() {
       regroupement[idLivreur].total += Number(p.montant)
     }
     setCaissesParLivreur(Object.values(regroupement))
-  }
+  }, [tenantId])
 
-  async function chargerTout() {
+  const chargerTout = useCallback(async () => {
     setChargement(true)
-    await chargerPaiements()
-    await chargerCaisses()
+    await Promise.all([chargerPaiements(), chargerCaisses()])
     setChargement(false)
-  }
+  }, [chargerPaiements, chargerCaisses])
 
   useEffect(() => {
-    async function initialiser() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        router.push('/')
-        return
-      }
+    if (authLoading || permsLoading || !user || !tenantId) return
 
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', session.user.id)
-        .maybeSingle()
-
-      if (roleData?.role === 'agent') {
-        router.push('/centre-appel')
-        return
-      }
-
-      setRoleUtilisateur(roleData?.role || '')
-
+    async function initialiserUtilisateur() {
       const { data: userData } = await supabase
         .from('agents')
         .select('*')
-        .eq('user_id', session.user.id)
+        .eq('user_id', user.id)
+        .eq('tenant_id', tenantId)
         .maybeSingle()
 
       if (userData) {
         const nomBDD = userData.nom || userData.name || userData.full_name
-        setNomUtilisateur(nomBDD || session.user.email)
+        setNomUtilisateur(nomBDD || user.email)
       } else {
-        setNomUtilisateur(session.user.email)
+        setNomUtilisateur(user.email)
       }
 
       await chargerTout()
     }
-    initialiser()
-  }, [router])
+    
+    initialiserUtilisateur()
+  }, [user, authLoading, permsLoading, tenantId, chargerTout])
 
   async function encaisser(paiementId) {
     setEnvoiEnCoursId(paiementId)
@@ -151,25 +156,26 @@ export default function PaiementsPage() {
     await chargerTout()
   }
 
-  if (chargement) {
-    return <div className="p-8 text-gray-600 font-medium">Chargement des paiements...</div>
+  // 🚀 Écran de chargement et de vérification sécurisée
+  if (authLoading || permsLoading || !hasPermission('menu_paiements')) {
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
   }
 
+  // 🚀 Vérification dynamique des droits financiers (remplace l'ancienne variable role)
+  const peutVoirCashflow = hasPermission('gerer_utilisateurs') || hasPermission('voir_cashflow')
+
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
       
       {/* En-tête de la page */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
         <div className="flex justify-between items-center">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-              Centre Financier
+              Centre Financier • {nomUtilisateur}
             </p>
             <h1 className="text-3xl font-bold text-[#1B2632]">Gestion des Paiements</h1>
           </div>
-
-          
-          
         </div>
       </header>
 
@@ -203,7 +209,7 @@ export default function PaiementsPage() {
                       <button
                         onClick={() => encaisser(p.id)}
                         disabled={envoiEnCoursId === p.id}
-                        className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50"
+                        className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
                       >
                         {envoiEnCoursId === p.id ? '...' : 'Marquer encaissé'}
                       </button>
@@ -215,8 +221,8 @@ export default function PaiementsPage() {
           )}
         </div>
 
-        {/* Section 2 : Caisse par livreur (Affichée UNIQUEMENT pour l'admin) */}
-        {roleUtilisateur === 'admin' && (
+        {/* Section 2 : Caisse par livreur (Affichée UNIQUEMENT pour les profils ayant les droits financiers) */}
+        {peutVoirCashflow && (
           <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-6">
             <h2 className="text-lg font-bold text-[#1B2632] mb-4">
               Caisse par livreur (à remettre)
@@ -242,7 +248,7 @@ export default function PaiementsPage() {
                         <button
                           onClick={() => remettreEnCaisse(c.id)}
                           disabled={envoiEnCoursId === c.id}
-                          className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50"
+                          className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
                         >
                           {envoiEnCoursId === c.id ? '...' : 'Confirmer remise'}
                         </button>

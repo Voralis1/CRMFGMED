@@ -3,25 +3,32 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
+import { useAuth } from "../context/AuthContext"; // 👈 Conservé pour le tenantId et user
+import { usePermissions } from "../context/PermissionsContext"; // 🚀 Import du contexte des permissions
 
 export default function ParametresAdmin() {
+  const { user, tenantId, loading: authLoading } = useAuth(); // 👈 On garde l'auth de base
+  const { hasPermission, loading: permsLoading } = usePermissions(); // 🚀 Récupération des droits dynamiques
   const router = useRouter();
   
-  const [ongletActif, setOngletActif] = useState("produits"); // On met "produits" par défaut pour que tu voies le résultat
+  const [ongletActif, setOngletActif] = useState("produits");
   const [chargement, setChargement] = useState(true);
   const [message, setMessage] = useState({ texte: "", type: "" });
 
   // États Pays
   const [listePays, setListePays] = useState([]);
-  const [nouveauPays, setNouveauPays] = useState({ nom: "", code: "", devise: "" });
+  const [nouveauPays, setNouveauPays] = useState({ id: null, nom: "", code: "", devise: "" });
+  const [isEditingPays, setIsEditingPays] = useState(false);
 
   // États Zones
   const [listeZones, setListeZones] = useState([]);
-  const [nouvelleZone, setNouvelleZone] = useState({ nom_zone: "", frais_livraison: "", pays_id: "" });
+  const [nouvelleZone, setNouvelleZone] = useState({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" });
+  const [isEditingZone, setIsEditingZone] = useState(false);
 
   // États Statuts (avec pays_id)
   const [listeStatuts, setListeStatuts] = useState([]);
-  const [nouveauStatut, setNouveauStatut] = useState({ nom: "", couleur: "#2C3B4D", pays_id: "" });
+  const [nouveauStatut, setNouveauStatut] = useState({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "" });
+  const [isEditingStatut, setIsEditingStatut] = useState(false);
 
   // États Produits
   const [listeProduits, setListeProduits] = useState([]);
@@ -36,49 +43,45 @@ export default function ParametresAdmin() {
     product_page: ""
   });
 
+  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
   useEffect(() => {
-    verifierAcces();
-    chargerDonnees();
-  }, []);
-
-  async function verifierAcces() {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return router.push("/");
-
-    const { data: roleData } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", session.user.id)
-      .maybeSingle();
-
-    if (roleData?.role !== "admin") {
-      router.push("/");
+    if (!authLoading && !permsLoading) {
+      if (!user) {
+        router.replace("/");
+      } else if (!hasPermission("menu_parametres")) {
+        router.replace("/dashboard");
+      } else if (tenantId) {
+        chargerDonnees();
+      }
     }
-  }
+  }, [user, authLoading, permsLoading, hasPermission, tenantId, router]);
 
   async function chargerDonnees() {
+    if (!tenantId) return;
     setChargement(true);
     
-    // Charger pays
-    const { data: paysData } = await supabase.from("pays").select("*").order("nom");
+    // Charger pays filtrés par tenant_id
+    const { data: paysData } = await supabase.from("pays").select("*").eq("tenant_id", tenantId).order("nom");
     if (paysData) setListePays(paysData);
 
-    // Charger zones
+    // Charger zones filtrées par tenant_id
     const { data: zonesData } = await supabase
       .from("zones")
       .select("*, pays(nom, devise)")
+      .eq("tenant_id", tenantId)
       .order("nom_zone");
     if (zonesData) setListeZones(zonesData);
 
-    // Charger statuts avec la relation pays
+    // Charger statuts filtrés par tenant_id
     const { data: statutsData } = await supabase
       .from("statuts")
       .select("*, pays(nom)")
+      .eq("tenant_id", tenantId)
       .order("nom");
     if (statutsData) setListeStatuts(statutsData);
 
-    // Charger produits (Correction de l'erreur : appel de la table "produits" au lieu de "products")
-    const { data: produitsData } = await supabase.from("produits").select("*").order("created_at", { ascending: false });
+    // Charger produits filtrés par tenant_id
+    const { data: produitsData } = await supabase.from("produits").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false });
     if (produitsData) setListeProduits(produitsData);
 
     setChargement(false);
@@ -87,29 +90,63 @@ export default function ParametresAdmin() {
   // --- ACTIONS PAYS ---
   async function ajouterPays(e) {
     e.preventDefault();
+    if (!tenantId) return;
     if (!nouveauPays.nom || !nouveauPays.code || !nouveauPays.devise) {
       afficherMessage("Tous les champs du pays sont obligatoires.", "erreur");
       return;
     }
 
-    const { error } = await supabase.from("pays").insert([{
-      nom: nouveauPays.nom.trim(),
-      code: nouveauPays.code.trim().toUpperCase(),
-      devise: nouveauPays.devise.trim().toUpperCase()
-    }]);
+    if (isEditingPays) {
+      const { error } = await supabase.from("pays").update({
+        nom: nouveauPays.nom.trim(),
+        code: nouveauPays.code.trim().toUpperCase(),
+        devise: nouveauPays.devise.trim().toUpperCase()
+      }).eq("id", nouveauPays.id).eq("tenant_id", tenantId);
 
-    if (error) {
-      afficherMessage("Erreur lors de l'ajout du pays.", "erreur");
+      if (error) {
+        afficherMessage("Erreur lors de la modification du pays.", "erreur");
+      } else {
+        afficherMessage("Pays modifié avec succès.", "succes");
+        annulerEditionPays();
+        chargerDonnees();
+      }
     } else {
-      afficherMessage("Pays ajouté avec succès.", "succes");
-      setNouveauPays({ nom: "", code: "", devise: "" });
-      chargerDonnees();
+      const { error } = await supabase.from("pays").insert([{
+        nom: nouveauPays.nom.trim(),
+        code: nouveauPays.code.trim().toUpperCase(),
+        devise: nouveauPays.devise.trim().toUpperCase(),
+        tenant_id: tenantId
+      }]);
+
+      if (error) {
+        afficherMessage("Erreur lors de l'ajout du pays.", "erreur");
+      } else {
+        afficherMessage("Pays ajouté avec succès.", "succes");
+        setNouveauPays({ id: null, nom: "", code: "", devise: "" });
+        chargerDonnees();
+      }
     }
   }
 
+  function preparerModificationPays(pays) {
+    setNouveauPays({
+      id: pays.id,
+      nom: pays.nom || "",
+      code: pays.code || "",
+      devise: pays.devise || ""
+    });
+    setIsEditingPays(true);
+  }
+
+  function annulerEditionPays() {
+    setNouveauPays({ id: null, nom: "", code: "", devise: "" });
+    setIsEditingPays(false);
+  }
+
   async function supprimerPays(id, nom) {
+    if (!tenantId) return;
     if (!window.confirm(`Supprimer ${nom} ?`)) return;
-    const { error } = await supabase.from("pays").delete().eq("id", id);
+    const { error } = await supabase.from("pays").delete().eq("id", id).eq("tenant_id", tenantId);
     if (error) {
       afficherMessage("Impossible de supprimer ce pays.", "erreur");
     } else {
@@ -121,29 +158,63 @@ export default function ParametresAdmin() {
   // --- ACTIONS ZONES ---
   async function ajouterZone(e) {
     e.preventDefault();
+    if (!tenantId) return;
     if (!nouvelleZone.nom_zone || !nouvelleZone.frais_livraison || !nouvelleZone.pays_id) {
       afficherMessage("Tous les champs de la zone sont obligatoires.", "erreur");
       return;
     }
 
-    const { error } = await supabase.from("zones").insert([{
-      nom_zone: nouvelleZone.nom_zone.trim(),
-      frais_livraison: parseFloat(nouvelleZone.frais_livraison),
-      pays_id: nouvelleZone.pays_id
-    }]);
+    if (isEditingZone) {
+      const { error } = await supabase.from("zones").update({
+        nom_zone: nouvelleZone.nom_zone.trim(),
+        frais_livraison: parseFloat(nouvelleZone.frais_livraison),
+        pays_id: nouvelleZone.pays_id
+      }).eq("id", nouvelleZone.id).eq("tenant_id", tenantId);
 
-    if (error) {
-      afficherMessage("Erreur lors de l'ajout de la zone.", "erreur");
+      if (error) {
+        afficherMessage("Erreur lors de la modification de la zone.", "erreur");
+      } else {
+        afficherMessage("Zone de livraison modifiée avec succès.", "succes");
+        annulerEditionZone();
+        chargerDonnees();
+      }
     } else {
-      afficherMessage("Zone de livraison ajoutée avec succès.", "succes");
-      setNouvelleZone({ nom_zone: "", frais_livraison: "", pays_id: "" });
-      chargerDonnees();
+      const { error } = await supabase.from("zones").insert([{
+        nom_zone: nouvelleZone.nom_zone.trim(),
+        frais_livraison: parseFloat(nouvelleZone.frais_livraison),
+        pays_id: nouvelleZone.pays_id,
+        tenant_id: tenantId
+      }]);
+
+      if (error) {
+        afficherMessage("Erreur lors de l'ajout de la zone.", "erreur");
+      } else {
+        afficherMessage("Zone de livraison ajoutée avec succès.", "succes");
+        setNouvelleZone({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" });
+        chargerDonnees();
+      }
     }
   }
 
+  function preparerModificationZone(zone) {
+    setNouvelleZone({
+      id: zone.id,
+      nom_zone: zone.nom_zone || "",
+      frais_livraison: zone.frais_livraison || "",
+      pays_id: zone.pays_id || ""
+    });
+    setIsEditingZone(true);
+  }
+
+  function annulerEditionZone() {
+    setNouvelleZone({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" });
+    setIsEditingZone(false);
+  }
+
   async function supprimerZone(id) {
+    if (!tenantId) return;
     if (!window.confirm("Supprimer cette zone ?")) return;
-    const { error } = await supabase.from("zones").delete().eq("id", id);
+    const { error } = await supabase.from("zones").delete().eq("id", id).eq("tenant_id", tenantId);
     if (error) {
       afficherMessage("Erreur lors de la suppression.", "erreur");
     } else {
@@ -155,29 +226,63 @@ export default function ParametresAdmin() {
   // --- ACTIONS STATUTS ---
   async function ajouterStatut(e) {
     e.preventDefault();
+    if (!tenantId) return;
     if (!nouveauStatut.nom || !nouveauStatut.pays_id) {
       afficherMessage("Le nom du statut et le pays sont obligatoires.", "erreur");
       return;
     }
 
-    const { error } = await supabase.from("statuts").insert([{
-      nom: nouveauStatut.nom.trim(),
-      couleur: nouveauStatut.couleur,
-      pays_id: nouveauStatut.pays_id
-    }]);
+    if (isEditingStatut) {
+      const { error } = await supabase.from("statuts").update({
+        nom: nouveauStatut.nom.trim(),
+        couleur: nouveauStatut.couleur,
+        pays_id: nouveauStatut.pays_id
+      }).eq("id", nouveauStatut.id).eq("tenant_id", tenantId);
 
-    if (error) {
-      afficherMessage("Erreur lors de l'ajout du statut.", "erreur");
+      if (error) {
+        afficherMessage("Erreur lors de la modification du statut.", "erreur");
+      } else {
+        afficherMessage("Statut modifié avec succès.", "succes");
+        annulerEditionStatut();
+        chargerDonnees();
+      }
     } else {
-      afficherMessage("Statut ajouté avec succès.", "succes");
-      setNouveauStatut({ nom: "", couleur: "#2C3B4D", pays_id: "" });
-      chargerDonnees();
+      const { error } = await supabase.from("statuts").insert([{
+        nom: nouveauStatut.nom.trim(),
+        couleur: nouveauStatut.couleur,
+        pays_id: nouveauStatut.pays_id,
+        tenant_id: tenantId
+      }]);
+
+      if (error) {
+        afficherMessage("Erreur lors de l'ajout du statut.", "erreur");
+      } else {
+        afficherMessage("Statut ajouté avec succès.", "succes");
+        setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "" });
+        chargerDonnees();
+      }
     }
   }
 
+  function preparerModificationStatut(statut) {
+    setNouveauStatut({
+      id: statut.id,
+      nom: statut.nom || "",
+      couleur: statut.couleur || "#2C3B4D",
+      pays_id: statut.pays_id || ""
+    });
+    setIsEditingStatut(true);
+  }
+
+  function annulerEditionStatut() {
+    setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "" });
+    setIsEditingStatut(false);
+  }
+
   async function supprimerStatut(id) {
+    if (!tenantId) return;
     if (!window.confirm("Supprimer ce statut ?")) return;
-    const { error } = await supabase.from("statuts").delete().eq("id", id);
+    const { error } = await supabase.from("statuts").delete().eq("id", id).eq("tenant_id", tenantId);
     if (error) {
       afficherMessage("Erreur lors de la suppression.", "erreur");
     } else {
@@ -189,12 +294,12 @@ export default function ParametresAdmin() {
   // --- ACTIONS PRODUITS ---
   async function ajouterProduit(e) {
     e.preventDefault();
+    if (!tenantId) return;
     if (!nouveauProduit.product || !nouveauProduit.price) {
       afficherMessage("Le nom du produit et le prix sont obligatoires.", "erreur");
       return;
     }
 
-    // Correction de l'erreur : appel de la table "produits"
     const { error } = await supabase.from("produits").insert([{
       seller: nouveauProduit.seller.trim(),
       product: nouveauProduit.product.trim(),
@@ -203,7 +308,8 @@ export default function ParametresAdmin() {
       defected_quantity: parseInt(nouveauProduit.defected_quantity) || 0,
       price: parseFloat(nouveauProduit.price) || 0,
       upsell: nouveauProduit.upsell.trim(),
-      product_page: nouveauProduit.product_page.trim()
+      product_page: nouveauProduit.product_page.trim(),
+      tenant_id: tenantId
     }]);
 
     if (error) {
@@ -225,8 +331,9 @@ export default function ParametresAdmin() {
   }
 
   async function supprimerProduit(id) {
+    if (!tenantId) return;
     if (!window.confirm("Supprimer ce produit ?")) return;
-    const { error } = await supabase.from("produits").delete().eq("id", id);
+    const { error } = await supabase.from("produits").delete().eq("id", id).eq("tenant_id", tenantId);
     if (error) {
       afficherMessage("Erreur lors de la suppression.", "erreur");
     } else {
@@ -240,11 +347,10 @@ export default function ParametresAdmin() {
     setTimeout(() => setMessage({ texte: "", type: "" }), 5000);
   }
 
-  // Composant pour les onglets horizontaux type "Centre d'appel"
   const TabButton = ({ id, label, icon }) => (
     <button 
       onClick={() => setOngletActif(id)}
-      className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all flex items-center gap-2 ${
+      className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all flex items-center gap-2 cursor-pointer ${
         ongletActif === id 
           ? 'bg-[#1B2632] text-white shadow-md' 
           : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
@@ -255,11 +361,15 @@ export default function ParametresAdmin() {
     </button>
   );
 
+  // 🚀 Écran de chargement et de vérification sécurisée
+  if (authLoading || permsLoading || !hasPermission("menu_parametres")) {
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>;
+  }
+
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
       <StyleParametres />
 
-      {/* En-tête + Onglets Horizontaux */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
         <div>
           <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
@@ -269,10 +379,10 @@ export default function ParametresAdmin() {
         </div>
 
         <div className="flex gap-4 overflow-x-auto pb-2 mt-2">
-          <TabButton id="pays" label="Pays & Devises"  />
-          <TabButton id="zones" label="Zones de livraison"  />
-          <TabButton id="statuts" label="Statuts configurables"  />
-          <TabButton id="produits" label="Catalogue Produits"  />
+          <TabButton id="pays" label="Pays & Devises" />
+          <TabButton id="zones" label="Zones de livraison" />
+          <TabButton id="statuts" label="Statuts configurables" />
+          <TabButton id="produits" label="Catalogue Produits" />
         </div>
       </header>
 
@@ -282,7 +392,6 @@ export default function ParametresAdmin() {
         </div>
       )}
 
-      {/* Contenu principal sans sidebar */}
       <main className="w-full">
         
         {/* --- ONGLET PAYS --- */}
@@ -290,25 +399,34 @@ export default function ParametresAdmin() {
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Gestion des pays d'opération</h2>
+                <h2 className="text-xl font-bold text-[#1B2632]">
+                  {isEditingPays ? "Modifier le pays" : "Gestion des pays d'opération"}
+                </h2>
                 <p className="text-sm text-[#1B2632]/60 mt-1">Configurez les pays et leurs devises respectives.</p>
               </div>
 
               <form onSubmit={ajouterPays} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom du Pays</label>
-                  <input type="text" placeholder="ex: Angola" value={nouveauPays.nom} onChange={(e) => setNouveauPays({...nouveauPays, nom: e.target.value})} className="fg-input" />
+                  <input type="text" placeholder="ex: Angola" value={nouveauPays.nom} onChange={(e) => setNouveauPays({...nouveauPays, nom: e.target.value})} className="fg-input" required />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Code ISO</label>
-                  <input type="text" placeholder="ex: AO" maxLength={2} value={nouveauPays.code} onChange={(e) => setNouveauPays({...nouveauPays, code: e.target.value})} className="fg-input" />
+                  <input type="text" placeholder="ex: AO" maxLength={2} value={nouveauPays.code} onChange={(e) => setNouveauPays({...nouveauPays, code: e.target.value})} className="fg-input" required />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Devise</label>
-                  <input type="text" placeholder="ex: AOA" maxLength={3} value={nouveauPays.devise} onChange={(e) => setNouveauPays({...nouveauPays, devise: e.target.value})} className="fg-input" />
+                  <input type="text" placeholder="ex: AOA" maxLength={3} value={nouveauPays.devise} onChange={(e) => setNouveauPays({...nouveauPays, devise: e.target.value})} className="fg-input" required />
                 </div>
-                <div>
-                  <button type="submit" className="fg-btn-primary w-full">Ajouter le pays</button>
+                <div className="flex gap-2">
+                  <button type="submit" className="fg-btn-primary w-full">
+                    {isEditingPays ? "Mettre à jour" : "Ajouter le pays"}
+                  </button>
+                  {isEditingPays && (
+                    <button type="button" onClick={annulerEditionPays} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
+                      Annuler
+                    </button>
+                  )}
                 </div>
               </form>
 
@@ -333,7 +451,10 @@ export default function ParametresAdmin() {
                           <td className="font-medium">{p.nom}</td>
                           <td><span className="fg-badge">{p.code}</span></td>
                           <td><span className="fg-badge dark">{p.devise}</span></td>
-                          <td className="text-right">
+                          <td className="text-right flex items-center justify-end gap-2">
+                            <button onClick={() => preparerModificationPays(p)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
+                              Modifier
+                            </button>
                             <button onClick={() => supprimerPays(p.id, p.nom)} className="fg-btn-danger">Supprimer</button>
                           </td>
                         </tr>
@@ -351,14 +472,16 @@ export default function ParametresAdmin() {
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Zones et Tarifs de Livraison</h2>
+                <h2 className="text-xl font-bold text-[#1B2632]">
+                  {isEditingZone ? "Modifier la zone de livraison" : "Zones et Tarifs de Livraison"}
+                </h2>
                 <p className="text-sm text-[#1B2632]/60 mt-1">Associez chaque zone géographique à son tarif et à son pays.</p>
               </div>
 
               <form onSubmit={ajouterZone} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
-                  <select value={nouvelleZone.pays_id} onChange={(e) => setNouvelleZone({...nouvelleZone, pays_id: e.target.value})} className="fg-input" required>
+                  <select value={nouvelleZone.pays_id} onChange={(e) => setNouvelleZone({...nouvelleZone, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
                     <option value="">Sélectionner un pays</option>
                     {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                   </select>
@@ -371,8 +494,15 @@ export default function ParametresAdmin() {
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais de livraison</label>
                   <input type="number" placeholder="Montant" value={nouvelleZone.frais_livraison} onChange={(e) => setNouvelleZone({...nouvelleZone, frais_livraison: e.target.value})} className="fg-input" required />
                 </div>
-                <div>
-                  <button type="submit" className="fg-btn-primary w-full">Ajouter la zone</button>
+                <div className="flex gap-2">
+                  <button type="submit" className="fg-btn-primary w-full">
+                    {isEditingZone ? "Mettre à jour" : "Ajouter la zone"}
+                  </button>
+                  {isEditingZone && (
+                    <button type="button" onClick={annulerEditionZone} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
+                      Annuler
+                    </button>
+                  )}
                 </div>
               </form>
 
@@ -397,7 +527,10 @@ export default function ParametresAdmin() {
                           <td className="font-medium">{z.nom_zone}</td>
                           <td><span className="fg-badge">{z.pays?.nom || 'N/A'}</span></td>
                           <td><span className="fg-badge dark">{z.frais_livraison} {z.pays?.devise}</span></td>
-                          <td className="text-right">
+                          <td className="text-right flex items-center justify-end gap-2">
+                            <button onClick={() => preparerModificationZone(z)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
+                              Modifier
+                            </button>
                             <button onClick={() => supprimerZone(z.id)} className="fg-btn-danger">Supprimer</button>
                           </td>
                         </tr>
@@ -415,14 +548,16 @@ export default function ParametresAdmin() {
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Statuts d'appels configurables</h2>
+                <h2 className="text-xl font-bold text-[#1B2632]">
+                  {isEditingStatut ? "Modifier le statut d'appel" : "Statuts d'appels configurables"}
+                </h2>
                 <p className="text-sm text-[#1B2632]/60 mt-1">Gérez les différents états de qualification des appels rattachés à chaque pays.</p>
               </div>
 
               <form onSubmit={ajouterStatut} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
-                  <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input" required>
+                  <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
                     <option value="">Sélectionner un pays</option>
                     {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                   </select>
@@ -435,8 +570,15 @@ export default function ParametresAdmin() {
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Couleur du badge</label>
                   <input type="color" value={nouveauStatut.couleur} onChange={(e) => setNouveauStatut({...nouveauStatut, couleur: e.target.value})} className="w-full h-[42px] border border-[#C9C1B1] rounded-xl cursor-pointer bg-white p-1" />
                 </div>
-                <div>
-                  <button type="submit" className="fg-btn-primary w-full">Ajouter le statut</button>
+                <div className="flex gap-2">
+                  <button type="submit" className="fg-btn-primary w-full">
+                    {isEditingStatut ? "Mettre à jour" : "Ajouter le statut"}
+                  </button>
+                  {isEditingStatut && (
+                    <button type="button" onClick={annulerEditionStatut} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
+                      Annuler
+                    </button>
+                  )}
                 </div>
               </form>
 
@@ -465,7 +607,10 @@ export default function ParametresAdmin() {
                               {s.nom}
                             </span>
                           </td>
-                          <td className="text-right">
+                          <td className="text-right flex items-center justify-end gap-2">
+                            <button onClick={() => preparerModificationStatut(s)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
+                              Modifier
+                            </button>
                             <button onClick={() => supprimerStatut(s.id)} className="fg-btn-danger">Supprimer</button>
                           </td>
                         </tr>
@@ -487,7 +632,6 @@ export default function ParametresAdmin() {
                 <p className="text-sm text-[#1B2632]/60 mt-1">Ajoutez et gérez les produits disponibles dans le système.</p>
               </div>
 
-              {/* Formulaire avec les Labels au-dessus */}
               <form onSubmit={ajouterProduit} className="flex flex-col gap-4 mb-8 p-6 bg-[#faf9f7] rounded-xl border border-dashed border-[#C9C1B1]">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="flex flex-col gap-1.5">
@@ -534,7 +678,6 @@ export default function ParametresAdmin() {
                 </div>
               </form>
 
-              {/* Tableau pleine largeur */}
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full whitespace-nowrap">
                   <thead>
@@ -575,7 +718,7 @@ export default function ParametresAdmin() {
                             ) : '-'}
                           </td>
                           <td className="text-right">
-                            <button onClick={() => supprimerProduit(pr.id)} className="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1">Supprimer</button>
+                            <button onClick={() => supprimerProduit(pr.id)} className="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 cursor-pointer">Supprimer</button>
                           </td>
                         </tr>
                       ))

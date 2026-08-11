@@ -34,7 +34,10 @@ export default function LoginPage() {
 
     const role = roleData?.role
 
-    if (role === 'admin') {
+    // 🚀 Redirection intelligente incluant le Super Admin
+    if (role === 'super_admin' || role === 'SUPER_ADMIN') {
+      router.push('/super-admin/tenants')
+    } else if (role === 'admin') {
       router.push('/dashboard')
     } else if (role === 'agent') {
       router.push('/centre-appel')
@@ -104,7 +107,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={chargement}
-            className="w-full mt-2 py-3.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-xl text-sm font-bold shadow-md transition disabled:opacity-50"
+            className="w-full mt-2 py-3.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-xl text-sm font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
           >
             {chargement ? 'Connexion en cours...' : 'Se connecter'}
           </button>

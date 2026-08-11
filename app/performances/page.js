@@ -1,51 +1,42 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
+import { useAuth } from '../context/AuthContext' // 👈 Conservé pour le tenantId et user
+import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
 
 export default function PerformancesPage() {
-  const [autorise, setAutorise] = useState(null)
-  const [chargement, setChargement] = useState(true)
+  const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde l'auth de base
+  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
+  const router = useRouter()
+
   const [ongletActif, setOngletActif] = useState('agents')
+  const [chargement, setChargement] = useState(true)
   
   const [statsAgents, setStatsAgents] = useState([])
   const [statsLivreurs, setStatsLivreurs] = useState([])
-  const router = useRouter()
 
+  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
   useEffect(() => {
-    async function initialiser() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        router.push('/')
-        return
+    if (!authLoading && !permsLoading) {
+      if (!user) {
+        router.replace('/')
+      } else if (!hasPermission('menu_performances')) {
+        router.replace('/dashboard')
       }
-
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', session.user.id)
-        .maybeSingle()
-
-      if (roleData?.role !== 'admin') {
-        setAutorise(false)
-        return
-      }
-
-      setAutorise(true)
-      await chargerPerformances()
     }
-    initialiser()
-  }, [router])
+  }, [user, authLoading, permsLoading, hasPermission, router])
 
-  async function chargerPerformances() {
+  const chargerPerformances = useCallback(async () => {
+    if (!tenantId) return
     setChargement(true)
 
     const [resAgents, resAppels, resLivreurs, resLivraisons] = await Promise.all([
-      supabase.from('agents').select('id, nom, actif'),
-      supabase.from('appels').select('agent_id, statut').eq('statut', 'confirmed'),
-      supabase.from('livreurs').select('id, nom, telephone, zone, actif'),
-      supabase.from('livraisons').select('livreur_id, statut').in('statut', ['livre', 'livrée'])
+      supabase.from('agents').select('id, nom, actif').eq('tenant_id', tenantId), // 👈 Isolation multi-tenant
+      supabase.from('appels').select('agent_id, statut').eq('tenant_id', tenantId).eq('statut', 'confirmed'), // 👈 Isolation multi-tenant
+      supabase.from('livreurs').select('id, nom, telephone, zone, actif').eq('tenant_id', tenantId), // 👈 Isolation multi-tenant
+      supabase.from('livraisons').select('livreur_id, statut').eq('tenant_id', tenantId).in('statut', ['livre', 'livrée']) // 👈 Isolation multi-tenant
     ])
 
     const agents = resAgents.data || []
@@ -66,13 +57,21 @@ export default function PerformancesPage() {
     setStatsAgents(agentsMap)
     setStatsLivreurs(livreursMap)
     setChargement(false)
+  }, [tenantId])
+
+  useEffect(() => {
+    if (tenantId) {
+      chargerPerformances()
+    }
+  }, [tenantId, chargerPerformances])
+
+  // 🚀 Écran de chargement et de vérification sécurisée
+  if (authLoading || permsLoading || !hasPermission('menu_performances')) {
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
   }
 
-  if (autorise === null) return <div className="p-8 text-[#1B2632] font-medium">Chargement...</div>
-  if (autorise === false) return <div className="p-8 text-[#1B2632] font-medium">Accès réservé aux administrateurs.</div>
-
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
       
       {/* En-tête et Onglets */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
@@ -88,7 +87,7 @@ export default function PerformancesPage() {
         <div className="flex gap-4 mt-2">
           <button 
             onClick={() => setOngletActif('agents')}
-            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
+            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
               ongletActif === 'agents' 
                 ? 'bg-[#1B2632] text-white shadow-md' 
                 : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
@@ -98,7 +97,7 @@ export default function PerformancesPage() {
           </button>
           <button 
             onClick={() => setOngletActif('livreurs')}
-            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
+            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
               ongletActif === 'livreurs' 
                 ? 'bg-[#1B2632] text-white shadow-md' 
                 : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'

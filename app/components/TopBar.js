@@ -3,22 +3,22 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
+import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte
 
 export default function TopBar({ toggleMenu }) {
-  const [utilisateur, setUtilisateur] = useState({ nom: 'Chargement...', role: '...' })
+  const [utilisateur, setUtilisateur] = useState({ nom: 'Chargement...' }) // Plus besoin de stocker le rôle
   const pathname = usePathname()
+  
+  // 🚀 On récupère le VRAI nom du rôle depuis notre système global
+  const { roleNom } = usePermissions()
 
   useEffect(() => {
     async function chargerProfil() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', session.user.id)
-        .maybeSingle()
-
+      // On a supprimé la requête obsolète vers user_roles.
+      // On garde uniquement la requête pour récupérer le nom de l'agent.
       const { data: agentData } = await supabase
         .from('agents')
         .select('*')
@@ -27,10 +27,7 @@ export default function TopBar({ toggleMenu }) {
 
       const nomBDD = agentData?.nom || agentData?.name || session.user.email.split('@')[0]
       
-      setUtilisateur({
-        nom: nomBDD,
-        role: roleData?.role || 'Utilisateur'
-      })
+      setUtilisateur({ nom: nomBDD })
     }
     
     if (pathname !== '/') chargerProfil()
@@ -76,14 +73,15 @@ export default function TopBar({ toggleMenu }) {
         {/* Profil */}
         <div className="flex items-center gap-3 cursor-pointer pl-1">
           <div className="w-9 h-9 rounded-full bg-[#1B2632] flex items-center justify-center text-white font-bold text-sm shadow-sm">
-            {utilisateur.nom.charAt(0).toUpperCase()}
+            {utilisateur.nom !== 'Chargement...' ? utilisateur.nom.charAt(0).toUpperCase() : 'U'}
           </div>
           <div className="flex flex-col justify-center">
             <span className="text-sm font-bold text-[#1B2632] capitalize leading-tight">
               {utilisateur.nom}
             </span>
+            {/* 🚀 L'affichage du rôle est maintenant dynamique et 100% juste */}
             <span className="text-[10px] font-bold text-[#1B2632]/50 uppercase tracking-wider mt-0.5">
-              {utilisateur.role}
+              {roleNom}
             </span>
           </div>
         </div>

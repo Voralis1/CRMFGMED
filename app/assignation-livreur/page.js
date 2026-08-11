@@ -3,10 +3,16 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
+import { useAuth } from '../context/AuthContext' // 👈 Conservé pour le tenantId
+import { usePermissions } from '../context/PermissionsContext' // 🚀 Ajout du Contexte des permissions
 
 const TAILLE_PAGE = 50
 
 export default function AssignationLivreurPage() {
+  const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde tenantId pour l'isolation des données
+  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits d'accès
+  const router = useRouter()
+
   const [commandes, setCommandes] = useState([])
   const [livreurs, setLivreurs] = useState([])
   const [totalCommandes, setTotalCommandes] = useState(0)
@@ -14,19 +20,34 @@ export default function AssignationLivreurPage() {
   const [chargement, setChargement] = useState(true)
   const [livreurChoisiParCommande, setLivreurChoisiParCommande] = useState({})
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
-  const router = useRouter()
+
+  // 🚀 NOUVELLE REDIRECTION SÉCURISÉE (RBAC)
+  useEffect(() => {
+    // On attend que l'auth ET les permissions soient chargés
+    if (!authLoading && !permsLoading) {
+      if (!user) {
+        router.replace('/') // Pas connecté -> Accueil
+      } else if (!hasPermission('menu_assignation_livreur')) {
+        router.replace('/dashboard') // Connecté mais pas le droit -> Dashboard
+      }
+    }
+  }, [user, authLoading, permsLoading, hasPermission, router])
 
   async function chargerLivreurs() {
+    if (!tenantId) return
+
     const { data, error } = await supabase
       .from('livreurs')
       .select('id, nom, zone')
+      .eq('tenant_id', tenantId)
       .eq('actif', true)
       .order('nom')
 
-    if (!error) setLivreurs(data)
+    if (!error) setLivreurs(data || [])
   }
 
   async function chargerCommandes(page) {
+    if (!tenantId) return
     setChargement(true)
 
     const debut = page * TAILLE_PAGE
@@ -35,13 +56,14 @@ export default function AssignationLivreurPage() {
     const { data: idsAvecLivraison } = await supabase
       .from('livraisons')
       .select('commande_id')
+      .eq('tenant_id', tenantId)
 
     const idsExclus = (idsAvecLivraison || []).map((l) => l.commande_id)
 
-    // ✅ AJOUT DE "prix" dans le select de la requête Supabase
     let requete = supabase
       .from('commandes')
-      .select('*, prix, pays(nom)', { count: 'exact' })
+      .select('*, prix, zone_id, pays(nom)', { count: 'exact' })
+      .eq('tenant_id', tenantId)
       .eq('statut_confirmation', 'confirmed')
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
@@ -56,24 +78,22 @@ export default function AssignationLivreurPage() {
     if (error) {
       alert('Erreur: ' + error.message)
     } else {
-      setCommandes(data)
-      setTotalCommandes(count)
+      setCommandes(data || [])
+      setTotalCommandes(count || 0)
     }
     setChargement(false)
   }
 
   useEffect(() => {
+    // On ne charge les données que si on a passé les barrières de chargement et qu'on a le tenantId
+    if (authLoading || permsLoading || !user || !tenantId) return
+
     async function initialiser() {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        router.push('/')
-        return
-      }
       await chargerLivreurs()
       await chargerCommandes(pageActuelle)
     }
     initialiser()
-  }, [router, pageActuelle])
+  }, [user, authLoading, permsLoading, tenantId, pageActuelle])
 
   function choisirLivreur(commandeId, livreurId) {
     setLivreurChoisiParCommande((prec) => ({ ...prec, [commandeId]: livreurId }))
@@ -115,8 +135,13 @@ export default function AssignationLivreurPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
 
+  // 🚀 Si on est encore en train de vérifier les permissions, on affiche un écran d'attente
+  if (authLoading || permsLoading || !hasPermission('menu_assignation_livreur')) {
+    return <div className="p-8 text-[#1B2632] font-medium">Vérification des accès...</div>
+  }
+
   if (chargement && commandes.length === 0) {
-    return <div className="p-8 text-[#1B2632] font-medium">Chargement...</div>
+    return <div className="p-8 text-[#1B2632] font-medium">Chargement des commandes...</div>
   }
 
   return (
@@ -148,7 +173,7 @@ export default function AssignationLivreurPage() {
                     <th className="px-6 py-4">Pays</th>
                     <th className="px-6 py-4">Ville / Zone</th>
                     <th className="px-6 py-4">Produit</th>
-                    <th className="px-6 py-4">Prix</th> {/* ✅ Colonne Prix ajoutée */}
+                    <th className="px-6 py-4">Prix</th>
                     <th className="px-6 py-4">Livreur</th>
                     <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
@@ -194,7 +219,6 @@ export default function AssignationLivreurPage() {
                           <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté: {cmd.quantite || 1}</div>
                         </td>
 
-                        {/* ✅ Affichage du Prix dans sa propre colonne */}
                         <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
                           {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
                         </td>
@@ -203,7 +227,7 @@ export default function AssignationLivreurPage() {
                           <select
                             value={livreurChoisiParCommande[cmd.id] || ''}
                             onChange={(e) => choisirLivreur(cmd.id, e.target.value)}
-                            className="border border-[#C9C1B1] rounded-xl px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-w-[180px] shadow-sm"
+                            className="border border-[#C9C1B1] rounded-xl px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-w-[180px] shadow-sm cursor-pointer"
                           >
                             <option value="">-- choisir --</option>
                             {livreursFiltres.map((l) => (
