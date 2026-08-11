@@ -88,7 +88,8 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
     .gte("created_at", `${todayYMD}T00:00:00`);
 
   const [resCmds, resLivs, resPays, resAppels, resAgents] = await Promise.all([
-    supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
+    // 🚀 CHANGEMENT 1 : On ajoute "pays(devise)" dans la requête pour récupérer la devise liée aux commandes
+    supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
     supabase.from("livraisons").select("statut, commande_id").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
     supabase.from("paiements").select("montant").eq("tenant_id", tenantId).in("statut", ["en_attente", "encaisse", "remis"]).order('created_at', { ascending: false }).limit(5000),
     supabase.from("appels").select("agent_id, commande_id, created_at, statut").eq("tenant_id", tenantId).order('created_at', { ascending: false }).limit(5000),
@@ -100,6 +101,9 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
   const paiements = resPays.data || [];
   const appels = resAppels.data || [];
   const agents = resAgents.data || [];
+
+  // 🚀 CHANGEMENT 2 : On cherche la première devise trouvée dans les commandes (sinon on garde AOA par défaut)
+  const deviseDynamique = cmds.find(c => c.pays && c.pays.devise)?.pays?.devise || "AOA";
 
   const totalCmds = vraiTotalCommandes || cmds.length;
   
@@ -193,7 +197,7 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
     .slice(0, 5);
 
   return {
-    devise: "AOA",
+    devise: deviseDynamique, // 🚀 CHANGEMENT 3 : On utilise la variable dynamique au lieu de "AOA"
     kpis: { commandesTotal: totalCmds, commandesJour: commandesAujourdhui, tauxConfirmation: Number(tauxConfirmation), tauxLivraison: Number(tauxLivraison), caEncaisse: caEncaisse },
     confirmationParHeure: hourly, statutsLivraison, overviewAppels, topProduits, topAgents,
   };
