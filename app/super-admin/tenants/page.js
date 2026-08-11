@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabaseClient';
-import { useAuth } from '../../context/AuthContext'; // 👈 Import de l'auth de base
-import { usePermissions } from '../../context/PermissionsContext'; // 🚀 Import des permissions dynamiques
+import { useAuth } from '../../context/AuthContext';
+import { usePermissions } from '../../context/PermissionsContext';
 
 export default function TenantsPage() {
   const { user, loading: authLoading } = useAuth();
@@ -21,14 +21,14 @@ export default function TenantsPage() {
   const [newTenantPays, setNewTenantPays] = useState('');
 
   // Édition
-  const [editTenant, setEditTenant] = useState(null); // objet tenant en cours d'édition, ou null
+  const [editTenant, setEditTenant] = useState(null);
   const [editNom, setEditNom] = useState('');
   const [editStatut, setEditStatut] = useState('actif');
 
-  // Suppression / action en cours (pour désactiver les boutons pendant l'appel réseau)
-  const [actionEnCours, setActionEnCours] = useState(null); // id du tenant concerné, ou null
+  // Suppression / action en cours
+  const [actionEnCours, setActionEnCours] = useState(null);
 
-  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
+  // REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
@@ -51,7 +51,7 @@ export default function TenantsPage() {
       if (error) throw error;
       setTenants(data || []);
     } catch (err) {
-      console.error("Erreur lors du chargement des entreprises :", err);
+      console.error("Erreur lors du chargement des entreprises :", err.message || err);
       setErrorMsg("Impossible de charger la liste des entreprises.");
     } finally {
       setLoading(false);
@@ -72,9 +72,12 @@ export default function TenantsPage() {
     if (!newTenantNom.trim()) return;
 
     try {
+      // On s'assure d'envoyer uniquement les champs valides de la table tenants
+      const payload = { nom_entreprise: newTenantNom.trim() };
+
       const { data, error } = await supabase
         .from('tenants')
-        .insert([{ nom_entreprise: newTenantNom.trim() }]) // statut = 'actif' par défaut côté base
+        .insert([payload])
         .select()
         .single();
 
@@ -85,8 +88,8 @@ export default function TenantsPage() {
       setNewTenantNom('');
       setNewTenantPays('');
     } catch (err) {
-      console.error("Erreur de création :", err);
-      alert("Erreur lors de la création de l'entreprise.");
+      console.error("Erreur de création détaillée :", err.message || JSON.stringify(err));
+      alert("Erreur lors de la création de l'entreprise : " + (err.message || "Vérifiez vos colonnes en base de données."));
     }
   }
 
@@ -117,15 +120,15 @@ export default function TenantsPage() {
       setTenants(tenants.map((t) => (t.id === data.id ? data : t)));
       setEditTenant(null);
     } catch (err) {
-      console.error("Erreur de modification :", err);
-      alert("Erreur lors de la modification de l'entreprise.");
+      console.error("Erreur de modification détaillée :", err.message || JSON.stringify(err));
+      alert("Erreur lors de la modification de l'entreprise : " + (err.message || "Erreur inconnue"));
     } finally {
       setActionEnCours(null);
     }
   }
 
   // ------------------------------------------------------------
-  // Suspendre / Réactiver — action rapide, réversible, sans modal
+  // Suspendre / Réactiver
   // ------------------------------------------------------------
   async function toggleSuspension(tenant) {
     const nouveauStatut = tenant.statut === 'suspendu' ? 'actif' : 'suspendu';
@@ -148,19 +151,19 @@ export default function TenantsPage() {
       if (error) throw error;
       setTenants(tenants.map((t) => (t.id === data.id ? data : t)));
     } catch (err) {
-      console.error("Erreur de suspension :", err);
-      alert("Impossible de changer le statut.");
+      console.error("Erreur de suspension :", err.message || err);
+      alert("Impossible de changer le statut : " + (err.message || "Erreur"));
     } finally {
       setActionEnCours(null);
     }
   }
 
   // ------------------------------------------------------------
-  // Suppression définitive — protégée si des données sont liées
+  // Suppression définitive
   // ------------------------------------------------------------
   async function handleDeleteTenant(tenant) {
     const confirmation = window.confirm(
-      `Supprimer définitivement "${tenant.nom_entreprise}" ?\n\nCette action est IRRÉVERSIBLE. Si des commandes, comptes ou paiements existent encore pour cette entreprise, la suppression sera refusée automatiquement — préférez "Suspendre" dans ce cas.`
+      `Supprimer définitivement "${tenant.nom_entreprise}" ?\n\nCette action est IRRÉVERSIBLE.`
     );
     if (!confirmation) return;
 
@@ -173,9 +176,7 @@ export default function TenantsPage() {
 
       if (error) {
         if (error.code === '23503') {
-          alert(
-            `Impossible de supprimer "${tenant.nom_entreprise}" : des données (comptes, commandes...) y sont encore rattachées.\n\nUtilisez plutôt "Suspendre" pour bloquer son accès sans perdre l'historique.`
-          );
+          alert(`Impossible de supprimer "${tenant.nom_entreprise}" : des données y sont rattachées.`);
         } else {
           throw error;
         }
@@ -184,8 +185,8 @@ export default function TenantsPage() {
 
       setTenants(tenants.filter((t) => t.id !== tenant.id));
     } catch (err) {
-      console.error("Erreur de suppression :", err);
-      alert("Erreur lors de la suppression de l'entreprise.");
+      console.error("Erreur de suppression :", err.message || err);
+      alert("Erreur lors de la suppression de l'entreprise : " + (err.message || "Erreur"));
     } finally {
       setActionEnCours(null);
     }
@@ -214,7 +215,6 @@ export default function TenantsPage() {
     );
   };
 
-  // 🚀 Écran de chargement et de vérification sécurisée
   if (authLoading || permsLoading || !hasPermission('menu_tenants')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>;
   }
@@ -351,7 +351,6 @@ export default function TenantsPage() {
                   onChange={(e) => setNewTenantPays(e.target.value)}
                   className="w-full border border-[#C9C1B1] px-4 py-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]/20 focus:border-[#1B2632]"
                 />
-                <p className="text-xs text-[#9a9384] mt-1">Sera activé lorsque la colonne sera ajoutée en base.</p>
               </div>
 
               <div className="pt-4 flex gap-3">

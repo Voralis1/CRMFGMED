@@ -27,23 +27,17 @@ function StatCard({ label, valeur, sousLabel, accent }) {
   );
 }
 
-// 🚀 UNE SEULE carte "Encaissé" — les devises sont listées proprement
-// à l'intérieur au lieu de casser la grille avec plusieurs cartes.
-// 🚀 Carte "Encaissé" avec cube 3D rotatif — une devise par face.
-// Tourne automatiquement, pause au survol, navigation manuelle possible.
 function StatCardEncaisse({ liste }) {
   const [index, setIndex] = useState(0);
   const [pause, setPause] = useState(false);
   const n = liste.length;
 
-  // 🔄 Rotation automatique toutes les 3,5 s (en pause au survol)
   useEffect(() => {
     if (n <= 1 || pause) return;
     const t = setInterval(() => setIndex((i) => i + 1), 3500);
     return () => clearInterval(t);
   }, [n, pause]);
 
-  // ---- 0 ou 1 devise : affichage classique ----
   if (n <= 1) {
     return (
       <div className="fg-card fg-stat">
@@ -59,7 +53,6 @@ function StatCardEncaisse({ liste }) {
     );
   }
 
-  // ---- Plusieurs devises : cube 3D rotatif ----
   const angle = 360 / n;
   const faceH = 38;
   const radius = Math.round(faceH / 2 / Math.tan(Math.PI / n)) + 4;
@@ -155,12 +148,18 @@ const AVATAR_COLORS = ["#1B2632", "#A35139", "#2C3B4D", "#8a5a1f", "#5c5648"];
 //  RÉCUPÉRATION ET CALCUL DES DONNÉES
 // ==================================================================
 async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
-  if (!tenantId) return null;
+  // Construction dynamique des filtres selon si on a un tenantId ou non (Super Admin)
+  const filtreTenantCmd = tenantId ? supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)").eq("tenant_id", tenantId) : supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)");
+  const filtreTenantLiv = tenantId ? supabase.from("livraisons").select("statut, commande_id").eq("tenant_id", tenantId) : supabase.from("livraisons").select("statut, commande_id");
+  const filtreTenantPai = tenantId ? supabase.from("paiements").select("montant, commandes(pays(devise))").eq("tenant_id", tenantId) : supabase.from("paiements").select("montant, commandes(pays(devise))");
+  const filtreTenantApp = tenantId ? supabase.from("appels").select("agent_id, commande_id, created_at, statut").eq("tenant_id", tenantId) : supabase.from("appels").select("agent_id, commande_id, created_at, statut");
+  const filtreTenantAge = tenantId ? supabase.from("agents").select("id, nom").eq("tenant_id", tenantId) : supabase.from("agents").select("id, nom");
 
-  const { count: vraiTotalCommandes } = await supabase
-    .from("commandes")
-    .select("*", { count: "exact", head: true })
-    .eq("tenant_id", tenantId);
+  const countQueryCmd = tenantId 
+    ? supabase.from("commandes").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId)
+    : supabase.from("commandes").select("*", { count: "exact", head: true });
+
+  const { count: vraiTotalCommandes } = await countQueryCmd;
 
   const maintenant = new Date();
   let dateDebut = new Date(0);
@@ -185,18 +184,18 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
 
   const todayYMD = `${maintenant.getFullYear()}-${String(maintenant.getMonth() + 1).padStart(2, "0")}-${String(maintenant.getDate()).padStart(2, "0")}`;
 
-  const { count: commandesAujourdhuiExact } = await supabase
-    .from("commandes")
-    .select("*", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .gte("created_at", `${todayYMD}T00:00:00`);
+  const todayQuery = tenantId
+    ? supabase.from("commandes").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId).gte("created_at", `${todayYMD}T00:00:00`)
+    : supabase.from("commandes").select("*", { count: "exact", head: true }).gte("created_at", `${todayYMD}T00:00:00`);
+
+  const { count: commandesAujourdhuiExact } = await todayQuery;
 
   const [resCmds, resLivs, resPaiements, resAppels, resAgents] = await Promise.all([
-    supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(5000),
-    supabase.from("livraisons").select("statut, commande_id").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(5000),
-    supabase.from("paiements").select("montant, commandes(pays(devise))").eq("tenant_id", tenantId).in("statut", ["en_attente", "encaisse", "remis"]).order("created_at", { ascending: false }).limit(5000),
-    supabase.from("appels").select("agent_id, commande_id, created_at, statut").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(5000),
-    supabase.from("agents").select("id, nom").eq("tenant_id", tenantId).limit(1000),
+    filtreTenantCmd.order("created_at", { ascending: false }).limit(5000),
+    filtreTenantLiv.order("created_at", { ascending: false }).limit(5000),
+    filtreTenantPai.in("statut", ["en_attente", "encaisse", "remis"]).order("created_at", { ascending: false }).limit(5000),
+    filtreTenantApp.order("created_at", { ascending: false }).limit(5000),
+    filtreTenantAge.limit(1000),
   ]);
 
   const cmds = resCmds.data || [];
@@ -219,7 +218,6 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
   const livrees = livs.filter((l) => l.statut === "livre" || l.statut === "livrée");
   const tauxLivraison = livs.length > 0 ? ((livrees.length / livs.length) * 100).toFixed(1) : 0;
 
-  // 🚀 Encaissé regroupé PAR DEVISE — jamais de total mélangé
   const caEncaisseParDevise = {};
   paiements.forEach((p) => {
     const devise = p.commandes?.pays?.devise || "N/A";
@@ -295,7 +293,6 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
     .slice(0, 5)
     .map((p, i) => ({ rang: i + 1, nom: p.nom, qte: p.qte }));
 
-  // ---------- Top Agents (commandes livrées) ----------
   const livreesCmdIds = new Set(livrees.map((l) => l.commande_id));
   const agentDeliveredCounts = {};
   const commandesAttribuees = new Set();
@@ -321,10 +318,6 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
     .sort((a, b) => b.livrees - a.livrees)
     .slice(0, 5);
 
-  // ==================================================================
-  //  🚀 ANALYTICS PAR AGENT
-  //  appels / confirmées / injoignables / annulées / reprogrammées
-  // ==================================================================
   const statutParCommande = {};
   cmds.forEach((c) => {
     statutParCommande[c.id] = c.statut_confirmation || "en_attente";
@@ -341,7 +334,7 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
         injoignables: 0,
         annulees: 0,
         reprogrammees: 0,
-        _commandesVues: new Set(), // évite de compter 2x la même commande pour le même agent
+        _commandesVues: new Set(),
       };
     }
     return statsAgents[key];
@@ -426,32 +419,28 @@ export default function DashboardFGMED() {
 
   const tenantKey = typeof tenantId === "object" ? tenantId?.id : tenantId;
 
+  // 🚀 Sécurité connexion uniquement (la redirection super_admin a été retirée)
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
         router.push("/");
-      } else if (roleNom === "super_admin" || roleNom === "SUPER_ADMIN") {
-        router.replace("/super-admin/tenants");
       }
     }
-  }, [user, authLoading, permsLoading, roleNom, router]);
-
+  }, [user, authLoading, permsLoading, router]);
+  
+  // 🚀 Chargement des stats (autorise le tenantKey vide ou présent)
   useEffect(() => {
-    if (authLoading || permsLoading || !tenantKey) return;
+    if (authLoading || permsLoading) return;
     chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
   }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading]);
 
-  if (authLoading || permsLoading || (!data && roleNom !== "super_admin" && roleNom !== "SUPER_ADMIN")) {
+  if (authLoading || permsLoading || !data) {
     return (
       <div className="flex items-center justify-center h-full text-[#1B2632] font-medium p-20">
         <StyleFGMED />
         Chargement des statistiques...
       </div>
     );
-  }
-
-  if (roleNom === "super_admin" || roleNom === "SUPER_ADMIN") {
-    return null;
   }
 
   const { kpis, caEncaisseListe, analyticsAgents, totauxAgents } = data;
@@ -508,7 +497,7 @@ export default function DashboardFGMED() {
         </div>
       </header>
 
-      {/* Bandeau KPIs — toujours 5 cartes, quelle que soit le nombre de devises */}
+      {/* Bandeau KPIs */}
       <section className="fg-kpis">
         <StatCard
           label="Total Commandes"
@@ -534,7 +523,6 @@ export default function DashboardFGMED() {
           sousLabel="commandes livrées"
           accent="#2C3B4D"
         />
-        {/* 🚀 Une seule carte Encaissé, les devises listées dedans */}
         <StatCardEncaisse liste={caEncaisseListe} />
       </section>
 
@@ -597,7 +585,7 @@ export default function DashboardFGMED() {
         </div>
       </section>
 
-      {/* 🚀 ANALYTICS PAR AGENT — pleine largeur */}
+      {/* Analytics par agent */}
       <section className="fg-card fg-agents-card">
         <div className="fg-card-head">
           <div>
@@ -665,7 +653,7 @@ export default function DashboardFGMED() {
                   </tr>
                 ))}
               </tbody>
-                            <tfoot>
+              <tfoot>
                 <tr>
                   <td>Total</td>
                   <td className="fg-num-col"><span className="fg-num">{totauxAgents.appels}</span></td>
@@ -700,8 +688,6 @@ export default function DashboardFGMED() {
 
       {/* Grille de 3 pour les analyses détaillées */}
       <section className="fg-grid-3">
-
-        {/* 1. Appels */}
         <div className="fg-card">
           <div className="fg-card-head">
             <h2 className="fg-card-title">Vue d'ensemble des appels</h2>
@@ -720,7 +706,6 @@ export default function DashboardFGMED() {
           </ul>
         </div>
 
-        {/* 2. Produits */}
         <div className="fg-card">
           <div className="fg-card-head">
             <h2 className="fg-card-title">Top Produits</h2>
@@ -740,7 +725,6 @@ export default function DashboardFGMED() {
           </ol>
         </div>
 
-        {/* 3. Classement Agents par Livraison */}
         <div className="fg-card">
           <div className="fg-card-head">
             <h2 className="fg-card-title">Top Agents (Livrées)</h2>
@@ -768,7 +752,6 @@ export default function DashboardFGMED() {
             ))}
           </ol>
         </div>
-
       </section>
     </div>
   );
@@ -782,7 +765,6 @@ function StyleFGMED() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-      /* ============ BASE ============ */
       .fg-root{
         --abyssal:#1B2632; --blue:#2C3B4D; --palladian:#EEE9DF;
         --oatmeal:#C9C1B1; --flame:#FFB162; --truffle:#A35139;
@@ -791,7 +773,6 @@ function StyleFGMED() {
       }
       .fg-root *{box-sizing:border-box;}
 
-      /* ============ EN-TÊTE ============ */
       .fg-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:22px;}
       .fg-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--truffle);margin:0 0 6px;}
       .fg-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-.01em;margin:0;}
@@ -805,7 +786,6 @@ function StyleFGMED() {
       .fg-date-label{font-size:11px;font-weight:700;color:rgba(27,38,50,0.4);text-transform:uppercase;letter-spacing:0.1em;}
       .fg-date-input{border:none;background:transparent;font-family:'Inter',sans-serif;font-size:13px;color:var(--abyssal);font-weight:500;outline:none;cursor:pointer;}
 
-      /* ============ CARTES & GRILLES (⚠️ c'était manquant) ============ */
       .fg-card{background:#fff;border:1px solid var(--oatmeal);border-radius:16px;padding:20px;box-shadow:0 1px 2px rgba(27,38,50,.04);}
       .fg-grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px;}
       .fg-grid-3{display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;}
@@ -814,7 +794,6 @@ function StyleFGMED() {
       .fg-card-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;margin:0;}
       .fg-card-sub{font-size:12.5px;color:#9a9384;margin:3px 0 0;}
 
-      /* ============ KPIs ============ */
       .fg-kpis{display:grid;grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));gap:16px;margin-bottom:16px;}
       .fg-stat{padding:0;overflow:hidden;display:flex;}
       .fg-stat-bar{width:5px;flex:none;}
@@ -823,7 +802,6 @@ function StyleFGMED() {
       .fg-stat-value{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:26px;color:var(--abyssal);line-height:1.1;}
       .fg-stat-sub{font-size:12px;color:#9a9384;}
 
-      /* ============ CUBE 3D ENCAISSÉ ============ */
       .fg-ca-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
       .fg-ca-nav{display:flex;gap:4px;}
       .fg-ca-nav button{
@@ -845,12 +823,10 @@ function StyleFGMED() {
       .fg-ca-dot{width:6px;height:6px;border-radius:50%;border:none;background:var(--oatmeal);padding:0;cursor:pointer;transition:.2s;}
       .fg-ca-dot.actif{background:var(--truffle);transform:scale(1.25);}
 
-      /* ============ LÉGENDE GRAPHIQUE (⚠️ manquait) ============ */
       .fg-legend{display:flex;gap:14px;font-size:12px;color:#5c5648;}
       .fg-legend span{display:flex;align-items:center;gap:6px;}
       .fg-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;}
 
-      /* ============ DONUT (⚠️ manquait) ============ */
       .fg-donut-wrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center;}
       .fg-donut-legend{list-style:none;margin:0;padding:0;flex:1;min-width:130px;display:flex;flex-direction:column;gap:9px;}
       .fg-donut-legend li{display:flex;align-items:center;gap:10px;font-size:13px;}
@@ -858,7 +834,6 @@ function StyleFGMED() {
       .fg-donut-nom{flex:1;color:#4a4437;text-transform:capitalize;}
       .fg-donut-val{font-family:'IBM Plex Mono',monospace;font-weight:500;color:var(--abyssal);}
 
-      /* ============ VUE D'ENSEMBLE APPELS (⚠️ manquait) ============ */
       .fg-overview{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px;}
       .fg-overview li{display:grid;grid-template-columns:100px 1fr 40px;align-items:center;gap:10px;}
       .fg-ov-label{font-size:13px;color:#4a4437;}
@@ -866,7 +841,6 @@ function StyleFGMED() {
       .fg-ov-fill{height:100%;background:linear-gradient(90deg,var(--flame),var(--truffle));border-radius:6px;}
       .fg-ov-val{font-family:'IBM Plex Mono',monospace;font-size:13px;text-align:right;color:var(--abyssal);}
 
-      /* ============ TOP LISTES (⚠️ manquait) ============ */
       .fg-top{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:13px;}
       .fg-top li{display:grid;grid-template-columns:26px 1fr 60px 30px;align-items:center;gap:10px;}
       .fg-rang{width:26px;height:26px;border-radius:8px;background:var(--palladian);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono';font-weight:500;font-size:13px;}
@@ -876,10 +850,8 @@ function StyleFGMED() {
       .fg-top-fill{height:100%;background:var(--blue);border-radius:6px;}
       .fg-qte{font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:14px;text-align:right;}
 
-      /* ============ PILL (⚠️ manquait) ============ */
       .fg-pill{display:inline-flex;align-items:center;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500;font-family:'Inter';white-space:nowrap;}
 
-      /* ============ TABLEAU ANALYTICS AGENTS ============ */
       .fg-agents-card{margin-bottom:16px;}
       .fg-table-wrap{overflow-x:auto;margin:0 -4px;padding:0 4px;}
       .fg-table{width:100%;border-collapse:collapse;min-width:720px;}
@@ -916,7 +888,6 @@ function StyleFGMED() {
       .fg-taux-fill{height:100%;background:linear-gradient(90deg,var(--flame),var(--truffle));border-radius:6px;transition:width .4s ease;}
       .fg-taux-val{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;color:var(--abyssal);min-width:36px;text-align:right;}
 
-      /* ============ RESPONSIVE ============ */
       @media (max-width:1200px){
         .fg-grid-3{grid-template-columns:repeat(2,1fr);}
       }
