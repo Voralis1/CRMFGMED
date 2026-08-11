@@ -31,9 +31,10 @@ export default function PaiementsPage() {
   const chargerPaiements = useCallback(async () => {
     if (!tenantId) return
 
+    // 🚀 On embarque la devise du pays de la commande (via pays_id) pour ne jamais afficher un montant nu
     const { data, error } = await supabase
       .from('paiements')
-      .select('id, montant, statut, livreurs(nom), commandes(client_nom)')
+      .select('id, montant, statut, livreurs(nom), commandes(client_nom, pays(devise))')
       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
       .eq('statut', 'en_attente')
       .order('created_at', { ascending: false })
@@ -48,9 +49,10 @@ export default function PaiementsPage() {
   const chargerCaisses = useCallback(async () => {
     if (!tenantId) return
 
+    // 🚀 On embarque la devise pour pouvoir regrouper séparément par devise
     const { data, error } = await supabase
       .from('paiements')
-      .select('montant, livreurs(id, nom)')
+      .select('montant, livreurs(id, nom), commandes(pays(devise))')
       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
       .eq('statut', 'encaisse')
 
@@ -59,14 +61,20 @@ export default function PaiementsPage() {
       return
     }
 
+    // 🚀 Regroupement par LIVREUR + DEVISE — on ne mélange jamais deux devises
+    // dans un même total (ex: un livreur qui aurait des paiements en AOA et en MAD
+    // doit voir deux lignes séparées, pas un total combiné sans signification).
     const regroupement = {}
     for (const p of (data || [])) {
       const nomLivreur = p.livreurs?.nom || 'Inconnu'
       const idLivreur = p.livreurs?.id
-      if (!regroupement[idLivreur]) {
-        regroupement[idLivreur] = { id: idLivreur, nom: nomLivreur, total: 0 }
+      const devise = p.commandes?.pays?.devise || 'N/A'
+      const cle = `${idLivreur}__${devise}`
+
+      if (!regroupement[cle]) {
+        regroupement[cle] = { id: idLivreur, nom: nomLivreur, devise, total: 0 }
       }
-      regroupement[idLivreur].total += Number(p.montant)
+      regroupement[cle].total += Number(p.montant)
     }
     setCaissesParLivreur(Object.values(regroupement))
   }, [tenantId])
@@ -128,8 +136,11 @@ export default function PaiementsPage() {
     await chargerTout()
   }
 
-  async function remettreEnCaisse(livreurId) {
-    setEnvoiEnCoursId(livreurId)
+  // 🚀 On passe désormais la devise, pour que la remise de caisse ne remette
+  // que les paiements de CETTE devise pour CE livreur (pas tout mélangé).
+  async function remettreEnCaisse(livreurId, devise) {
+    const cleBouton = `${livreurId}__${devise}`
+    setEnvoiEnCoursId(cleBouton)
     const { data: { session } } = await supabase.auth.getSession()
 
     const reponse = await fetch(
@@ -140,7 +151,7 @@ export default function PaiementsPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ livreur_id: livreurId }),
+        body: JSON.stringify({ livreur_id: livreurId, devise }),
       }
     )
 
@@ -152,7 +163,7 @@ export default function PaiementsPage() {
       return
     }
 
-    alert(`Remise validée : ${resultat.total_remis} encaissés pour ${resultat.nombre_paiements} paiement(s)`)
+    alert(`Remise validée : ${resultat.total_remis} ${devise} encaissés pour ${resultat.nombre_paiements} paiement(s)`)
     await chargerTout()
   }
 
@@ -204,7 +215,7 @@ export default function PaiementsPage() {
                   <tr key={p.id} className="hover:bg-[#EEE9DF]/20 transition">
                     <td className="p-3 font-medium text-[#1B2632]">{p.commandes?.client_nom || 'Client inconnu'}</td>
                     <td className="p-3 text-[#1B2632]/70">{p.livreurs?.nom || 'Inconnu'}</td>
-                    <td className="p-3 font-bold text-[#1B2632]">{p.montant}</td>
+                    <td className="p-3 font-bold text-[#1B2632]">{p.montant} {p.commandes?.pays?.devise || ''}</td>
                     <td className="p-3 text-right">
                       <button
                         onClick={() => encaisser(p.id)}
@@ -227,6 +238,9 @@ export default function PaiementsPage() {
             <h2 className="text-lg font-bold text-[#1B2632] mb-4">
               Caisse par livreur (à remettre)
             </h2>
+            <p className="text-xs text-[#1B2632]/50 -mt-2 mb-4">
+              Un livreur peut apparaître sur plusieurs lignes s'il détient du cash dans plusieurs devises.
+            </p>
 
             {caissesParLivreur.length === 0 ? (
               <p className="text-sm text-[#1B2632]/60 py-4">Aucun montant en attente de remise.</p>
@@ -235,26 +249,31 @@ export default function PaiementsPage() {
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
                     <th className="p-3">Livreur</th>
+                    <th className="p-3">Devise</th>
                     <th className="p-3">Total encaissé</th>
                     <th className="p-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
-                  {caissesParLivreur.map((c) => (
-                    <tr key={c.id} className="hover:bg-[#EEE9DF]/20 transition">
-                      <td className="p-3 font-medium text-[#1B2632]">{c.nom}</td>
-                      <td className="p-3 font-bold text-[#1B2632]">{c.total}</td>
-                      <td className="p-3 text-right">
-                        <button
-                          onClick={() => remettreEnCaisse(c.id)}
-                          disabled={envoiEnCoursId === c.id}
-                          className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
-                        >
-                          {envoiEnCoursId === c.id ? '...' : 'Confirmer remise'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {caissesParLivreur.map((c) => {
+                    const cleBouton = `${c.id}__${c.devise}`
+                    return (
+                      <tr key={cleBouton} className="hover:bg-[#EEE9DF]/20 transition">
+                        <td className="p-3 font-medium text-[#1B2632]">{c.nom}</td>
+                        <td className="p-3"><span className="fg-badge dark">{c.devise}</span></td>
+                        <td className="p-3 font-bold text-[#1B2632]">{c.total} {c.devise}</td>
+                        <td className="p-3 text-right">
+                          <button
+                            onClick={() => remettreEnCaisse(c.id, c.devise)}
+                            disabled={envoiEnCoursId === cleBouton}
+                            className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
+                          >
+                            {envoiEnCoursId === cleBouton ? '...' : 'Confirmer remise'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             )}
@@ -262,7 +281,6 @@ export default function PaiementsPage() {
         )}
 
       </div>
-
     </div>
   )
 }

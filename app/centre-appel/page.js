@@ -151,7 +151,7 @@ export default function CentreAppelAgent() {
 
   const [formData, setFormData] = useState({
     source: '', client_nom: '', client_telephone: '', ville_zone: '',
-    zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: ''
+    zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: '', prixUnitaire: 0
   })
 
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
@@ -412,6 +412,9 @@ export default function CentreAppelAgent() {
       paysId = pays?.id || ''
     }
 
+    const qte = commande.quantite || 1;
+    const prixUnit = (commande.prix || 0) / qte;
+
     setFormData({
       source: commande.source || '',
       client_nom: commande.client_nom || '',
@@ -420,10 +423,11 @@ export default function CentreAppelAgent() {
       zone_id: commande.zone_id || '',
       pays_id: paysId,
       produit: commande.produit || '',
-      quantite: commande.quantite || 1,
+      quantite: qte,
       prix: commande.prix || 0,
       notes: commande.notes || '',
-      date_rappel: ''
+      date_rappel: '',
+      prixUnitaire: prixUnit
     })
   }
 
@@ -534,12 +538,10 @@ export default function CentreAppelAgent() {
             ligneNormalisee[cle.toLowerCase().trim()] = ligne[cle]
           }
 
-          // 🚀 EXTRACTION DU PAYS ET MAPPING AVEC LA BASE DE DONNÉES
           const nomPaysFichier = ligneNormalisee['pays'] || ligneNormalisee['country'] || '';
           let paysIdTrouve = null;
           
           if (nomPaysFichier) {
-            // Recherche en ignorant la casse et les espaces
             const paysMatch = listePays.find(p => 
               p.nom.toLowerCase() === String(nomPaysFichier).toLowerCase().trim() || 
               (p.code && p.code.toLowerCase() === String(nomPaysFichier).toLowerCase().trim())
@@ -560,7 +562,7 @@ export default function CentreAppelAgent() {
             notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
             lead_id: `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
             tenant_id: tenantId,
-            pays_id: paysIdTrouve // 🚀 LE PAYS EST MAINTENANT SAUVEGARDÉ !
+            pays_id: paysIdTrouve
           }
         }).filter(cmd => cmd.client_telephone !== '')
 
@@ -594,7 +596,6 @@ export default function CentreAppelAgent() {
   const labelStatut = (v) => STATUTS_APPEL.find(s => s.value === v)?.label || v
   const nomAgent = (id) => optionsFiltres.agents.find(a => a.id === id)?.nom || 'Agent'
 
-  // ÉCRAN D'ATTENTE OU DE BLOCAGE
   if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
   }
@@ -608,10 +609,6 @@ export default function CentreAppelAgent() {
         .drawer-in { animation: drawerIn 0.25s ease-out; }
         .fade-in { animation: fadeIn 0.2s ease-out; }
         .pop-in { animation: popIn 0.18s ease-out; }
-        .timeline-line::before {
-          content: ''; position: absolute; left: 11px; top: 24px; bottom: -8px; width: 2px; background: #C9C1B1; opacity: 0.3;
-        }
-        .timeline-item:last-child .timeline-line::before { display: none; }
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
@@ -624,7 +621,6 @@ export default function CentreAppelAgent() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* BOUTON EXPORT SÉCURISÉ */}
             {hasPermission('exporter_csv') && (
               <button
                 onClick={exporterCSV}
@@ -640,7 +636,6 @@ export default function CentreAppelAgent() {
               </button>
             )}
 
-            {/* BOUTON IMPORT SÉCURISÉ */}
             {hasPermission('importer_csv') && (
               <label
                 title="Importer des commandes depuis un fichier CSV ou Excel"
@@ -932,7 +927,15 @@ export default function CentreAppelAgent() {
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Zone officielle</label>
                     <select
                       value={formData.zone_id}
-                      onChange={(e) => setFormData({...formData, zone_id: e.target.value})}
+                      onChange={(e) => {
+                        const nouvelleZoneId = e.target.value;
+                        const zoneSelectionnee = listeZones.find(z => String(z.id) === String(nouvelleZoneId));
+                        setFormData({
+                          ...formData, 
+                          zone_id: nouvelleZoneId,
+                          ville_zone: zoneSelectionnee ? zoneSelectionnee.nom_zone : formData.ville_zone 
+                        });
+                      }}
                       className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] font-bold bg-transparent focus:outline-none focus:border-[#FFB162]"
                     >
                       <option value="">Sélectionner...</option>
@@ -969,14 +972,23 @@ export default function CentreAppelAgent() {
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Quantité</label>
                     <div className="flex items-center border-b border-[#C9C1B1]">
-                      <button type="button" onClick={() => setFormData({...formData, quantite: Math.max(1, formData.quantite - 1)})} className="px-2 py-2 text-[#1B2632] font-bold">-</button>
+                      <button type="button" onClick={() => {
+                        const newQty = Math.max(1, formData.quantite - 1);
+                        setFormData({...formData, quantite: newQty, prix: newQty * formData.prixUnitaire});
+                      }} className="px-2 py-2 text-[#1B2632] font-bold">-</button>
                       <input
                         type="number"
                         value={formData.quantite}
-                        onChange={(e) => setFormData({...formData, quantite: parseInt(e.target.value) || 1})}
+                        onChange={(e) => {
+                          const newQty = parseInt(e.target.value) || 1;
+                          setFormData({...formData, quantite: newQty, prix: newQty * formData.prixUnitaire});
+                        }}
                         className="w-full text-center py-2 font-bold text-sm text-[#1B2632] outline-none bg-transparent"
                       />
-                      <button type="button" onClick={() => setFormData({...formData, quantite: formData.quantite + 1})} className="px-2 py-2 text-[#1B2632] font-bold">+</button>
+                      <button type="button" onClick={() => {
+                        const newQty = formData.quantite + 1;
+                        setFormData({...formData, quantite: newQty, prix: newQty * formData.prixUnitaire});
+                      }} className="px-2 py-2 text-[#1B2632] font-bold">+</button>
                     </div>
                   </div>
                 </div>
@@ -987,7 +999,10 @@ export default function CentreAppelAgent() {
                     type="number"
                     step="0.01"
                     value={formData.prix}
-                    onChange={(e) => setFormData({...formData, prix: parseFloat(e.target.value) || 0})}
+                    onChange={(e) => {
+                      const newPrix = parseFloat(e.target.value) || 0;
+                      setFormData({...formData, prix: newPrix, prixUnitaire: newPrix / (formData.quantite || 1)});
+                    }}
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
                 </div>
