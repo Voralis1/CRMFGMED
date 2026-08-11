@@ -447,7 +447,7 @@ export default function CentreAppelAgent() {
         body: JSON.stringify({
           commande_id: commandeSelectionnee.id,
           statut: statutChoisi,
-          tenant_id: tenantId, // 🚀 CORRECTION : Ajout du tenant_id pour éviter l'erreur not-null constraint
+          tenant_id: tenantId, 
           ...formData
         }),
       }
@@ -534,6 +534,21 @@ export default function CentreAppelAgent() {
             ligneNormalisee[cle.toLowerCase().trim()] = ligne[cle]
           }
 
+          // 🚀 EXTRACTION DU PAYS ET MAPPING AVEC LA BASE DE DONNÉES
+          const nomPaysFichier = ligneNormalisee['pays'] || ligneNormalisee['country'] || '';
+          let paysIdTrouve = null;
+          
+          if (nomPaysFichier) {
+            // Recherche en ignorant la casse et les espaces
+            const paysMatch = listePays.find(p => 
+              p.nom.toLowerCase() === String(nomPaysFichier).toLowerCase().trim() || 
+              (p.code && p.code.toLowerCase() === String(nomPaysFichier).toLowerCase().trim())
+            );
+            if (paysMatch) {
+              paysIdTrouve = paysMatch.id;
+            }
+          }
+
           return {
             client_nom: ligneNormalisee['client_nom'] || ligneNormalisee['nom'] || ligneNormalisee['client'] || 'Inconnu',
             client_telephone: String(ligneNormalisee['client_telephone'] || ligneNormalisee['telephone'] || ligneNormalisee['tel'] || ''),
@@ -544,12 +559,13 @@ export default function CentreAppelAgent() {
             source: 'csv', 
             notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
             lead_id: `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-            tenant_id: tenantId
+            tenant_id: tenantId,
+            pays_id: paysIdTrouve // 🚀 LE PAYS EST MAINTENANT SAUVEGARDÉ !
           }
         }).filter(cmd => cmd.client_telephone !== '')
 
         if (nouvellesCommandes.length === 0) {
-          alert("Aucune donnée valide trouvée dans le fichier.")
+          alert("Aucune donnée valide trouvée dans le fichier (Vérifiez qu'il y a bien des numéros de téléphone).")
           return
         }
 
