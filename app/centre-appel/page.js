@@ -8,19 +8,22 @@ import { usePermissions } from '../context/PermissionsContext'
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import * as XLSX from 'xlsx'
 
-const STATUTS_APPEL = [
-  { value: 'confirmed', label: 'Confirmée' },
-  { value: 'unreached', label: 'Injoignable' },
-  { value: 'reminder', label: 'À rappeler' },
-  { value: 'cancelled', label: 'Annulée' },
-  { value: 'spam', label: 'Spam' },
-  { value: 'double', label: 'Doublon' },
-  { value: 'out_of_stock', label: 'Rupture' },
-  { value: 'not_active_yet', label: 'En attente d\'activation' }
-]
+// 🚀 Fonction StatutPill mise à jour pour utiliser la couleur provenant de la DB
+function StatutPill({ statut, listeStatutsDB }) {
+  // On cherche si ce statut existe dans la base de données
+  const statutConfiguré = (listeStatutsDB || []).find(s => s.nom === statut || s.id === statut)
 
-function StatutPill({ statut }) {
-  const configs = {
+  if (statutConfiguré && statutConfiguré.couleur) {
+    return (
+      <span className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1.5 w-fit" 
+            style={{ backgroundColor: `${statutConfiguré.couleur}15`, color: statutConfiguré.couleur, border: `1px solid ${statutConfiguré.couleur}40` }}>
+        {statutConfiguré.nom}
+      </span>
+    )
+  }
+
+  // Fallback si le statut n'est pas dans la DB (ex: anciennes commandes)
+  const configsFallback = {
     'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée' },
     'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente' },
     'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Injoignable' },
@@ -31,10 +34,10 @@ function StatutPill({ statut }) {
     'out_of_stock': { bg: 'bg-[#FFB162]/30', text: 'text-[#8a5a1f]', label: 'Rupture' },
     'not_active_yet': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Inactif' },
   }
-  const conf = configs[statut] || configs['en_attente']
+  const conf = configsFallback[statut] || configsFallback['en_attente']
   return (
     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${conf.bg} ${conf.text} whitespace-nowrap flex items-center gap-1.5 w-fit`}>
-      {conf.label}
+      {conf.label || statut}
     </span>
   )
 }
@@ -117,9 +120,12 @@ export default function CentreAppelAgent() {
   const { hasPermission, loading: permsLoading } = usePermissions() 
   const router = useRouter()
 
+  const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
+
   const [commandes, setCommandes] = useState([])
   const [listePays, setListePays] = useState([])
   const [listeZones, setListeZones] = useState([])
+  const [listeStatutsDB, setListeStatutsDB] = useState([]) // 🚀 Nouvel état pour les statuts
   const [loading, setLoading] = useState(true)
   const [ongletActif, setOngletActif] = useState('a_traiter')
 
@@ -143,7 +149,7 @@ export default function CentreAppelAgent() {
 
   const [agentActuel, setAgentActuel] = useState(null)
   const [commandeSelectionnee, setCommandeSelectionnee] = useState(null)
-  const [statutChoisi, setStatutChoisi] = useState('confirmed')
+  const [statutChoisi, setStatutChoisi] = useState('') // Initialisé à vide
 
   const [historiqueLead, setHistoriqueLead] = useState([])
   const [loadingHistorique, setLoadingHistorique] = useState(false)
@@ -156,7 +162,7 @@ export default function CentreAppelAgent() {
 
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
-  // REDIRECTION SÉCURISÉE VIA LA MATRICE
+  // REDIRECTION SÉCURISÉE
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
@@ -229,14 +235,22 @@ export default function CentreAppelAgent() {
 
   useEffect(() => {
     async function chargerOptionsFiltres() {
-      if (!user || !tenantId) return
+      if (!user || !tenantKey) return
 
-      const [{ data: produits }, { data: villes }, { data: sources }, { data: agents }, { data: pays }] = await Promise.all([
-        supabase.from('commandes').select('produit').eq('tenant_id', tenantId).not('produit', 'is', null).limit(2000),
-        supabase.from('commandes').select('ville_zone').eq('tenant_id', tenantId).not('ville_zone', 'is', null).limit(2000),
-        supabase.from('commandes').select('source').eq('tenant_id', tenantId).not('source', 'is', null).limit(2000),
-        supabase.from('agents').select('id, nom, name, full_name').eq('tenant_id', tenantId),
-        supabase.from('pays').select('id, nom').eq('tenant_id', tenantId).order('nom')
+      const [
+        { data: produits }, 
+        { data: villes }, 
+        { data: sources }, 
+        { data: agents }, 
+        { data: pays },
+        { data: statuts } // 🚀 Chargement des statuts depuis la DB
+      ] = await Promise.all([
+        supabase.from('commandes').select('produit').eq('tenant_id', tenantKey).not('produit', 'is', null).limit(2000),
+        supabase.from('commandes').select('ville_zone').eq('tenant_id', tenantKey).not('ville_zone', 'is', null).limit(2000),
+        supabase.from('commandes').select('source').eq('tenant_id', tenantKey).not('source', 'is', null).limit(2000),
+        supabase.from('agents').select('id, nom, name, full_name').eq('tenant_id', tenantKey),
+        supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom'),
+        supabase.from('statuts').select('*').eq('tenant_id', tenantKey).order('nom')
       ])
 
       const uniques = (rows, key) =>
@@ -253,19 +267,23 @@ export default function CentreAppelAgent() {
         })),
         pays: (pays || []).map(p => ({ id: p.id, nom: p.nom }))
       })
+
+      if (statuts) {
+        setListeStatutsDB(statuts)
+      }
     }
     chargerOptionsFiltres()
-  }, [user, tenantId])
+  }, [user, tenantKey])
 
   useEffect(() => {
-    if (authLoading || permsLoading || !user || !tenantId) return
+    if (authLoading || permsLoading || !user || !tenantKey) return
 
     async function verifierAgentEtCharger() {
       const { data: agentData } = await supabase
         .from('agents')
         .select('*')
         .eq('user_id', user.id)
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantKey)
         .maybeSingle()
 
       if (agentData) {
@@ -276,24 +294,24 @@ export default function CentreAppelAgent() {
     }
 
     verifierAgentEtCharger()
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantId])
+  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey])
 
   async function chargerCommandes(pageActuelle, onglet) {
-    if (!tenantId) return
+    if (!tenantKey) return
     setLoading(true)
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
 
-    const { data: paysListDB } = await supabase.from('pays').select('id, nom, code, devise').eq('tenant_id', tenantId)
+    const { data: paysListDB } = await supabase.from('pays').select('id, nom, code, devise').eq('tenant_id', tenantKey)
     setListePays(paysListDB || [])
 
-    const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantId)
+    const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantKey)
     setListeZones(zonesListDB || [])
 
     const jointureAppels = filtreAgent ? ', appels!inner(agent_id)' : ''
 
-    let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true }).eq('tenant_id', tenantId)
-    let requeteData = supabase.from('commandes').select(`id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)${jointureAppels}`).eq('tenant_id', tenantId)
+    let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true }).eq('tenant_id', tenantKey)
+    let requeteData = supabase.from('commandes').select(`id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)${jointureAppels}`).eq('tenant_id', tenantKey)
 
     if (onglet === 'a_traiter') {
       requeteBase = requeteBase.is('statut_confirmation', null)
@@ -390,7 +408,15 @@ export default function CentreAppelAgent() {
 
   async function ouvrirPanneau(commande) {
     setCommandeSelectionnee(commande)
-    setStatutChoisi(commande.statut_confirmation || 'confirmed')
+
+    // Pré-sélectionner le statut actuel ou le premier statut de la DB
+    if (commande.statut_confirmation) {
+      setStatutChoisi(commande.statut_confirmation)
+    } else if (listeStatutsDB.length > 0) {
+      setStatutChoisi(listeStatutsDB[0].nom)
+    } else {
+      setStatutChoisi('')
+    }
 
     let paysId = commande.pays?.id || ''
 
@@ -400,7 +426,7 @@ export default function CentreAppelAgent() {
       if (!pays) {
         const { data } = await supabase
           .from('pays')
-          .insert({ nom: commande.pays.nom, code: commande.pays.iso, tenant_id: tenantId })
+          .insert({ nom: commande.pays.nom, code: commande.pays.iso, tenant_id: tenantKey })
           .select('id, nom, code, devise')
           .single()
 
@@ -432,6 +458,11 @@ export default function CentreAppelAgent() {
   }
 
   async function validerAppel() {
+    if (!statutChoisi) {
+      alert("Veuillez sélectionner un résultat d'appel.");
+      return;
+    }
+
     setEnvoiEnCours(true)
     const { data: { session } } = await supabase.auth.getSession()
 
@@ -450,8 +481,8 @@ export default function CentreAppelAgent() {
         },
         body: JSON.stringify({
           commande_id: commandeSelectionnee.id,
-          statut: statutChoisi,
-          tenant_id: tenantId, 
+          statut: statutChoisi, // 🚀 Envoie le statut configuré
+          tenant_id: tenantKey, 
           ...formData
         }),
       }
@@ -516,7 +547,12 @@ export default function CentreAppelAgent() {
 
   async function importerFichier(event) {
     const fichier = event.target.files[0]
-    if (!fichier || !tenantId) return
+    if (!fichier || !tenantKey) return
+
+    const { data: paysListDB } = await supabase
+      .from('pays')
+      .select('id, nom, code')
+      .eq('tenant_id', tenantKey);
 
     const lecteur = new FileReader()
     lecteur.onload = async function (e) {
@@ -541,8 +577,8 @@ export default function CentreAppelAgent() {
           const nomPaysFichier = ligneNormalisee['pays'] || ligneNormalisee['country'] || '';
           let paysIdTrouve = null;
           
-          if (nomPaysFichier) {
-            const paysMatch = listePays.find(p => 
+          if (nomPaysFichier && paysListDB) {
+            const paysMatch = paysListDB.find(p => 
               p.nom.toLowerCase() === String(nomPaysFichier).toLowerCase().trim() || 
               (p.code && p.code.toLowerCase() === String(nomPaysFichier).toLowerCase().trim())
             );
@@ -550,6 +586,9 @@ export default function CentreAppelAgent() {
               paysIdTrouve = paysMatch.id;
             }
           }
+
+          const leadIdFichier = ligneNormalisee['lead_id'] || ligneNormalisee['leadid'] || ligneNormalisee['id'] || '';
+          const finalLeadId = leadIdFichier ? String(leadIdFichier).trim() : `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
           return {
             client_nom: ligneNormalisee['client_nom'] || ligneNormalisee['nom'] || ligneNormalisee['client'] || 'Inconnu',
@@ -560,9 +599,9 @@ export default function CentreAppelAgent() {
             prix: parseFloat(ligneNormalisee['prix']) || 0,
             source: 'csv', 
             notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
-            lead_id: `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-            tenant_id: tenantId,
-            pays_id: paysIdTrouve
+            lead_id: finalLeadId,
+            tenant_id: tenantKey,
+            pays_id: paysIdTrouve 
           }
         }).filter(cmd => cmd.client_telephone !== '')
 
@@ -579,6 +618,7 @@ export default function CentreAppelAgent() {
           window.location.reload()
         }
       } catch (erreur) {
+        console.error(erreur);
         alert("Erreur lors de la lecture du fichier.")
       }
     }
@@ -593,7 +633,11 @@ export default function CentreAppelAgent() {
   const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
 
-  const labelStatut = (v) => STATUTS_APPEL.find(s => s.value === v)?.label || v
+  // 🚀 Utilisation de la liste dynamique pour déterminer le label de filtre
+  const labelStatut = (v) => {
+    const s = listeStatutsDB.find(st => st.nom === v || st.id === v)
+    return s ? s.nom : v
+  }
   const nomAgent = (id) => optionsFiltres.agents.find(a => a.id === id)?.nom || 'Agent'
 
   if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
@@ -609,6 +653,10 @@ export default function CentreAppelAgent() {
         .drawer-in { animation: drawerIn 0.25s ease-out; }
         .fade-in { animation: fadeIn 0.2s ease-out; }
         .pop-in { animation: popIn 0.18s ease-out; }
+        .timeline-line::before {
+          content: ''; position: absolute; left: 11px; top: 24px; bottom: -8px; width: 2px; background: #C9C1B1; opacity: 0.3;
+        }
+        .timeline-item:last-child .timeline-line::before { display: none; }
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
@@ -734,8 +782,15 @@ export default function CentreAppelAgent() {
                     </div>
 
                     <div className="flex flex-col gap-4">
+                      {/* 🚀 Filtre Statut mis à jour avec les statuts dynamiques */}
                       {ongletActif === 'historique' && (
-                        <SelectFiltre label="Statut" value={filtreStatut} onChange={appliquer(setFiltreStatut)} options={STATUTS_APPEL} placeholder="Tous les statuts" />
+                        <SelectFiltre 
+                          label="Statut" 
+                          value={filtreStatut} 
+                          onChange={appliquer(setFiltreStatut)} 
+                          options={listeStatutsDB.map(s => ({ value: s.nom, label: s.nom }))} 
+                          placeholder="Tous les statuts" 
+                        />
                       )}
                       {ongletActif === 'historique' && (
                         <SelectFiltre label="Agent" value={filtreAgent} onChange={appliquer(setFiltreAgent)} options={optionsFiltres.agents.map(a => ({ value: a.id, label: a.nom }))} placeholder="Tous les agents" />
@@ -836,7 +891,10 @@ export default function CentreAppelAgent() {
                       <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
                         {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
                       </td>
-                      <td className="px-6 py-4"><StatutPill statut={cmd.statut_confirmation} /></td>
+                      <td className="px-6 py-4">
+                        {/* 🚀 Passage de listeStatutsDB pour coloriser le statut */}
+                        <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                      </td>
                       <td className="px-6 py-4 text-right">
                         <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${estSelectionne ? 'bg-[#1B2632] text-white' : 'bg-[#EEE9DF] text-[#1B2632] border border-[#C9C1B1] hover:bg-[#C9C1B1]'}`}>
                           {ongletActif === 'a_traiter' ? 'Traiter' : 'Modifier'}
@@ -872,7 +930,7 @@ export default function CentreAppelAgent() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-mono text-[#A35139]">#{commandeSelectionnee.lead_id || 'N/A'}</span>
                   {commandeSelectionnee.statut_confirmation && (
-                    <StatutPill statut={commandeSelectionnee.statut_confirmation} />
+                    <StatutPill statut={commandeSelectionnee.statut_confirmation} listeStatutsDB={listeStatutsDB} />
                   )}
                 </div>
               </div>
@@ -1010,17 +1068,21 @@ export default function CentreAppelAgent() {
 
               <div className="p-4 bg-[#EEE9DF]/30 rounded-xl border border-[#C9C1B1]/50">
                 <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">Résultat de l'appel</label>
+                
+                {/* 🚀 SELECT DYNAMIQUE DES STATUTS BDD */}
                 <select
                   value={statutChoisi}
                   onChange={(e) => setStatutChoisi(e.target.value)}
                   className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2.5 text-sm font-bold text-[#1B2632] bg-white shadow-sm"
                 >
-                  {STATUTS_APPEL.map((s) => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
+                  <option value="" disabled>-- Choisir --</option>
+                  {listeStatutsDB.map((s) => (
+                    <option key={s.id} value={s.nom}>{s.nom}</option>
                   ))}
                 </select>
 
-                {statutChoisi === 'reminder' && (
+                {/* 🚀 Affichage du champ date conditionnel (si le nom contient "rappel" ou "reminder") */}
+                {(statutChoisi.toLowerCase().includes('rappel') || statutChoisi.toLowerCase().includes('reminder')) && (
                   <div className="mt-3">
                     <label className="block text-[11px] font-bold text-[#8a5a1f] uppercase mb-1">Date et heure de rappel</label>
                     <input

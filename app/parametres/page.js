@@ -25,9 +25,9 @@ export default function ParametresAdmin() {
   const [nouvelleZone, setNouvelleZone] = useState({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" });
   const [isEditingZone, setIsEditingZone] = useState(false);
 
-  // États Statuts (avec pays_id)
+  // États Statuts (avec pays_id, code, necessite_rappel, declenche_assignation)
   const [listeStatuts, setListeStatuts] = useState([]);
-  const [nouveauStatut, setNouveauStatut] = useState({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "" });
+  const [nouveauStatut, setNouveauStatut] = useState({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false });
   const [isEditingStatut, setIsEditingStatut] = useState(false);
 
   // États Produits
@@ -60,11 +60,9 @@ export default function ParametresAdmin() {
     if (!tenantId) return;
     setChargement(true);
     
-    // Charger pays filtrés par tenant_id
     const { data: paysData } = await supabase.from("pays").select("*").eq("tenant_id", tenantId).order("nom");
     if (paysData) setListePays(paysData);
 
-    // Charger zones filtrées par tenant_id
     const { data: zonesData } = await supabase
       .from("zones")
       .select("*, pays(nom, devise)")
@@ -72,7 +70,6 @@ export default function ParametresAdmin() {
       .order("nom_zone");
     if (zonesData) setListeZones(zonesData);
 
-    // Charger statuts filtrés par tenant_id
     const { data: statutsData } = await supabase
       .from("statuts")
       .select("*, pays(nom)")
@@ -80,7 +77,6 @@ export default function ParametresAdmin() {
       .order("nom");
     if (statutsData) setListeStatuts(statutsData);
 
-    // Charger produits filtrés par tenant_id
     const { data: produitsData } = await supabase.from("produits").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false });
     if (produitsData) setListeProduits(produitsData);
 
@@ -236,7 +232,9 @@ export default function ParametresAdmin() {
       const { error } = await supabase.from("statuts").update({
         nom: nouveauStatut.nom.trim(),
         couleur: nouveauStatut.couleur,
-        pays_id: nouveauStatut.pays_id
+        pays_id: nouveauStatut.pays_id,
+        necessite_rappel: nouveauStatut.necessite_rappel,
+        declenche_assignation: nouveauStatut.declenche_assignation
       }).eq("id", nouveauStatut.id).eq("tenant_id", tenantId);
 
       if (error) {
@@ -247,18 +245,31 @@ export default function ParametresAdmin() {
         chargerDonnees();
       }
     } else {
+      // Le code est généré une seule fois, à la création, et ne doit plus
+      // jamais changer même si le nom affiché est renommé plus tard —
+      // c'est lui qui est stocké dans commandes.statut_confirmation.
+      const codeGenere = nouveauStatut.nom
+        .trim()
+        .toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9\s_]/g, "")
+        .replace(/\s+/g, "_");
+
       const { error } = await supabase.from("statuts").insert([{
         nom: nouveauStatut.nom.trim(),
+        code: codeGenere,
         couleur: nouveauStatut.couleur,
         pays_id: nouveauStatut.pays_id,
-        tenant_id: tenantId
+        tenant_id: tenantId,
+        necessite_rappel: nouveauStatut.necessite_rappel,
+        declenche_assignation: nouveauStatut.declenche_assignation
       }]);
 
       if (error) {
-        afficherMessage("Erreur lors de l'ajout du statut.", "erreur");
+        afficherMessage("Erreur lors de l'ajout du statut : " + error.message, "erreur");
       } else {
         afficherMessage("Statut ajouté avec succès.", "succes");
-        setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "" });
+        setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false });
         chargerDonnees();
       }
     }
@@ -269,13 +280,15 @@ export default function ParametresAdmin() {
       id: statut.id,
       nom: statut.nom || "",
       couleur: statut.couleur || "#2C3B4D",
-      pays_id: statut.pays_id || ""
+      pays_id: statut.pays_id || "",
+      necessite_rappel: statut.necessite_rappel || false,
+      declenche_assignation: statut.declenche_assignation || false
     });
     setIsEditingStatut(true);
   }
 
   function annulerEditionStatut() {
-    setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "" });
+    setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false });
     setIsEditingStatut(false);
   }
 
@@ -554,32 +567,64 @@ export default function ParametresAdmin() {
                 <p className="text-sm text-[#1B2632]/60 mt-1">Gérez les différents états de qualification des appels rattachés à chaque pays.</p>
               </div>
 
-              <form onSubmit={ajouterStatut} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
-                  <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
-                    <option value="">Sélectionner un pays</option>
-                    {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom du statut</label>
-                  <input type="text" placeholder="ex: Confirmé" value={nouveauStatut.nom} onChange={(e) => setNouveauStatut({...nouveauStatut, nom: e.target.value})} className="fg-input" required />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Couleur du badge</label>
-                  <input type="color" value={nouveauStatut.couleur} onChange={(e) => setNouveauStatut({...nouveauStatut, couleur: e.target.value})} className="w-full h-[42px] border border-[#C9C1B1] rounded-xl cursor-pointer bg-white p-1" />
-                </div>
-                <div className="flex gap-2">
-                  <button type="submit" className="fg-btn-primary w-full">
-                    {isEditingStatut ? "Mettre à jour" : "Ajouter le statut"}
-                  </button>
-                  {isEditingStatut && (
-                    <button type="button" onClick={annulerEditionStatut} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
-                      Annuler
+              <form onSubmit={ajouterStatut} className="flex flex-col gap-4 mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
+                    <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
+                      <option value="">Sélectionner un pays</option>
+                      {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom du statut</label>
+                    <input type="text" placeholder="ex: Confirmé" value={nouveauStatut.nom} onChange={(e) => setNouveauStatut({...nouveauStatut, nom: e.target.value})} className="fg-input" required />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Couleur du badge</label>
+                    <input type="color" value={nouveauStatut.couleur} onChange={(e) => setNouveauStatut({...nouveauStatut, couleur: e.target.value})} className="w-full h-[42px] border border-[#C9C1B1] rounded-xl cursor-pointer bg-white p-1" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="submit" className="fg-btn-primary w-full">
+                      {isEditingStatut ? "Mettre à jour" : "Ajouter le statut"}
                     </button>
-                  )}
+                    {isEditingStatut && (
+                      <button type="button" onClick={annulerEditionStatut} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
+                        Annuler
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                <div className="flex flex-wrap gap-6 pt-4 mt-2 border-t border-[#C9C1B1]/40">
+                  <label className="flex items-start gap-2.5 cursor-pointer max-w-sm">
+                    <input
+                      type="checkbox"
+                      checked={nouveauStatut.necessite_rappel}
+                      onChange={(e) => setNouveauStatut({...nouveauStatut, necessite_rappel: e.target.checked})}
+                      className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer"
+                    />
+                    <span>
+                      <span className="block text-sm font-bold text-[#1B2632]">Nécessite une date de rappel</span>
+                      <span className="block text-xs text-[#1B2632]/60">Affiche le champ "date et heure de rappel" dans Centre d'appel quand ce statut est choisi.</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer max-w-sm">
+                    <input
+                      type="checkbox"
+                      checked={nouveauStatut.declenche_assignation}
+                      onChange={(e) => setNouveauStatut({...nouveauStatut, declenche_assignation: e.target.checked})}
+                      className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer"
+                    />
+                    <span>
+                      <span className="block text-sm font-bold text-[#1B2632]">Déclenche l'assignation livreur</span>
+                      <span className="block text-xs text-[#1B2632]/60">Les commandes avec ce statut apparaissent dans "Assignation livreur" par défaut.</span>
+                    </span>
+                  </label>
+                </div>
+
+                
               </form>
 
               <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
@@ -587,25 +632,43 @@ export default function ParametresAdmin() {
                   <thead>
                     <tr>
                       <th>Statut</th>
+                      <th>Code</th>
                       <th>Pays</th>
                       <th>Aperçu du Badge</th>
+                      <th className="text-center">Rappel</th>
+                      <th className="text-center">Assignation</th>
                       <th className="text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chargement ? (
-                      <tr><td colSpan="4" className="text-center py-6">Chargement...</td></tr>
+                      <tr><td colSpan="7" className="text-center py-6">Chargement...</td></tr>
                     ) : listeStatuts.length === 0 ? (
-                      <tr><td colSpan="4" className="text-center py-6 text-gray-400">Aucun statut configuré.</td></tr>
+                      <tr><td colSpan="7" className="text-center py-6 text-gray-400">Aucun statut configuré.</td></tr>
                     ) : (
                       listeStatuts.map((s) => (
                         <tr key={s.id} className="hover:bg-[#EEE9DF]/20">
                           <td className="font-medium">{s.nom}</td>
+                          <td><span className="font-mono text-xs text-[#1B2632]/50">{s.code || '—'}</span></td>
                           <td><span className="fg-badge">{s.pays?.nom || 'N/A'}</span></td>
                           <td>
                             <span className="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap" style={{ backgroundColor: s.couleur, color: "#fff" }}>
                               {s.nom}
                             </span>
+                          </td>
+                          <td className="text-center">
+                            {s.necessite_rappel ? (
+                              <span className="text-[#FFB162] font-bold" title="Nécessite une date de rappel">●</span>
+                            ) : (
+                              <span className="text-[#C9C1B1]">—</span>
+                            )}
+                          </td>
+                          <td className="text-center">
+                            {s.declenche_assignation ? (
+                              <span className="text-[#2C3B4D] font-bold" title="Déclenche l'assignation livreur">●</span>
+                            ) : (
+                              <span className="text-[#C9C1B1]">—</span>
+                            )}
                           </td>
                           <td className="text-right flex items-center justify-end gap-2">
                             <button onClick={() => preparerModificationStatut(s)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
@@ -706,7 +769,18 @@ export default function ParametresAdmin() {
                           <td className="text-sm font-medium">{pr.seller || '-'}</td>
                           <td className="font-bold text-[14px]">{pr.product}</td>
                           <td><span className="font-mono text-xs text-[#A35139] font-semibold">{pr.code || '-'}</span></td>
-                          <td className="text-center"><span className="font-semibold">{pr.current_quantity ?? 0}</span></td>
+                          <td className="text-center">
+                            <span className="font-semibold">{pr.current_quantity ?? 0}</span>
+                            {(pr.current_quantity ?? 0) <= 0 ? (
+                              <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-[#A35139] text-white whitespace-nowrap">
+                                Rupture
+                              </span>
+                            ) : (pr.current_quantity ?? 0) <= 10 ? (
+                              <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-[#FFB162] text-[#1B2632] whitespace-nowrap">
+                                Stock faible
+                              </span>
+                            ) : null}
+                          </td>
                           <td className="text-center"><span className="font-semibold text-red-600">{pr.defected_quantity ?? 0}</span></td>
                           <td><span className="font-bold">{pr.price}</span></td>
                           <td className="text-sm text-[#1B2632]/80">{pr.upsell || '-'}</td>

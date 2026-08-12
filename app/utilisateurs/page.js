@@ -3,13 +3,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
-import { useAuth } from '../context/AuthContext' // 👈 Conservé pour le tenantId et user
-import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
+import { useAuth } from '../context/AuthContext' 
+import { usePermissions } from '../context/PermissionsContext' 
 
 export default function UtilisateursPage() {
-  const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde l'auth de base
-  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
+  const { user, tenantId, loading: authLoading } = useAuth() 
+  const { hasPermission, loading: permsLoading } = usePermissions() 
   const router = useRouter()
+
+  // 🚀 EXTRACTION SÉCURISÉE DU TENANT ID
+  const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
 
   const [ongletActif, setOngletActif] = useState('agents') // 'agents', 'livreurs', 'creation'
   
@@ -30,13 +33,13 @@ export default function UtilisateursPage() {
 
   // États pour la modale de modification
   const [modalOuverte, setModalOuverte] = useState(false)
-  const [typeEdition, setTypeEdition] = useState('') // 'agent' ou 'livreur'
+  const [typeEdition, setTypeEdition] = useState('') 
   const [idEdition, setIdEdition] = useState(null)
   const [editNom, setEditNom] = useState('')
   const [editTelephone, setEditTelephone] = useState('')
   const [editZone, setEditZone] = useState('')
 
-  // 🚀 REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
+  // REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
@@ -48,24 +51,24 @@ export default function UtilisateursPage() {
   }, [user, authLoading, permsLoading, hasPermission, router])
 
   const chargerDonnees = useCallback(async () => {
-    if (!tenantId) return
+    if (!tenantKey) return
 
     const [dataAgents, dataLivreurs, dataZones] = await Promise.all([
-      supabase.from('agents').select('*').eq('tenant_id', tenantId).order('nom'),
-      supabase.from('livreurs').select('*').eq('tenant_id', tenantId).order('nom'),
-      supabase.from('zones').select('id, nom_zone').eq('tenant_id', tenantId).order('nom_zone')
+      supabase.from('agents').select('*').eq('tenant_id', tenantKey).order('nom'),
+      supabase.from('livreurs').select('*').eq('tenant_id', tenantKey).order('nom'),
+      supabase.from('zones').select('id, nom_zone').eq('tenant_id', tenantKey).order('nom_zone')
     ])
 
     setAgents(dataAgents.data || [])
     setLivreurs(dataLivreurs.data || [])
     setListeZones(dataZones.data || [])
-  }, [tenantId])
+  }, [tenantKey])
 
   useEffect(() => {
-    if (tenantId) {
+    if (tenantKey) {
       chargerDonnees()
     }
-  }, [tenantId, chargerDonnees])
+  }, [tenantKey, chargerDonnees])
 
   function afficherMessage(texte, type) {
     setMessage({ texte, type })
@@ -75,8 +78,21 @@ export default function UtilisateursPage() {
   // --- CRÉATION ---
   async function creerUtilisateur(e) {
     e.preventDefault()
-    if (!tenantId) return
+    if (!tenantKey) return
     setEnvoiEnCours(true)
+
+    // 🚀 1. Récupération dynamique du role_id depuis la base de données
+    const { data: roleData, error: roleError } = await supabase
+      .from('roles')
+      .select('id')
+      .eq('nom', roleUtilisateur) // 'agent' ou 'livreur'
+      .single();
+
+    if (roleError || !roleData) {
+      afficherMessage(`Erreur : Le rôle "${roleUtilisateur}" n'existe pas en base de données.`, 'erreur')
+      setEnvoiEnCours(false)
+      return;
+    }
 
     const { data: { session } } = await supabase.auth.getSession()
 
@@ -93,9 +109,10 @@ export default function UtilisateursPage() {
           mot_de_passe: motDePasse, 
           nom, 
           telephone, 
-          role: roleUtilisateur, 
+          role: roleUtilisateur, // Gardé au cas où la fonction l'utilise
+          role_id: roleData.id,  // 🚀 AJOUT DU ROLE_ID REQUIS PAR LA FONCTION
           zone: roleUtilisateur === 'livreur' && zoneLivreur ? zoneLivreur.trim() : null,
-          tenant_id: tenantId // 👈 Transmission du tenant_id à la Edge Function
+          tenant_id: tenantKey   // 🚀 CORRECTION DU TENANT ID
         }),
       }
     )
@@ -120,7 +137,7 @@ export default function UtilisateursPage() {
 
   // --- STATUT AGENT / LIVREUR ---
   async function basculerStatutAgent(id, statutActuel) {
-    const { error } = await supabase.from('agents').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantId)
+    const { error } = await supabase.from('agents').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
       alert('Erreur lors du changement de statut : ' + error.message)
     } else {
@@ -129,7 +146,7 @@ export default function UtilisateursPage() {
   }
 
   async function basculerStatutLivreur(id, statutActuel) {
-    const { error } = await supabase.from('livreurs').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantId)
+    const { error } = await supabase.from('livreurs').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
       alert('Erreur lors du changement de statut : ' + error.message)
     } else {
@@ -140,7 +157,7 @@ export default function UtilisateursPage() {
   // --- SUPPRESSION ---
   async function supprimerAgent(id, nomAgent) {
     if (!window.confirm(`Supprimer l'agent ${nomAgent} ?`)) return
-    const { error } = await supabase.from('agents').delete().eq('id', id).eq('tenant_id', tenantId)
+    const { error } = await supabase.from('agents').delete().eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
       alert('Erreur lors de la suppression : ' + error.message)
     } else {
@@ -151,7 +168,7 @@ export default function UtilisateursPage() {
 
   async function supprimerLivreur(id, nomLivreur) {
     if (!window.confirm(`Supprimer le livreur ${nomLivreur} ?`)) return
-    const { error } = await supabase.from('livreurs').delete().eq('id', id).eq('tenant_id', tenantId)
+    const { error } = await supabase.from('livreurs').delete().eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
       alert('Erreur lors de la suppression : ' + error.message)
     } else {
@@ -189,7 +206,7 @@ export default function UtilisateursPage() {
       .from(table)
       .update(payload)
       .eq('id', idEdition)
-      .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
+      .eq('tenant_id', tenantKey) // 🚀 Utilisation de tenantKey corrigé
       .select()
 
     if (error) {
@@ -203,7 +220,6 @@ export default function UtilisateursPage() {
     }
   }
 
-  // 🚀 Écran de chargement et de vérification sécurisée
   if (authLoading || permsLoading || !hasPermission('menu_utilisateurs')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
   }
@@ -357,7 +373,7 @@ export default function UtilisateursPage() {
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-8">
           <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
             <h2 className="text-xl font-bold text-[#1B2632]">Créer un nouvel utilisateur</h2>
-            <p className="text-sm text-[#1B2632]/60 mt-1">Ajoutez un agent, un livreur ou un administrateur au système.</p>
+            <p className="text-sm text-[#1B2632]/60 mt-1">Ajoutez un agent, un livreur au système.</p>
           </div>
 
           <form onSubmit={creerUtilisateur} className="flex flex-col gap-6">
@@ -415,7 +431,6 @@ export default function UtilisateursPage() {
                 >
                   <option value="agent">Agent</option>
                   <option value="livreur">Livreur</option>
-                  <option value="admin">Admin</option>
                 </select>
               </div>
 

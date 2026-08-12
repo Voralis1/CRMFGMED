@@ -13,6 +13,8 @@ export default function AssignationLivreurPage() {
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
+  const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
+
   const [commandes, setCommandes] = useState([])
   const [livreurs, setLivreurs] = useState([])
   const [totalCommandes, setTotalCommandes] = useState(0)
@@ -21,7 +23,13 @@ export default function AssignationLivreurPage() {
   const [livreurChoisiParCommande, setLivreurChoisiParCommande] = useState({})
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
 
-  // 🚀 REDIRECTION SÉCURISÉE (RBAC)
+  // 🚀 Plus de filtre manuel : on affiche TOUJOURS uniquement les commandes
+  // dont le statut est marqué "declenche_assignation" dans Paramètres → Statuts.
+  // C'est cette case à cocher, au moment de créer/modifier un statut, qui décide
+  // seule si les commandes apparaissent ici — pas un choix fait sur cette page.
+  const [codesEligibles, setCodesEligibles] = useState([])
+  const [statutsCharges, setStatutsCharges] = useState(false)
+
   useEffect(() => {
     if (!authLoading && !permsLoading) {
       if (!user) {
@@ -32,22 +40,45 @@ export default function AssignationLivreurPage() {
     }
   }, [user, authLoading, permsLoading, hasPermission, router])
 
+  // Chargement des statuts marqués éligibles (via leur CODE, stable, jamais le nom
+  // affichable) pour rester cohérent avec Centre d'appel qui écrit
+  // statut_confirmation = code du statut choisi.
+  async function chargerStatuts() {
+    if (!tenantKey) return
+    const { data } = await supabase
+      .from('statuts')
+      .select('code, declenche_assignation')
+      .eq('tenant_id', tenantKey)
+      .eq('declenche_assignation', true)
+
+    setCodesEligibles((data || []).map((s) => s.code))
+    setStatutsCharges(true)
+  }
+
   async function chargerLivreurs() {
-    if (!tenantId) return
+    if (!tenantKey) return
 
     const { data, error } = await supabase
       .from('livreurs')
       .select('id, nom, zone')
-      .eq('tenant_id', tenantId)
+      .eq('tenant_id', tenantKey)
       .eq('actif', true)
       .order('nom')
 
     if (!error) setLivreurs(data || [])
   }
 
-  async function chargerCommandes(page) {
-    if (!tenantId) return
+  async function chargerCommandes(page, eligibles) {
+    if (!tenantKey) return
     setChargement(true)
+
+    // Aucun statut n'est encore marqué éligible : rien à montrer
+    if (eligibles.length === 0) {
+      setCommandes([])
+      setTotalCommandes(0)
+      setChargement(false)
+      return
+    }
 
     const debut = page * TAILLE_PAGE
     const fin = debut + TAILLE_PAGE - 1
@@ -55,15 +86,15 @@ export default function AssignationLivreurPage() {
     const { data: idsAvecLivraison } = await supabase
       .from('livraisons')
       .select('commande_id')
-      .eq('tenant_id', tenantId)
+      .eq('tenant_id', tenantKey)
 
     const idsExclus = (idsAvecLivraison || []).map((l) => l.commande_id)
 
     let requete = supabase
       .from('commandes')
       .select('*, prix, zone_id, pays(nom)', { count: 'exact' })
-      .eq('tenant_id', tenantId)
-      .eq('statut_confirmation', 'confirmed')
+      .eq('tenant_id', tenantKey)
+      .in('statut_confirmation', eligibles)
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
       .range(debut, fin)
@@ -84,14 +115,17 @@ export default function AssignationLivreurPage() {
   }
 
   useEffect(() => {
-    if (authLoading || permsLoading || !user || !tenantId) return
+    if (authLoading || permsLoading || !user || !tenantKey) return
+    chargerLivreurs()
+    chargerStatuts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading, permsLoading, tenantKey])
 
-    async function initialiser() {
-      await chargerLivreurs()
-      await chargerCommandes(pageActuelle)
-    }
-    initialiser()
-  }, [user, authLoading, permsLoading, tenantId, pageActuelle])
+  useEffect(() => {
+    if (!tenantKey || !statutsCharges) return
+    chargerCommandes(pageActuelle, codesEligibles)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageActuelle, tenantKey, codesEligibles, statutsCharges])
 
   function choisirLivreur(commandeId, livreurId) {
     setLivreurChoisiParCommande((prec) => ({ ...prec, [commandeId]: livreurId }))
@@ -116,10 +150,10 @@ export default function AssignationLivreurPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ 
-          commande_id: commandeId, 
+        body: JSON.stringify({
+          commande_id: commandeId,
           livreur_id: livreurId,
-          tenant_id: tenantId // 🚀 CORRECTION : Le tenant_id est maintenant envoyé à l'Edge Function !
+          tenant_id: tenantKey
         }),
       }
     )
@@ -132,7 +166,7 @@ export default function AssignationLivreurPage() {
       return
     }
 
-    await chargerCommandes(pageActuelle)
+    await chargerCommandes(pageActuelle, codesEligibles)
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
@@ -141,27 +175,34 @@ export default function AssignationLivreurPage() {
     return <div className="p-8 text-[#1B2632] font-medium">Vérification des accès...</div>
   }
 
-  if (chargement && commandes.length === 0) {
-    return <div className="p-8 text-[#1B2632] font-medium">Chargement des commandes...</div>
-  }
-
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
-      
-      <header className="flex flex-col gap-1 border-b border-[#C9C1B1]/50 pb-4">
-        <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-          Centre Logistique
-        </p>
-        <h1 className="text-3xl font-bold text-[#1B2632]">
-          Assignation livreur 
-        </h1>
+
+      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 pt-16">
+        <div className="flex justify-between items-end flex-wrap gap-4 px-6 md:px-0">
+          <div>
+            <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
+              Centre Logistique
+            </p>
+            <h1 className="text-3xl font-bold text-[#1B2632]">
+              Assignation livreur
+            </h1>
+          </div>
+        </div>
+
+        {statutsCharges && codesEligibles.length === 0 && (
+          <div className="mx-6 md:mx-0 p-4 bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-xl text-sm font-medium text-[#8a5a1f]">
+            Aucun statut n'est encore marqué "déclenche l'assignation" dans Paramètres → Statuts configurables.
+            Ouvrez un statut (ex : "Confirmée") et cochez cette option pour que les commandes apparaissent ici.
+          </div>
+        )}
       </header>
 
-      <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
+      <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col mx-6 md:mx-0">
         {chargement ? (
           <p className="text-sm text-[#1B2632]/60 p-6">Chargement...</p>
         ) : commandes.length === 0 ? (
-          <p className="text-sm text-[#1B2632]/60 p-6">Aucune commande confirmée en attente d'assignation.</p>
+          <p className="text-sm text-[#1B2632]/60 p-6">Aucune commande en attente d'assignation.</p>
         ) : (
           <>
             <div className="overflow-x-auto min-h-[400px]">
@@ -189,7 +230,7 @@ export default function AssignationLivreurPage() {
 
                     return (
                       <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
-                        
+
                         <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80">
                           #{cmd.lead_id || 'N/A'}
                         </td>
@@ -238,7 +279,7 @@ export default function AssignationLivreurPage() {
                             ))}
                           </select>
                           {livreursFiltres.length === 0 && (
-                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucun livreur pour cette zone</span>
+                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucune zone associée</span>
                           )}
                         </td>
 
