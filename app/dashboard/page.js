@@ -148,7 +148,6 @@ const AVATAR_COLORS = ["#1B2632", "#A35139", "#2C3B4D", "#8a5a1f", "#5c5648"];
 //  RÉCUPÉRATION ET CALCUL DES DONNÉES
 // ==================================================================
 async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
-  // Construction dynamique des filtres selon si on a un tenantId ou non (Super Admin)
   const filtreTenantCmd = tenantId ? supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)").eq("tenant_id", tenantId) : supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)");
   const filtreTenantLiv = tenantId ? supabase.from("livraisons").select("statut, commande_id").eq("tenant_id", tenantId) : supabase.from("livraisons").select("statut, commande_id");
   const filtreTenantPai = tenantId ? supabase.from("paiements").select("montant, commandes(pays(devise))").eq("tenant_id", tenantId) : supabase.from("paiements").select("montant, commandes(pays(devise))");
@@ -408,7 +407,8 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
 
 export default function DashboardFGMED() {
   const { user, tenantId, loading: authLoading } = useAuth();
-  const { roleNom, loading: permsLoading } = usePermissions();
+  // 🚀 On récupère 'hasPermission' en plus de 'roleNom'
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
 
   const [data, setData] = useState(null);
   const [periode, setPeriode] = useState("Aujourd'hui");
@@ -419,20 +419,36 @@ export default function DashboardFGMED() {
 
   const tenantKey = typeof tenantId === "object" ? tenantId?.id : tenantId;
 
-  // 🚀 Sécurité connexion uniquement (la redirection super_admin a été retirée)
+  // 🚀 REDIRECTION SÉCURISÉE (RBAC STRICT)
   useEffect(() => {
     if (!authLoading && !permsLoading) {
+      // 1. L'utilisateur n'est pas connecté
       if (!user) {
-        router.push("/");
+        router.replace("/");
+      } 
+      // 2. L'utilisateur est connecté mais n'a PAS la permission de voir le dashboard 
+      //    (et n'est pas super_admin)
+      else if (!hasPermission("menu_dashboard") && roleNom !== "super_admin" && roleNom !== "SUPER_ADMIN") {
+        // On le redirige vers sa page légitime selon son rôle
+        if (roleNom === "livreur" || roleNom === "LIVREUR") {
+          router.replace("/livraisons");
+        } else if (roleNom === "agent" || roleNom === "AGENT") {
+          router.replace("/centre-appel");
+        } else {
+          router.replace("/"); // Protection par défaut
+        }
       }
     }
-  }, [user, authLoading, permsLoading, router]);
+  }, [user, authLoading, permsLoading, hasPermission, roleNom, router]);
   
-  // 🚀 Chargement des stats (autorise le tenantKey vide ou présent)
+  // Chargement des stats
   useEffect(() => {
     if (authLoading || permsLoading) return;
-    chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
-  }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading]);
+    // On charge les données seulement si l'utilisateur y est autorisé
+    if (hasPermission("menu_dashboard") || roleNom === "super_admin" || roleNom === "SUPER_ADMIN") {
+      chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
+    }
+  }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading, hasPermission, roleNom]);
 
   if (authLoading || permsLoading || !data) {
     return (

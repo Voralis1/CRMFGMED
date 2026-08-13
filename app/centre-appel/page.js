@@ -8,9 +8,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import * as XLSX from 'xlsx'
 
-// 🚀 Fonction StatutPill mise à jour pour utiliser la couleur provenant de la DB
+// 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
-  // On cherche si ce statut existe dans la base de données
   const statutConfiguré = (listeStatutsDB || []).find(s => s.nom === statut || s.id === statut)
 
   if (statutConfiguré && statutConfiguré.couleur) {
@@ -22,7 +21,6 @@ function StatutPill({ statut, listeStatutsDB }) {
     )
   }
 
-  // Fallback si le statut n'est pas dans la DB (ex: anciennes commandes)
   const configsFallback = {
     'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée' },
     'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente' },
@@ -125,7 +123,7 @@ export default function CentreAppelAgent() {
   const [commandes, setCommandes] = useState([])
   const [listePays, setListePays] = useState([])
   const [listeZones, setListeZones] = useState([])
-  const [listeStatutsDB, setListeStatutsDB] = useState([]) // 🚀 Nouvel état pour les statuts
+  const [listeStatutsDB, setListeStatutsDB] = useState([]) 
   const [loading, setLoading] = useState(true)
   const [ongletActif, setOngletActif] = useState('a_traiter')
 
@@ -133,34 +131,32 @@ export default function CentreAppelAgent() {
   const [dateFin, setDateFin] = useState('')
   const [recherche, setRecherche] = useState('')
   const [rechercheActive, setRechercheActive] = useState('')
+  
   const [filtreStatut, setFiltreStatut] = useState('')
-
   const [filtreProduit, setFiltreProduit] = useState('')
-  const [filtreAgent, setFiltreAgent] = useState('')
   const [filtreVille, setFiltreVille] = useState('')
   const [filtreSource, setFiltreSource] = useState('')
   const [filtrePays, setFiltrePays] = useState('')
+  
   const [panneauFiltresOuvert, setPanneauFiltresOuvert] = useState(false)
-  const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], agents: [], pays: [] })
+  const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], pays: [] })
 
   const [page, setPage] = useState(1)
   const [totalItems, setTotalItems] = useState(0)
   const ITEMS_PER_PAGE = 50
 
   const [agentActuel, setAgentActuel] = useState(null)
+  const [agentIntrouvable, setAgentIntrouvable] = useState(false) // 🚀 État de sécurité
   const [commandeSelectionnee, setCommandeSelectionnee] = useState(null)
-  const [statutChoisi, setStatutChoisi] = useState('') // Initialisé à vide
+  const [statutChoisi, setStatutChoisi] = useState('') 
 
-  const [historiqueLead, setHistoriqueLead] = useState([])
-  const [loadingHistorique, setLoadingHistorique] = useState(false)
   const [tempsRestant, setTempsRestant] = useState(300)
+  const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
   const [formData, setFormData] = useState({
     source: '', client_nom: '', client_telephone: '', ville_zone: '',
     zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: '', prixUnitaire: 0
   })
-
-  const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
   // REDIRECTION SÉCURISÉE
   useEffect(() => {
@@ -173,6 +169,7 @@ export default function CentreAppelAgent() {
     }
   }, [user, authLoading, permsLoading, hasPermission, router])
 
+  // TIMER APPEL
   useEffect(() => {
     let interval = null
     if (commandeSelectionnee) {
@@ -190,6 +187,7 @@ export default function CentreAppelAgent() {
     return `${m}:${s}`
   }
 
+  // RECHERCHE DYNAMIQUE
   useEffect(() => {
     const t = setTimeout(() => {
       setRechercheActive(recherche.trim())
@@ -198,6 +196,7 @@ export default function CentreAppelAgent() {
     return () => clearTimeout(t)
   }, [recherche])
 
+  // RACCOURCI CLAVIER
   useEffect(() => {
     function onKeyDown(e) {
       if (e.key === 'Escape') {
@@ -209,30 +208,13 @@ export default function CentreAppelAgent() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  // BLOQUER SCROLL
   useEffect(() => {
     document.body.style.overflow = commandeSelectionnee ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [commandeSelectionnee])
 
-  useEffect(() => {
-    async function chargerHistorique() {
-      if (!commandeSelectionnee) {
-        setHistoriqueLead([])
-        return
-      }
-      setLoadingHistorique(true)
-      const { data } = await supabase
-        .from('appels')
-        .select(`id, statut, notes, date_rappel, created_at, agents ( nom, name, full_name )`)
-        .eq('commande_id', commandeSelectionnee.id)
-        .order('created_at', { ascending: false })
-
-      setHistoriqueLead(data || [])
-      setLoadingHistorique(false)
-    }
-    chargerHistorique()
-  }, [commandeSelectionnee?.id])
-
+  // CHARGEMENT DES RÉFÉRENTIELS
   useEffect(() => {
     async function chargerOptionsFiltres() {
       if (!user || !tenantKey) return
@@ -241,14 +223,12 @@ export default function CentreAppelAgent() {
         { data: produits }, 
         { data: villes }, 
         { data: sources }, 
-        { data: agents }, 
         { data: pays },
-        { data: statuts } // 🚀 Chargement des statuts depuis la DB
+        { data: statuts } 
       ] = await Promise.all([
         supabase.from('commandes').select('produit').eq('tenant_id', tenantKey).not('produit', 'is', null).limit(2000),
         supabase.from('commandes').select('ville_zone').eq('tenant_id', tenantKey).not('ville_zone', 'is', null).limit(2000),
         supabase.from('commandes').select('source').eq('tenant_id', tenantKey).not('source', 'is', null).limit(2000),
-        supabase.from('agents').select('id, nom, name, full_name').eq('tenant_id', tenantKey),
         supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom'),
         supabase.from('statuts').select('*').eq('tenant_id', tenantKey).order('nom')
       ])
@@ -261,43 +241,44 @@ export default function CentreAppelAgent() {
         produits: uniques(produits, 'produit'),
         villes: uniques(villes, 'ville_zone'),
         sources: uniques(sources, 'source'),
-        agents: (agents || []).map(a => ({
-          id: a.id,
-          nom: a.nom || a.name || a.full_name || 'Agent'
-        })),
         pays: (pays || []).map(p => ({ id: p.id, nom: p.nom }))
       })
 
-      if (statuts) {
-        setListeStatutsDB(statuts)
-      }
+      if (statuts) setListeStatutsDB(statuts)
     }
     chargerOptionsFiltres()
   }, [user, tenantKey])
 
+  // 🚀 SÉCURITÉ : VÉRIFICATION DU PROFIL AGENT ET CHARGEMENT DE SES LEADS
   useEffect(() => {
     if (authLoading || permsLoading || !user || !tenantKey) return
 
     async function verifierAgentEtCharger() {
       const { data: agentData } = await supabase
         .from('agents')
-        .select('*')
+        .select('id, nom')
         .eq('user_id', user.id)
         .eq('tenant_id', tenantKey)
         .maybeSingle()
 
       if (agentData) {
         setAgentActuel(agentData)
+        setAgentIntrouvable(false)
+        await chargerCommandes(page, ongletActif, agentData.id)
+      } else {
+        // L'utilisateur n'est pas reconnu comme agent dans ce tenant
+        setAgentIntrouvable(true)
+        setLoading(false)
       }
-
-      await chargerCommandes(page, ongletActif)
     }
 
     verifierAgentEtCharger()
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey])
 
-  async function chargerCommandes(pageActuelle, onglet) {
-    if (!tenantKey) return
+  // 🚀 CHARGEMENT STRICTEMENT CLOISONNÉ
+  async function chargerCommandes(pageActuelle, onglet, agentId) {
+    if (!tenantKey || !agentId) return
     setLoading(true)
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
@@ -308,10 +289,12 @@ export default function CentreAppelAgent() {
     const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantKey)
     setListeZones(zonesListDB || [])
 
-    const jointureAppels = filtreAgent ? ', appels!inner(agent_id)' : ''
+    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenantKey)
+    let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)`).eq('tenant_id', tenantKey)
 
-    let requeteBase = supabase.from('commandes').select(`*${jointureAppels}`, { count: 'exact', head: true }).eq('tenant_id', tenantKey)
-    let requeteData = supabase.from('commandes').select(`id, lead_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)${jointureAppels}`).eq('tenant_id', tenantKey)
+    // 🔒 RESTRICTION ABSOLUE : L'agent ne voit que SES commandes
+    requeteBase = requeteBase.eq('agent_id', agentId)
+    requeteData = requeteData.eq('agent_id', agentId)
 
     if (onglet === 'a_traiter') {
       requeteBase = requeteBase.is('statut_confirmation', null)
@@ -350,7 +333,6 @@ export default function CentreAppelAgent() {
     if (filtreProduit) { requeteBase = requeteBase.eq('produit', filtreProduit); requeteData = requeteData.eq('produit', filtreProduit); }
     if (filtreVille) { requeteBase = requeteBase.eq('ville_zone', filtreVille); requeteData = requeteData.eq('ville_zone', filtreVille); }
     if (filtreSource) { requeteBase = requeteBase.eq('source', filtreSource); requeteData = requeteData.eq('source', filtreSource); }
-    if (filtreAgent) { requeteBase = requeteBase.eq('appels.agent_id', filtreAgent); requeteData = requeteData.eq('appels.agent_id', filtreAgent); }
 
     if (onglet === 'historique') {
       requeteData = requeteData.order('updated_at', { ascending: false }).order('id', { ascending: false })
@@ -409,7 +391,6 @@ export default function CentreAppelAgent() {
   async function ouvrirPanneau(commande) {
     setCommandeSelectionnee(commande)
 
-    // Pré-sélectionner le statut actuel ou le premier statut de la DB
     if (commande.statut_confirmation) {
       setStatutChoisi(commande.statut_confirmation)
     } else if (listeStatutsDB.length > 0) {
@@ -422,7 +403,6 @@ export default function CentreAppelAgent() {
 
     if (!paysId && commande.pays?.iso) {
       let pays = listePays.find(p => (p.code || '').toUpperCase() === commande.pays.iso)
-
       if (!pays) {
         const { data } = await supabase
           .from('pays')
@@ -481,7 +461,7 @@ export default function CentreAppelAgent() {
         },
         body: JSON.stringify({
           commande_id: commandeSelectionnee.id,
-          statut: statutChoisi, // 🚀 Envoie le statut configuré
+          statut: statutChoisi, 
           tenant_id: tenantKey, 
           ...formData
         }),
@@ -503,145 +483,46 @@ export default function CentreAppelAgent() {
       setCommandeSelectionnee(null)
     }
 
-    await chargerCommandes(page, ongletActif)
+    await chargerCommandes(page, ongletActif, agentActuel?.id)
   }
 
   const appliquer = (setter) => (v) => { setter(v); setPage(1) }
 
   function reinitialiserFiltres() {
     setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut('')
-    setFiltreProduit(''); setFiltreAgent(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays('')
+    setFiltreProduit(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays('')
     setPage(1)
   }
 
-  function exporterCSV() {
-    if (commandes.length === 0) {
-      alert("Aucune commande à exporter dans cette vue.")
-      return
-    }
-
-    const entetes = ["Lead ID", "Date", "Client", "Telephone", "Pays", "Ville", "Produit", "Quantite", "Prix", "Statut"]
-    const lignes = commandes.map(c => [
-      c.lead_id || "",
-      c.created_at ? new Date(c.created_at).toLocaleDateString('fr-FR') : "",
-      `"${(c.client_nom || "").replace(/"/g, '""')}"`,
-      `"${(c.client_telephone || "").replace(/"/g, '""')}"`,
-      `"${(c.pays?.nom || "").replace(/"/g, '""')}"`,
-      `"${(c.ville_zone || "").replace(/"/g, '""')}"`,
-      `"${(c.produit || "").replace(/"/g, '""')}"`,
-      c.quantite || 1,
-      c.prix || 0,
-      c.statut_confirmation || "en_attente"
-    ])
-
-    const contenuCSV = [entetes.join(","), ...lignes.map(l => l.join(","))].join("\n")
-    const blob = new Blob([contenuCSV], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const lien = document.createElement("a")
-    lien.setAttribute("href", url)
-    lien.setAttribute("download", `commandes_${new Date().toISOString().slice(0, 10)}.csv`)
-    document.body.appendChild(lien)
-    lien.click()
-    document.body.removeChild(lien)
-  }
-
-  async function importerFichier(event) {
-    const fichier = event.target.files[0]
-    if (!fichier || !tenantKey) return
-
-    const { data: paysListDB } = await supabase
-      .from('pays')
-      .select('id, nom, code')
-      .eq('tenant_id', tenantKey);
-
-    const lecteur = new FileReader()
-    lecteur.onload = async function (e) {
-      try {
-        const data = new Uint8Array(e.target.result)
-        const classeur = XLSX.read(data, { type: 'array' })
-        const nomFeuille = classeur.SheetNames[0]
-        const feuille = classeur.Sheets[nomFeuille]
-        const lignes = XLSX.utils.sheet_to_json(feuille, { defval: "" })
-
-        if (lignes.length === 0) {
-          alert("Le fichier est vide ou mal formaté.")
-          return
-        }
-
-        let nouvellesCommandes = lignes.map(ligne => {
-          const ligneNormalisee = {}
-          for (let cle in ligne) {
-            ligneNormalisee[cle.toLowerCase().trim()] = ligne[cle]
-          }
-
-          const nomPaysFichier = ligneNormalisee['pays'] || ligneNormalisee['country'] || '';
-          let paysIdTrouve = null;
-          
-          if (nomPaysFichier && paysListDB) {
-            const paysMatch = paysListDB.find(p => 
-              p.nom.toLowerCase() === String(nomPaysFichier).toLowerCase().trim() || 
-              (p.code && p.code.toLowerCase() === String(nomPaysFichier).toLowerCase().trim())
-            );
-            if (paysMatch) {
-              paysIdTrouve = paysMatch.id;
-            }
-          }
-
-          const leadIdFichier = ligneNormalisee['lead_id'] || ligneNormalisee['leadid'] || ligneNormalisee['id'] || '';
-          const finalLeadId = leadIdFichier ? String(leadIdFichier).trim() : `LEAD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
-          return {
-            client_nom: ligneNormalisee['client_nom'] || ligneNormalisee['nom'] || ligneNormalisee['client'] || 'Inconnu',
-            client_telephone: String(ligneNormalisee['client_telephone'] || ligneNormalisee['telephone'] || ligneNormalisee['tel'] || ''),
-            ville_zone: ligneNormalisee['ville_zone'] || ligneNormalisee['ville'] || ligneNormalisee['zone'] || '',
-            produit: ligneNormalisee['produit'] || 'Produit standard',
-            quantite: parseInt(ligneNormalisee['quantite']) || 1,
-            prix: parseFloat(ligneNormalisee['prix']) || 0,
-            source: 'csv', 
-            notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
-            lead_id: finalLeadId,
-            tenant_id: tenantKey,
-            pays_id: paysIdTrouve 
-          }
-        }).filter(cmd => cmd.client_telephone !== '')
-
-        if (nouvellesCommandes.length === 0) {
-          alert("Aucune donnée valide trouvée dans le fichier (Vérifiez qu'il y a bien des numéros de téléphone).")
-          return
-        }
-
-        const { error } = await supabase.from('commandes').insert(nouvellesCommandes)
-        if (error) {
-          alert("Erreur lors de l'import : " + error.message)
-        } else {
-          alert(`Import réussi : ${nouvellesCommandes.length} commandes ajoutées.`)
-          window.location.reload()
-        }
-      } catch (erreur) {
-        console.error(erreur);
-        alert("Erreur lors de la lecture du fichier.")
-      }
-    }
-    lecteur.readAsArrayBuffer(fichier)
-    event.target.value = null
-  }
-
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
-  const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreAgent, filtreVille, filtreSource, filtrePays].filter(Boolean).length
+  const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
   const filtresActifs = dateDebut || dateFin || recherche || nombreFiltresActifs > 0
 
   const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
 
-  // 🚀 Utilisation de la liste dynamique pour déterminer le label de filtre
   const labelStatut = (v) => {
     const s = listeStatutsDB.find(st => st.nom === v || st.id === v)
     return s ? s.nom : v
   }
-  const nomAgent = (id) => optionsFiltres.agents.find(a => a.id === id)?.nom || 'Agent'
 
   if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+  }
+
+  // 🚀 BLOCAGE D'INTERFACE SI L'UTILISATEUR N'A PAS DE PROFIL AGENT
+  if (agentIntrouvable) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
+        </svg>
+        <h2 className="text-xl font-bold text-[#1B2632]">Espace de travail indisponible</h2>
+        <p className="text-sm text-[#1B2632]/60 max-w-md text-center">
+          Votre compte n'est lié à aucun profil "Agent" actif. Veuillez demander à votre administrateur de vous créer un profil dans la section "Gestion des Utilisateurs".
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -653,56 +534,15 @@ export default function CentreAppelAgent() {
         .drawer-in { animation: drawerIn 0.25s ease-out; }
         .fade-in { animation: fadeIn 0.2s ease-out; }
         .pop-in { animation: popIn 0.18s ease-out; }
-        .timeline-line::before {
-          content: ''; position: absolute; left: 11px; top: 24px; bottom: -8px; width: 2px; background: #C9C1B1; opacity: 0.3;
-        }
-        .timeline-item:last-child .timeline-line::before { display: none; }
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
         <div className="flex justify-between items-center flex-wrap gap-3">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1 flex items-center gap-2">
-              Espace Agent <span className="text-[#1B2632]/30">•</span> {agentActuel?.nom || agentActuel?.name || 'Connecté'}
+              Espace Personnel <span className="text-[#1B2632]/30">•</span> {agentActuel?.nom || 'Agent Connecté'}
             </p>
-            <h1 className="text-3xl font-bold text-[#1B2632]">Centre de confirmation</h1>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {hasPermission('exporter_csv') && (
-              <button
-                onClick={exporterCSV}
-                title="Exporter la vue actuelle en CSV"
-                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Exporter CSV
-              </button>
-            )}
-
-            {hasPermission('importer_csv') && (
-              <label
-                title="Importer des commandes depuis un fichier CSV ou Excel"
-                className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-                Importer CSV/Excel
-                <input
-                  type="file"
-                  accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-                  onChange={importerFichier}
-                  className="hidden"
-                />
-              </label>
-            )}
+            <h1 className="text-3xl font-bold text-[#1B2632]">Centre d'appels</h1>
           </div>
         </div>
 
@@ -710,12 +550,12 @@ export default function CentreAppelAgent() {
           <div className="flex items-center gap-4">
             <div className="flex gap-2">
               <button
-                onClick={() => { setOngletActif('a_traiter'); setPage(1); setCommandeSelectionnee(null); setFiltreStatut(''); setFiltreAgent(''); }}
+                onClick={() => { setOngletActif('a_traiter'); setPage(1); setCommandeSelectionnee(null); setFiltreStatut(''); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
                   ongletActif === 'a_traiter' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                Nouveaux leads
+                Mes Leads à traiter
               </button>
               <button
                 onClick={() => { setOngletActif('historique'); setPage(1); setCommandeSelectionnee(null); }}
@@ -723,14 +563,14 @@ export default function CentreAppelAgent() {
                   ongletActif === 'historique' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                Historique global
+                Mon Historique
               </button>
             </div>
 
             <div className="h-6 w-px bg-[#C9C1B1]/50"></div>
 
             <div className="text-sm text-[#1B2632]/60 font-medium">
-              {totalItems} commande{totalItems > 1 ? 's' : ''} dans cette vue
+              {totalItems} commande{totalItems > 1 ? 's' : ''} affectée{totalItems > 1 ? 's' : ''}
             </div>
           </div>
 
@@ -782,7 +622,6 @@ export default function CentreAppelAgent() {
                     </div>
 
                     <div className="flex flex-col gap-4">
-                      {/* 🚀 Filtre Statut mis à jour avec les statuts dynamiques */}
                       {ongletActif === 'historique' && (
                         <SelectFiltre 
                           label="Statut" 
@@ -792,9 +631,7 @@ export default function CentreAppelAgent() {
                           placeholder="Tous les statuts" 
                         />
                       )}
-                      {ongletActif === 'historique' && (
-                        <SelectFiltre label="Agent" value={filtreAgent} onChange={appliquer(setFiltreAgent)} options={optionsFiltres.agents.map(a => ({ value: a.id, label: a.nom }))} placeholder="Tous les agents" />
-                      )}
+                      
                       <SelectFiltre label="Pays" value={filtrePays} onChange={appliquer(setFiltrePays)} options={optionsFiltres.pays.map(p => ({ value: p.id, label: p.nom }))} placeholder="Tous les pays" />
                       <SelectFiltre label="Produit" value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={optionsFiltres.produits.map(p => ({ value: p, label: p }))} placeholder="Tous les produits" />
                       <SelectFiltre label="Ville" value={filtreVille} onChange={appliquer(setFiltreVille)} options={optionsFiltres.villes.map(v => ({ value: v, label: v }))} placeholder="Toutes les villes" />
@@ -832,7 +669,6 @@ export default function CentreAppelAgent() {
         {nombreFiltresActifs > 0 && (
           <div className="flex flex-wrap items-center gap-2">
             {filtreStatut && <ChipFiltre label={`Statut : ${labelStatut(filtreStatut)}`} onClear={() => appliquer(setFiltreStatut)('')} />}
-            {filtreAgent && <ChipFiltre label={`Agent : ${nomAgent(filtreAgent)}`} onClear={() => appliquer(setFiltreAgent)('')} />}
             {filtrePays && <ChipFiltre label={`Pays : ${optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || ''}`} onClear={() => appliquer(setFiltrePays)('')} />}
             {filtreProduit && <ChipFiltre label={`Produit : ${filtreProduit}`} onClear={() => appliquer(setFiltreProduit)('')} />}
             {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
@@ -861,7 +697,7 @@ export default function CentreAppelAgent() {
               {loading ? (
                 <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Aucune commande trouvée.</td></tr>
+                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Aucun lead ne vous est assigné.</td></tr>
               ) : (
                 commandes.map((cmd) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
@@ -892,7 +728,6 @@ export default function CentreAppelAgent() {
                         {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
                       </td>
                       <td className="px-6 py-4">
-                        {/* 🚀 Passage de listeStatutsDB pour coloriser le statut */}
                         <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
                       </td>
                       <td className="px-6 py-4 text-right">
@@ -1069,7 +904,6 @@ export default function CentreAppelAgent() {
               <div className="p-4 bg-[#EEE9DF]/30 rounded-xl border border-[#C9C1B1]/50">
                 <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">Résultat de l'appel</label>
                 
-                {/* 🚀 SELECT DYNAMIQUE DES STATUTS BDD */}
                 <select
                   value={statutChoisi}
                   onChange={(e) => setStatutChoisi(e.target.value)}
@@ -1081,7 +915,6 @@ export default function CentreAppelAgent() {
                   ))}
                 </select>
 
-                {/* 🚀 Affichage du champ date conditionnel (si le nom contient "rappel" ou "reminder") */}
                 {(statutChoisi.toLowerCase().includes('rappel') || statutChoisi.toLowerCase().includes('reminder')) && (
                   <div className="mt-3">
                     <label className="block text-[11px] font-bold text-[#8a5a1f] uppercase mb-1">Date et heure de rappel</label>

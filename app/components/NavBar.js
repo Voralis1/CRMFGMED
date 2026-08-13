@@ -9,13 +9,15 @@ import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du
 const TOUS_LES_LIENS = [
   { href: '/dashboard', label: 'Dashboard', permission: 'menu_dashboard' },
   { href: '/performances', label: 'Performances', permission: 'menu_performances' },
+  { href: '/commandes', label: 'Commandes' , permission: 'menu_commandes' }, 
   { href: '/centre-appel', label: 'Centre d\'appel', permission: 'menu_centre_appel' },
   { href: '/assignation-livreur', label: 'Assignation livreur', permission: 'menu_assignation_livreur' },
   { href: '/livraisons', label: 'Livraisons', permission: 'menu_livraisons' },
   { href: '/paiements', label: 'Paiements', permission: 'menu_paiements' },
   { href: '/utilisateurs', label: 'Utilisateurs', permission: 'menu_utilisateurs' },
   { href: '/parametres', label: 'Paramètres', permission: 'menu_parametres' },
-  { href: '/profile', label: 'Profil' }, // Pas de permission = accessible à tous ceux connectés
+  { href: '/profile', label: 'Profil' }, 
+  // Pas de permission = accessible à tous ceux connectés
 ]
 
 const LIENS_SUPER_ADMIN = [
