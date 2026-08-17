@@ -268,7 +268,12 @@ export default function GestionCommandesPage() {
 
         const nouvellesCommandes = lignes.map(ligne => {
           const ligneNormalisee = {}
-          for (let cle in ligne) ligneNormalisee[cle.toLowerCase().trim()] = ligne[cle]
+          
+          // 🚀 1. Normalisation : Transforme "Lead ID", "Lead-ID" ou "ID" en "lead_id"
+          for (let cle in ligne) {
+            const clePropre = cle.toLowerCase().trim().replace(/[\s-]/g, '_')
+            ligneNormalisee[clePropre] = ligne[cle]
+          }
 
           const nomPaysFichier = ligneNormalisee['pays'] || ligneNormalisee['country'] || '';
           let paysIdTrouve = null;
@@ -278,7 +283,17 @@ export default function GestionCommandesPage() {
           }
 
           const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
-          const leadIdFichier = ligneNormalisee['lead_id'] || ligneNormalisee['leadid'] || ligneNormalisee['id'] || '';
+          
+          // 🚀 2. Recherche large de l'ID dans le fichier
+          const leadIdFichier = ligneNormalisee['lead_id'] || 
+                                ligneNormalisee['leadid'] || 
+                                ligneNormalisee['id'] || 
+                                ligneNormalisee['numero_commande'] || 
+                                ligneNormalisee['numero'] || 
+                                ligneNormalisee['reference'] || 
+                                '';
+          
+          // 🚀 3. Règle absolue : Si l'ID est dans le fichier, on le prend. Sinon, on génère.
           const finalLeadId = leadIdFichier ? String(leadIdFichier).trim() : `LEAD-${Date.now().toString(36).toUpperCase()}-${randomSuffix}`;
 
           return {

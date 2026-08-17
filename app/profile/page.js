@@ -3,12 +3,12 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
-import { useAuth } from '../context/AuthContext' // 👈 Import du contexte global SaaS
-import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
+import { useAuth } from '../context/AuthContext'
+import { usePermissions } from '../context/PermissionsContext'
 
 export default function ProfilePage() {
-  const { user, tenantId, loading: authLoading } = useAuth() // 👈 Utilisation du contexte global
-  const { roleNom, loading: permsLoading } = usePermissions() // 🚀 Récupération fiable du rôle
+  const { user, tenantId, loading: authLoading } = useAuth()
+  const { roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
   
   const [loading, setLoading] = useState(true)
@@ -26,7 +26,13 @@ export default function ProfilePage() {
     bank_name: ''
   })
 
-  // Redirection sécurisée via l'état d'authentification global
+  // États pour le mot de passe
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
+  // Gérer le format du tenantId (au cas où ce soit un objet)
+  const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.replace('/')
@@ -35,14 +41,13 @@ export default function ProfilePage() {
 
   useEffect(() => {
     async function chargerProfil() {
-      if (!user || !tenantId) return
+      if (!user || !tenantKey) return
 
-      // Récupérer les infos de l'agent dans son tenant respectif
       const { data: agentData } = await supabase
         .from('agents')
         .select('*')
         .eq('user_id', user.id)
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantKey)
         .maybeSingle()
 
       setProfile({
@@ -51,7 +56,7 @@ export default function ProfilePage() {
         username: agentData?.username || user.email?.split('@')[0] || '',
         phone: agentData?.telephone || agentData?.phone || '',
         email: user.email || '',
-        role: roleNom || 'Utilisateur', // 🚀 Utilisation directe du roleNom du contexte
+        role: roleNom || 'Utilisateur',
         bank_number: agentData?.bank_number || '',
         bank_name: agentData?.bank_name || ''
       })
@@ -59,35 +64,72 @@ export default function ProfilePage() {
       setLoading(false)
     }
 
-    if (user && tenantId && !permsLoading) {
+    if (user && tenantKey && !permsLoading) {
       chargerProfil()
     }
-  }, [user, tenantId, permsLoading, roleNom])
+  }, [user, tenantKey, permsLoading, roleNom])
 
   async function handleSave(e) {
     e.preventDefault()
-    if (!user || !tenantId) return
+    if (!user || !tenantKey) return
     
     setSaving(true)
+    setMessage({ texte: '', type: '' })
 
-    const { error } = await supabase
+    // 1. Mise à jour du mot de passe (si rempli)
+    if (newPassword || confirmPassword) {
+      if (newPassword !== confirmPassword) {
+        setMessage({ texte: 'Les mots de passe ne correspondent pas.', type: 'erreur' })
+        setSaving(false)
+        return
+      }
+      if (newPassword.length < 6) {
+        setMessage({ texte: 'Le mot de passe doit contenir au moins 6 caractères.', type: 'erreur' })
+        setSaving(false)
+        return
+      }
+
+      const { error: authError } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+
+      if (authError) {
+        setMessage({ texte: 'Erreur mot de passe : ' + authError.message, type: 'erreur' })
+        setSaving(false)
+        return
+      }
+    }
+
+    // 2. Mise à jour des informations du profil (Table agents)
+    const { data, error: profileError } = await supabase
       .from('agents')
       .update({
         nom: profile.first_name,
+        prenom: profile.last_name, // Prise en compte du prénom
         telephone: profile.phone,
         bank_number: profile.bank_number,
         bank_name: profile.bank_name
       })
       .eq('user_id', user.id)
-      .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
+      .eq('tenant_id', tenantKey)
+      .select() // Demande à Supabase de renvoyer la ligne modifiée
 
     setSaving(false)
-    if (error) {
-      setMessage({ texte: 'Erreur lors de la mise à jour du profil.', type: 'erreur' })
+
+    // Vérification des erreurs ou des blocages RLS
+    if (profileError) {
+      console.error("Erreur de mise à jour:", profileError)
+      setMessage({ texte: 'Erreur technique lors de la mise à jour.', type: 'erreur' })
+    } else if (!data || data.length === 0) {
+      console.warn("0 ligne mise à jour. Blocage RLS probable.")
+      setMessage({ texte: 'Modification non autorisée (Bloquée par RLS).', type: 'erreur' })
     } else {
       setMessage({ texte: 'Profil mis à jour avec succès !', type: 'succes' })
+      setNewPassword('')
+      setConfirmPassword('')
     }
-    setTimeout(() => setMessage({ texte: '', type: '' }), 4000)
+    
+    setTimeout(() => setMessage({ texte: '', type: '' }), 5000)
   }
 
   if (authLoading || permsLoading || loading) {
@@ -111,139 +153,186 @@ export default function ProfilePage() {
 
       <div className="fg-card">
         <form onSubmit={handleSave} className="flex flex-col gap-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            <div>
-              <label className="fg-label">FIRST NAME</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                </span>
-                <input 
-                  type="text" 
-                  value={profile.first_name}
-                  onChange={(e) => setProfile({...profile, first_name: e.target.value})}
-                  className="fg-input"
-                />
+          
+          {/* Section Informations Personnelles */}
+          <div className="border-b border-[#C9C1B1]/50 pb-6 mb-2">
+            <h2 className="text-lg font-bold text-[#1B2632] mb-4">Informations Personnelles</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              <div>
+                <label className="fg-label">FIRST NAME</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    value={profile.first_name}
+                    onChange={(e) => setProfile({...profile, first_name: e.target.value})}
+                    className="fg-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">LAST NAME</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    value={profile.last_name}
+                    onChange={(e) => setProfile({...profile, last_name: e.target.value})}
+                    className="fg-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">USERNAME</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    value={profile.username}
+                    disabled
+                    className="fg-input disabled"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">PHONE</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    value={profile.phone}
+                    onChange={(e) => setProfile({...profile, phone: e.target.value})}
+                    className="fg-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">EMAIL</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                  </span>
+                  <input 
+                    type="email" 
+                    value={profile.email}
+                    disabled
+                    className="fg-input disabled"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">ROLE</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    value={profile.role}
+                    disabled
+                    className="fg-input disabled uppercase font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">BANK NUMBER (RIB)</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    placeholder="The bank RIB should contain 24 digits"
+                    value={profile.bank_number}
+                    onChange={(e) => setProfile({...profile, bank_number: e.target.value})}
+                    className="fg-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">BANK NAME</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3"></path></svg>
+                  </span>
+                  <input 
+                    type="text" 
+                    placeholder="Bank name"
+                    value={profile.bank_name}
+                    onChange={(e) => setProfile({...profile, bank_name: e.target.value})}
+                    className="fg-input"
+                  />
+                </div>
               </div>
             </div>
-
-            <div>
-              <label className="fg-label">LAST NAME</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                </span>
-                <input 
-                  type="text" 
-                  value={profile.last_name}
-                  onChange={(e) => setProfile({...profile, last_name: e.target.value})}
-                  className="fg-input"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="fg-label">USERNAME</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                </span>
-                <input 
-                  type="text" 
-                  value={profile.username}
-                  disabled
-                  className="fg-input disabled"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="fg-label">PHONE</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                </span>
-                <input 
-                  type="text" 
-                  value={profile.phone}
-                  onChange={(e) => setProfile({...profile, phone: e.target.value})}
-                  className="fg-input"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="fg-label">EMAIL</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                </span>
-                <input 
-                  type="email" 
-                  value={profile.email}
-                  disabled
-                  className="fg-input disabled"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="fg-label">ROLE</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                </span>
-                <input 
-                  type="text" 
-                  value={profile.role}
-                  disabled
-                  className="fg-input disabled uppercase font-semibold"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="fg-label">BANK NUMBER (RIB)</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
-                </span>
-                <input 
-                  type="text" 
-                  placeholder="The bank RIB should contain 24 digits"
-                  value={profile.bank_number}
-                  onChange={(e) => setProfile({...profile, bank_number: e.target.value})}
-                  className="fg-input"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="fg-label">BANK NAME</label>
-              <div className="fg-input-wrapper">
-                <span className="fg-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 14v3M12 14v3M16 14v3"></path></svg>
-                </span>
-                <input 
-                  type="text" 
-                  placeholder="Bank name"
-                  value={profile.bank_name}
-                  onChange={(e) => setProfile({...profile, bank_name: e.target.value})}
-                  className="fg-input"
-                />
-              </div>
-            </div>
-
           </div>
 
-          <div className="flex justify-center mt-6">
+          {/* Section Sécurité / Mot de passe */}
+          <div>
+            <h2 className="text-lg font-bold text-[#1B2632] mb-1">Sécurité</h2>
+            <p className="text-xs text-[#1B2632]/60 mb-4">Laissez ces champs vides si vous ne souhaitez pas modifier votre mot de passe.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-[#EEE9DF]/30 p-6 rounded-xl border border-[#C9C1B1]/50">
+              
+              <div>
+                <label className="fg-label">NEW PASSWORD</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                  </span>
+                  <input 
+                    type="password" 
+                    placeholder="Min. 6 caractères"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="fg-input"
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="fg-label">CONFIRM NEW PASSWORD</label>
+                <div className="fg-input-wrapper">
+                  <span className="fg-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                  </span>
+                  <input 
+                    type="password" 
+                    placeholder="Confirmer le mot de passe"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="fg-input"
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <div className="flex justify-center mt-4">
             <button 
               type="submit" 
               disabled={saving}
-              className="fg-btn-save cursor-pointer"
+              className="fg-btn-save cursor-pointer disabled:opacity-50"
             >
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>
@@ -258,7 +347,7 @@ function StyleProfile() {
       @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
       .fg-root{--abyssal:#1B2632;--blue:#2C3B4D;--palladian:#EEE9DF;--oatmeal:#C9C1B1;--truffle:#A35139;background:var(--palladian);min-height:100vh;padding:28px;font-family:'Inter',system-ui,sans-serif;color:var(--abyssal);padding-top:80px;}
       .fg-root *{box-sizing:border-box;}
-      .fg-head{margin-bottom:30px;}
+      .fg-head{margin-bottom:30px;max-width:1100px;margin-left:auto;margin-right:auto;}
       .fg-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--truffle);margin:0 0 6px;}
       .fg-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-.01em;margin:0;}
       .fg-card{background:#fff;border:1px solid var(--oatmeal);border-radius:16px;padding:32px;box-shadow:0 1px 2px rgba(27,38,50,.04);max-width:1100px;margin:0 auto;}
