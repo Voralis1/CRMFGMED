@@ -43,11 +43,11 @@ export default function ParametresAdmin() {
     product_page: ""
   });
 
-  // --- 🚀 NOUVEAU : États Entrepôts ---
+  // --- États Entrepôts ---
   const [listeEntrepots, setListeEntrepots] = useState([]);
   const [nouvelEntrepot, setNouvelEntrepot] = useState({ nom: "", localisation: "" });
 
-  // --- 🚀 NOUVEAU : États Stocks & Mouvements ---
+  // --- États Stocks & Mouvements ---
   const [listeStocks, setListeStocks] = useState([]);
   const [nouveauMouvement, setNouveauMouvement] = useState({
     produit_id: "", entrepot_id: "", type_mouvement: "entree", quantite: 1, notes: ""
@@ -82,11 +82,9 @@ export default function ParametresAdmin() {
     const { data: produitsData } = await supabase.from("produits").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false });
     if (produitsData) setListeProduits(produitsData);
 
-    // Chargement Entrepôts
     const { data: entrepotsData } = await supabase.from("entrepots").select("*").eq("tenant_id", tenantId).order("nom");
     if (entrepotsData) setListeEntrepots(entrepotsData);
 
-    // Chargement Stocks
     const { data: stocksData } = await supabase.from("stocks").select("*, produits(product, code), entrepots(nom)").eq("tenant_id", tenantId);
     if (stocksData) setListeStocks(stocksData);
 
@@ -199,7 +197,7 @@ export default function ParametresAdmin() {
     e.preventDefault();
     if (!tenantId || !nouvelEntrepot.nom) return;
     const { error } = await supabase.from("entrepots").insert([{ nom: nouvelEntrepot.nom.trim(), localisation: nouvelEntrepot.localisation.trim(), tenant_id: tenantId }]);
-    if (error) afficherMessage("Erreur lors de l'ajout de l'entrepôt.", "erreur");
+    if (error) afficherMessage("Erreur lors de l'ajout de l'entrepôt : " + error.message, "erreur");
     else { afficherMessage("Entrepôt ajouté avec succès.", "succes"); setNouvelEntrepot({ nom: "", localisation: "" }); chargerDonnees(); }
   }
 
@@ -228,7 +226,7 @@ export default function ParametresAdmin() {
     setTimeout(() => setMessage({ texte: "", type: "" }), 5000);
   }
 
-  // --- 🎨 ICÔNES DES ONGLETS ---
+  // --- ICÔNES DES ONGLETS ---
   const TAB_ICONS = {
     pays: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -262,7 +260,7 @@ export default function ParametresAdmin() {
     ),
   };
 
-  // --- 🎨 BOUTON ONGLET (style pilule comme la capture) ---
+  // --- BOUTON ONGLET (style pilule) ---
   const TabButton = ({ id, label }) => (
     <button
       onClick={() => setOngletActif(id)}
@@ -476,7 +474,7 @@ export default function ParametresAdmin() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
-                                        <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
+                    <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
                       <option value="">Sélectionner un pays</option>
                       {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                     </select>
@@ -651,7 +649,7 @@ export default function ParametresAdmin() {
           </div>
         )}
 
-        {/* --- NOUVEL ONGLET : ENTREPÔTS --- */}
+        {/* --- ONGLET ENTREPÔTS --- */}
         {ongletActif === "entrepots" && (
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
@@ -695,51 +693,52 @@ export default function ParametresAdmin() {
           </div>
         )}
 
-        {/* --- NOUVEL ONGLET : STOCKS ET MOUVEMENTS --- */}
+        {/* --- ONGLET STOCKS & MOUVEMENTS (style harmonisé avec le reste de la page) --- */}
         {ongletActif === "stocks" && (
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
-              <div className="mb-6 flex justify-between items-center border-b border-[#C9C1B1]/50 pb-4">
-                <div>
-                  <h2 className="text-xl font-bold text-[#1B2632]">Inventaire et Mouvements</h2>
-                  <p className="text-sm text-[#1B2632]/60 mt-1">Déclarez vos mouvements ici. Le stock du produit se mettra à jour automatiquement.</p>
-                </div>
+              <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
+                <h2 className="text-xl font-bold text-[#1B2632]">Inventaire et Mouvements</h2>
+                <p className="text-sm text-[#1B2632]/60 mt-1">Déclarez vos mouvements ici. Le stock du produit se met à jour automatiquement.</p>
               </div>
 
-              <form onSubmit={ajouterMouvement} className="flex flex-col gap-4 mb-8 p-6 bg-[#FFB162]/10 border border-[#FFB162]/40 rounded-xl">
-                <h3 className="text-sm font-bold text-[#8a5a1f] mb-2 uppercase tracking-wide">Nouveau mouvement de stock</h3>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#8a5a1f]/70 uppercase tracking-wide">Produit</label>
-                    <select required value={nouveauMouvement.produit_id} onChange={(e) => setNouveauMouvement({...nouveauMouvement, produit_id: e.target.value})} className="fg-input bg-white cursor-pointer">
-                      <option value="">-- Sélectionner un Produit --</option>
-                      {listeProduits.map((p) => (<option key={p.id} value={p.id}>{p.product} ({p.code})</option>))}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#8a5a1f]/70 uppercase tracking-wide">Entrepôt cible</label>
-                    <select required value={nouveauMouvement.entrepot_id} onChange={(e) => setNouveauMouvement({...nouveauMouvement, entrepot_id: e.target.value})} className="fg-input bg-white cursor-pointer">
-                      <option value="">-- Sélectionner un Entrepôt --</option>
-                      {listeEntrepots.map((e) => (<option key={e.id} value={e.id}>{e.nom}</option>))}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#8a5a1f]/70 uppercase tracking-wide">Nature de l'opération</label>
-                    <select required value={nouveauMouvement.type_mouvement} onChange={(e) => setNouveauMouvement({...nouveauMouvement, type_mouvement: e.target.value})} className="fg-input bg-white cursor-pointer font-bold">
-                      <option value="entree">Entrée (Réception / Fournisseur)</option>
-                      <option value="sortie">Sortie (Perte / Autre)</option>
-                      <option value="retour_ok">Retour Client (Remis en stock)</option>
-                      <option value="retour_defaut">Retour Client (Défectueux)</option>
-                      <option value="ajustement">Ajustement inventaire (+)</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#8a5a1f]/70 uppercase tracking-wide">Quantité à traiter</label>
-                    <div className="flex gap-2">
-                      <input type="number" min="1" required value={nouveauMouvement.quantite} onChange={(e) => setNouveauMouvement({...nouveauMouvement, quantite: e.target.value})} className="fg-input bg-white font-bold" />
-                      <button type="submit" className="px-4 py-2 bg-[#A35139] text-white rounded-xl text-sm font-bold shadow-sm hover:bg-[#8a422d] transition-colors">Valider</button>
-                    </div>
-                  </div>
+              {/* Même fond neutre en pointillés que tous les autres formulaires de la page */}
+              <form onSubmit={ajouterMouvement} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Produit</label>
+                  <select required value={nouveauMouvement.produit_id} onChange={(e) => setNouveauMouvement({...nouveauMouvement, produit_id: e.target.value})} className="fg-input cursor-pointer">
+                    <option value="">Sélectionner un produit</option>
+                    {listeProduits.map((p) => (<option key={p.id} value={p.id}>{p.product} ({p.code})</option>))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Entrepôt cible</label>
+                  <select required value={nouveauMouvement.entrepot_id} onChange={(e) => setNouveauMouvement({...nouveauMouvement, entrepot_id: e.target.value})} className="fg-input cursor-pointer">
+                    <option value="">Sélectionner un entrepôt</option>
+                    {listeEntrepots.map((e) => (<option key={e.id} value={e.id}>{e.nom}</option>))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nature de l'opération</label>
+                  <select required value={nouveauMouvement.type_mouvement} onChange={(e) => setNouveauMouvement({...nouveauMouvement, type_mouvement: e.target.value})} className="fg-input cursor-pointer">
+                    <option value="entree">Entrée (Réception / Fournisseur)</option>
+                    <option value="sortie">Sortie (Perte / Autre)</option>
+                    <option value="retour_ok">Retour Client (Remis en stock)</option>
+                    <option value="retour_defaut">Retour Client (Défectueux)</option>
+                    <option value="ajustement">Ajustement inventaire (+)</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Quantité</label>
+                  <input type="number" min="1" required value={nouveauMouvement.quantite} onChange={(e) => setNouveauMouvement({...nouveauMouvement, quantite: e.target.value})} className="fg-input" />
+                </div>
+
+                {/* Bouton dans sa propre colonne, même hauteur (44px) et même couleur primaire que partout ailleurs */}
+                <div className="flex gap-2">
+                  <button type="submit" className="fg-btn-primary w-full">Valider le mouvement</button>
                 </div>
               </form>
 
@@ -759,10 +758,10 @@ export default function ParametresAdmin() {
                     {listeStocks.map((s) => (
                       <tr key={s.id} className="hover:bg-[#EEE9DF]/20">
                         <td className="font-bold text-[#1B2632]">{s.produits?.product}</td>
-                        <td className="font-mono text-xs text-[#A35139] font-bold">{s.produits?.code}</td>
+                        <td><span className="font-mono text-xs text-[#A35139] font-semibold">{s.produits?.code}</span></td>
                         <td className="font-medium text-gray-700">{s.entrepots?.nom}</td>
-                        <td className="text-right font-bold text-lg text-[#1B2632]">{s.quantite_disponible}</td>
-                        <td className="text-right font-medium text-red-600">{s.quantite_defectueuse}</td>
+                        <td className="text-right font-bold text-[#1B2632]">{s.quantite_disponible}</td>
+                        <td className="text-right font-semibold text-red-600">{s.quantite_defectueuse}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -799,7 +798,6 @@ function StyleParametres() {
       .fg-badge{display:inline-block;padding:4px 8px;border-radius:6px;background:#EEE9DF;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;}
       .fg-badge.dark{background:#1B2632;color:#fff;}
 
-      /* 🎨 Scrollbar discrète pour la barre d'onglets */
       .tab-scroll::-webkit-scrollbar{height:6px;}
       .tab-scroll::-webkit-scrollbar-track{background:transparent;}
       .tab-scroll::-webkit-scrollbar-thumb{background:#C9C1B1;border-radius:99px;}
