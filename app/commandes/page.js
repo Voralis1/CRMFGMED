@@ -398,15 +398,14 @@ export default function GestionCommandesPage() {
                 <th className="px-4 py-3.5">Localisation (Pays / Ville)</th>
                 <th className="px-4 py-3.5">Produit, Qté & Prix</th>
                 <th className="px-4 py-3.5">Statuts (Conf. / Liv. / Paiement)</th>
-                <th className="px-4 py-3.5 bg-[#FFB162]/10 border-l border-[#C9C1B1]/30">Agent Assigné</th>
                 <th className="px-4 py-3.5">Commentaires & Notes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="8" className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
+                <tr><td colSpan="7" className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan="8" className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
+                <tr><td colSpan="7" className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
               ) : (
                 commandes.map((cmd) => (
                   <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
@@ -463,20 +462,6 @@ export default function GestionCommandesPage() {
                           <StatutPill statut={cmd.statut_paiement} listeStatutsDB={listeStatutsDB} />
                         </div>
                       </div>
-                    </td>
-                    
-                    {/* AGENT AFFECTÉ */}
-                    <td className="px-4 py-3 bg-[#FFB162]/5 border-l border-[#C9C1B1]/30 align-top">
-                      <select
-                        value={cmd.agent_id || ''}
-                        onChange={(e) => assignerAgent(cmd.id, e.target.value)}
-                        className="w-full border border-[#C9C1B1] rounded-lg px-2 py-1.5 text-xs font-semibold text-[#1B2632] bg-white outline-none focus:border-[#FFB162] cursor-pointer"
-                      >
-                        <option value="">-- Aucun agent --</option>
-                        {agents.map(ag => (
-                          <option key={ag.id} value={ag.id}>{ag.nom}</option>
-                        ))}
-                      </select>
                     </td>
 
                     {/* COMMENTAIRES & NOTES — déplacée en dernière colonne */}
