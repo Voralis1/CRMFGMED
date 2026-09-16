@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../lib/supabaseClient'
 
@@ -8,7 +8,44 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [chargement, setChargement] = useState(false)
+  const [checkingSession, setCheckingSession] = useState(true)
   const router = useRouter()
+
+  function redirectByRole(role) {
+    if (role === 'super_admin' || role === 'SUPER_ADMIN') {
+      router.push('/super-admin/tenants')
+    } else if (role === 'admin') {
+      router.push('/dashboard')
+    } else if (role === 'agent') {
+      router.push('/centre-appel')
+    } else if (role === 'livreur') {
+      router.push('/livraisons')
+    } else {
+      router.push('/dashboard')
+    }
+  }
+
+  // 🔒 Guard : si une session existe déjà au chargement de la page,
+  // on redirige directement au lieu d'afficher le formulaire de login.
+  useEffect(() => {
+    async function checkExistingSession() {
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (session) {
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', session.user.id)
+          .maybeSingle()
+
+        redirectByRole(roleData?.role)
+      } else {
+        setCheckingSession(false)
+      }
+    }
+
+    checkExistingSession()
+  }, [])
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -32,25 +69,21 @@ export default function LoginPage() {
       .eq('user_id', session.user.id)
       .maybeSingle()
 
-    const role = roleData?.role
+    redirectByRole(roleData?.role)
+  }
 
-    // 🚀 Redirection intelligente incluant le Super Admin
-    if (role === 'super_admin' || role === 'SUPER_ADMIN') {
-      router.push('/super-admin/tenants')
-    } else if (role === 'admin') {
-      router.push('/dashboard')
-    } else if (role === 'agent') {
-      router.push('/centre-appel')
-    } else if (role === 'livreur') {
-      router.push('/livraisons')
-    } else {
-      router.push('/dashboard')
-    }
+  // Tant qu'on vérifie la session existante, on n'affiche rien (évite le flash du formulaire)
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen bg-[#EEE9DF] flex items-center justify-center">
+        <p className="text-sm text-[#1B2632]/60">Chargement...</p>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-[#EEE9DF] flex flex-col items-center justify-center p-6 font-sans text-[#1B2632]">
-      
+
       {/* Logo et Marque */}
       <div className="mb-8 flex flex-col items-center">
         <div className="flex items-center gap-1.5 mb-2">
@@ -69,7 +102,7 @@ export default function LoginPage() {
 
       {/* Carte de connexion */}
       <div className="w-full max-w-md bg-white border border-[#C9C1B1] rounded-3xl shadow-sm p-8 md:p-10">
-        
+
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-[#1B2632] mb-1">Connexion</h2>
           <p className="text-sm text-[#1B2632]/60">Accédez à votre espace de travail</p>
