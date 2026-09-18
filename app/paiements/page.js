@@ -114,7 +114,7 @@ export default function PaiementsPage() {
     const { data: { session } } = await supabase.auth.getSession()
 
     const reponse = await fetch(
-      'https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/encaisser-paiement',
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/encaisser-paiement`,
       {
         method: 'POST',
         headers: {
@@ -144,7 +144,7 @@ export default function PaiementsPage() {
     const { data: { session } } = await supabase.auth.getSession()
 
     const reponse = await fetch(
-      'https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/remettre-caisse',
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/remettre-caisse`,
       {
         method: 'POST',
         headers: {

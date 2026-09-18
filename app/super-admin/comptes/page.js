@@ -140,7 +140,7 @@ export default function SuperAdminComptes() {
       if (roleError) throw roleError
 
       const { data: { session } } = await supabase.auth.getSession()
-      const response = await fetch(`https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/modifier-utilisateur`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/modifier-utilisateur`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -179,7 +179,7 @@ export default function SuperAdminComptes() {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const response = await fetch(
-        `https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/supprimer-utilisateur`,
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/supprimer-utilisateur`,
         {
           method: 'POST',
           headers: {

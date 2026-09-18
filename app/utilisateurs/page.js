@@ -97,7 +97,7 @@ export default function UtilisateursPage() {
     const { data: { session } } = await supabase.auth.getSession()
 
     const reponse = await fetch(
-      'https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/creer-utilisateur',
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/creer-utilisateur`,
       {
         method: 'POST',
         headers: {

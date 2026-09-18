@@ -253,7 +253,29 @@ export default function CentreAppelAgent() {
   useEffect(() => {
     if (authLoading || permsLoading || !user || !tenantKey) return
 
+
     async function verifierAgentEtCharger() {
+      // 1. Récupérer le rôle de l'utilisateur d'abord
+      const { data: roleData } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('tenant_id', tenantKey)
+        .maybeSingle()
+
+      const role = roleData?.role
+
+      // 2. Rôles qui voient TOUTES les commandes du tenant (pas besoin de fiche agent)
+      const rolesVueGlobale = ['admin', 'ceo', 'manager', 'super_admin']
+
+      if (rolesVueGlobale.includes(role)) {
+        setAgentActuel(null)        
+        setAgentIntrouvable(false)
+        await chargerCommandes(page, ongletActif, null)  
+        return
+      }
+
+      // 3. Sinon (agent), comportement inchangé : besoin d'une fiche agent
       const { data: agentData } = await supabase
         .from('agents')
         .select('id, nom')
@@ -266,12 +288,10 @@ export default function CentreAppelAgent() {
         setAgentIntrouvable(false)
         await chargerCommandes(page, ongletActif, agentData.id)
       } else {
-        // L'utilisateur n'est pas reconnu comme agent dans ce tenant
         setAgentIntrouvable(true)
         setLoading(false)
       }
     }
-
     verifierAgentEtCharger()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey])
@@ -452,7 +472,7 @@ export default function CentreAppelAgent() {
     }
 
     const reponse = await fetch(
-      'https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/confirmer-appel',
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-appel`,
       {
         method: 'POST',
         headers: {

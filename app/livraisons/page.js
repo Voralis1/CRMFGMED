@@ -143,7 +143,7 @@ export default function LivraisonsPage() {
     }
 
     const reponse = await fetch(
-      'https://meeboyokamgwwbhxfclf.supabase.co/functions/v1/confirmer-livraison',
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-livraison`,
       {
         method: 'POST',
         headers: {
