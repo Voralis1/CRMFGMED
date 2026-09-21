@@ -1,57 +1,53 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Change a user's email and/or password.
+// Allowed: `gerer_utilisateurs` / `gerer_comptes` + super_admin, with the same rules as creation:
+// same tenant only, never a super_admin (unless caller is super_admin),
+// admin/ceo/manager accounts only by an admin.
+import {
+  adminClient, getCaller, handle, HttpError, json, readJson, requireAny, ROLES_PRIVILEGIES,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['gerer_utilisateurs', 'gerer_comptes'])
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
+    const { user_id, email, nouveau_mdp, nom } = await readJson(req) as Record<string, string | undefined>
+  if (!user_id) throw new HttpError(400, 'L\'identifiant utilisateur (user_id) est requis.')
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  const authHeader = req.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '')
-  const { data: { user }, error: erreurUser } = await supabase.auth.getUser(token)
-
-  if (erreurUser || !user) {
-    return new Response(JSON.stringify({ error: 'Non authentifié' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  try {
-    const { user_id, email, nouveau_mdp } = await req.json()
-
-    if (!user_id) {
-      throw new Error("L'identifiant utilisateur (user_id) est requis.")
+  if (!caller.isSuperAdmin) {
+    const { data: cible } = await sb
+      .from('user_roles')
+      .select('tenant_id, role, roles(nom)')
+      .eq('user_id', user_id)
+      .maybeSingle()
+    if (!cible || cible.tenant_id !== caller.tenantId) throw new HttpError(403, 'Utilisateur hors de votre entreprise')
+    // deno-lint-ignore no-explicit-any
+    const roleCible = String((cible as any).roles?.nom ?? cible.role ?? '').toLowerCase()
+    if (roleCible === 'super_admin') throw new HttpError(403, 'Impossible de modifier un super_admin')
+    if (ROLES_PRIVILEGIES.includes(roleCible) && caller.roleNom !== 'admin' && user_id !== caller.userId) {
+      throw new HttpError(403, `Seul un admin peut modifier un compte ${roleCible}`)
     }
-
-    const updateData = {}
-    if (email) updateData.email = email
-    if (nouveau_mdp && nouveau_mdp.trim() !== '') {
-      updateData.password = nouveau_mdp
-    }
-
-    const { data, error } = await supabase.auth.admin.updateUserById(user_id, updateData)
-
-    if (error) throw error
-
-    return new Response(JSON.stringify({ status: 'ok', user: data.user }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
   }
-})
+
+  // deno-lint-ignore no-explicit-any
+  const updateData: Record<string, any> = {}
+  if (email) updateData.email = email
+  if (nouveau_mdp && nouveau_mdp.trim() !== '') updateData.password = nouveau_mdp
+
+  if (Object.keys(updateData).length > 0) {
+    const { error } = await sb.auth.admin.updateUserById(user_id, updateData)
+    if (error) throw new HttpError(400, error.message)
+  }
+
+  if (email) await sb.from('user_roles').update({ email }).eq('user_id', user_id)
+
+  // Keep the name identical everywhere it is displayed
+  if (nom && nom.trim() !== '') {
+    const n = nom.trim()
+    await sb.from('user_roles').update({ nom: n }).eq('user_id', user_id)
+    await sb.from('agents').update({ nom: n }).eq('user_id', user_id)
+    await sb.from('livreurs').update({ nom: n }).eq('user_id', user_id)
+  }
+
+  return json({ status: 'ok' })
+}))

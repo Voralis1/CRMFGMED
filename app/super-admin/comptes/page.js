@@ -149,6 +149,7 @@ export default function SuperAdminComptes() {
         body: JSON.stringify({
           user_id: selectedUser.user_id,
           email: selectedUser.email,
+          nom: selectedUser.nom,
           nouveau_mdp: selectedUser.nouveau_mdp || undefined
         })
       })

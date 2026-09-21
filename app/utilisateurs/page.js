@@ -54,8 +54,8 @@ export default function UtilisateursPage() {
     if (!tenantKey) return
 
     const [dataAgents, dataLivreurs, dataZones] = await Promise.all([
-      supabase.from('agents').select('*').eq('tenant_id', tenantKey).order('nom'),
-      supabase.from('livreurs').select('*').eq('tenant_id', tenantKey).order('nom'),
+      supabase.from('agents').select('*').eq('tenant_id', tenantKey).not('user_id', 'is', null).order('nom'),
+      supabase.from('livreurs').select('*').eq('tenant_id', tenantKey).not('user_id', 'is', null).order('nom'),
       supabase.from('zones').select('id, nom_zone').eq('tenant_id', tenantKey).order('nom_zone')
     ])
 
@@ -155,24 +155,34 @@ export default function UtilisateursPage() {
   }
 
   // --- SUPPRESSION ---
-  async function supprimerAgent(id, nomAgent) {
-    if (!window.confirm(`Supprimer l'agent ${nomAgent} ?`)) return
-    const { error } = await supabase.from('agents').delete().eq('id', id).eq('tenant_id', tenantKey)
-    if (error) {
-      alert('Erreur lors de la suppression : ' + error.message)
-    } else {
-      afficherMessage('Agent supprimé.', 'succes')
-      await chargerDonnees()
+  // Deletes the LOGIN ACCOUNT (auth + user_roles) through the Edge Function, exactly like
+  // "Comptes & Accès". The agent/livreur row is kept (inactive, user_id = null) so the
+  // history of orders, deliveries and payments stays intact.
+  async function supprimerCompte(userId, nom, type) {
+    if (!window.confirm(`Supprimer le compte de ${nom} ? Il ne pourra plus se connecter.`)) return
+    if (!userId) {
+      alert("Ce profil n'est lié à aucun compte.")
+      return
     }
-  }
 
-  async function supprimerLivreur(id, nomLivreur) {
-    if (!window.confirm(`Supprimer le livreur ${nomLivreur} ?`)) return
-    const { error } = await supabase.from('livreurs').delete().eq('id', id).eq('tenant_id', tenantKey)
-    if (error) {
-      alert('Erreur lors de la suppression : ' + error.message)
+    const { data: { session } } = await supabase.auth.getSession()
+    const reponse = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/supprimer-utilisateur`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ user_id: userId }),
+      }
+    )
+    const resultat = await reponse.json()
+
+    if (!reponse.ok || resultat.error) {
+      alert('Erreur lors de la suppression : ' + (resultat.error || 'inconnue'))
     } else {
-      afficherMessage('Livreur supprimé.', 'succes')
+      afficherMessage(type === 'livreur' ? 'Livreur supprimé.' : 'Agent supprimé.', 'succes')
       await chargerDonnees()
     }
   }
@@ -306,7 +316,7 @@ export default function UtilisateursPage() {
                         <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
                           {a.actif ? 'Désactiver' : 'Activer'}
                         </button>
-                        <button onClick={() => supprimerAgent(a.id, a.nom)} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
                       </td>
                     </tr>
                   ))}
@@ -357,7 +367,7 @@ export default function UtilisateursPage() {
                         <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
                           {l.actif ? 'Désactiver' : 'Activer'}
                         </button>
-                        <button onClick={() => supprimerLivreur(l.id, l.nom)} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
                       </td>
                     </tr>
                   ))}

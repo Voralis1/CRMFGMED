@@ -1,117 +1,92 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Create a user account (Auth + user_roles + agents/livreurs row).
+// Allowed: `gerer_utilisateurs` (manager, admin) or `gerer_comptes` + super_admin.
+// Rules:
+//  - a non-super_admin can only create users in HIS OWN tenant
+//  - nobody except super_admin can create a super_admin
+//  - only admin / super_admin can create admin, ceo or manager accounts
+import {
+  adminClient, getCaller, handle, HttpError, json, readJson, requireAny, ROLES_PRIVILEGIES,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['gerer_utilisateurs', 'gerer_comptes'])
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+  const { email, mot_de_passe, nom, telephone, tenant_id, role_id, zone } =
+    await readJson(req) as Record<string, string | undefined>
+
+  if (!email || !mot_de_passe || !role_id) throw new HttpError(400, 'email, mot_de_passe et role_id sont requis')
+
+  // Target tenant
+  let tenantCible: string | undefined
+  if (caller.isSuperAdmin) {
+    tenantCible = tenant_id
+    if (!tenantCible) throw new HttpError(400, 'tenant_id requis')
+    const { data: t } = await sb.from('tenants').select('id').eq('id', tenantCible).maybeSingle()
+    if (!t) throw new HttpError(400, 'Entreprise introuvable')
+  } else {
+    if (tenant_id && tenant_id !== caller.tenantId) {
+      throw new HttpError(403, 'Vous ne pouvez créer des comptes que dans votre entreprise')
+    }
+    tenantCible = caller.tenantId
   }
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  // 1. Vérification de la session
-  const authHeader = req.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '')
-  const { data: { user }, error: erreurUser } = await supabase.auth.getUser(token)
-
-  if (erreurUser || !user) {
-    return new Response(JSON.stringify({ error: 'Non authentifié' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  // Target role
+  const { data: roleInfo } = await sb
+    .from('roles')
+    .select('id, nom, is_system, tenant_id')
+    .eq('id', role_id)
+    .maybeSingle()
+  if (!roleInfo) throw new HttpError(400, 'Le rôle sélectionné n\'existe pas.')
+  if (!roleInfo.is_system && roleInfo.tenant_id !== tenantCible) {
+    throw new HttpError(400, 'Ce rôle n\'appartient pas à cette entreprise')
   }
 
-  try {
-    const payload = await req.json()
-    const { email, mot_de_passe, nom, telephone, tenant_id, role_id } = payload
-
-    if (!email || !mot_de_passe || !tenant_id || !role_id) {
-      return new Response(JSON.stringify({ error: 'email, mot_de_passe, tenant_id et role_id sont requis' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    // 2. Récupérer le nom du rôle pour les vérifications et contraintes
-    const { data: roleInfo, error: roleError } = await supabase
-      .from('roles')
-      .select('nom')
-      .eq('id', role_id)
-      .single()
-
-    if (roleError || !roleInfo) {
-      throw new Error("Le rôle sélectionné n'existe pas dans la base de données.")
-    }
-
-    const roleNom = roleInfo.nom.toLowerCase()
-    const nomAffichage = nom || email.split('@')[0] 
-
-    // 3. Créer le compte dans l'Auth Supabase
-    const { data: nouvelUtilisateur, error: erreurCreation } = await supabase.auth.admin.createUser({
-      email,
-      password: mot_de_passe,
-      email_confirm: true,
-    })
-
-    if (erreurCreation) throw erreurCreation
-
-    const nouvelUserId = nouvelUtilisateur.user.id
-
-    // 4. Lier l'utilisateur dans user_roles (avec role_id, tenant_id, email et nom)
-    const { error: erreurRole } = await supabase
-      .from('user_roles')
-      .insert({ 
-        user_id: nouvelUserId, 
-        role_id: role_id,
-        role: roleNom, 
-        tenant_id: tenant_id,
-        email: email,
-        nom: nomAffichage // 👈 Stocké pour un affichage direct et rapide dans l'admin
-      })
-
-    if (erreurRole) {
-      // Rollback de sécurité : si la liaison échoue, on supprime le compte Auth créé
-      await supabase.auth.admin.deleteUser(nouvelUserId)
-      throw erreurRole
-    }
-
-    // 5. Alimenter les tables spécifiques (agents / livreurs) EN INCLUANT LE TENANT_ID 🚀
-    if (roleNom.includes('agent') || roleNom.includes('admin')) {
-      const { error: agentError } = await supabase.from('agents').insert({ 
-        user_id: nouvelUserId, 
-        nom: nomAffichage, 
-        tenant_id: tenant_id, 
-        actif: true 
-      })
-      if (agentError) console.error("Erreur insertion agent :", agentError.message)
-
-    } else if (roleNom.includes('livreur')) {
-      const { error: livreurError } = await supabase.from('livreurs').insert({ 
-        user_id: nouvelUserId, 
-        nom: nomAffichage, 
-        telephone: telephone || null, 
-        tenant_id: tenant_id, 
-        actif: true 
-      })
-      if (livreurError) console.error("Erreur insertion livreur :", livreurError.message)
-    }
-
-    return new Response(JSON.stringify({ status: 'ok', user_id: nouvelUserId }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  const roleNom = String(roleInfo.nom).toLowerCase()
+  if (roleNom === 'super_admin' && !caller.isSuperAdmin) {
+    throw new HttpError(403, 'Seul un super_admin peut créer un super_admin')
   }
-})
+  if (ROLES_PRIVILEGIES.includes(roleNom) && !caller.isSuperAdmin && caller.roleNom !== 'admin') {
+    throw new HttpError(403, `Seul un admin peut créer un compte ${roleNom}`)
+  }
+
+  const nomAffichage = nom || email.split('@')[0]
+
+  const { data: nouvel, error: erreurCreation } = await sb.auth.admin.createUser({
+    email,
+    password: mot_de_passe,
+    email_confirm: true,
+  })
+  if (erreurCreation) throw new HttpError(400, erreurCreation.message)
+  const nouvelUserId = nouvel.user.id
+
+  const { error: erreurRole } = await sb.from('user_roles').insert({
+    user_id: nouvelUserId,
+    role_id: roleInfo.id,
+    role: roleNom,
+    tenant_id: tenantCible,
+    email,
+    nom: nomAffichage,
+  })
+  if (erreurRole) {
+    await sb.auth.admin.deleteUser(nouvelUserId)
+    throw new HttpError(400, erreurRole.message)
+  }
+
+  let avertissement: string | null = null
+  if (roleNom.includes('agent') || roleNom.includes('admin')) {
+    const { error } = await sb.from('agents').insert({
+      user_id: nouvelUserId, nom: nomAffichage, tenant_id: tenantCible, actif: true,
+    })
+    if (error) avertissement = 'Compte créé, mais fiche agent non créée : ' + error.message
+  } else if (roleNom.includes('livreur')) {
+    const { error } = await sb.from('livreurs').insert({
+      user_id: nouvelUserId, nom: nomAffichage, telephone: telephone || null,
+      zone: zone || null, tenant_id: tenantCible, actif: true,
+    })
+    if (error) avertissement = 'Compte créé, mais fiche livreur non créée : ' + error.message
+  }
+
+  return json({ status: 'ok', user_id: nouvelUserId, avertissement })
+}))

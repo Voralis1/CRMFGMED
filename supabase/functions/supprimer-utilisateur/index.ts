@@ -1,58 +1,40 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Delete a user account. Business rows (agents / livreurs) are kept for history,
+// only their user_id is cleared.
+// Allowed: `gerer_utilisateurs` / `gerer_comptes` + super_admin, same rules as modification.
+import {
+  adminClient, getCaller, handle, HttpError, json, readJson, requireAny, ROLES_PRIVILEGIES,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['gerer_utilisateurs', 'gerer_comptes'])
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
+  const { user_id } = await readJson(req) as { user_id?: string }
+  if (!user_id) throw new HttpError(400, 'L\'identifiant utilisateur (user_id) est requis.')
+  if (user_id === caller.userId) throw new HttpError(400, 'Vous ne pouvez pas supprimer votre propre compte')
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  const authHeader = req.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '')
-  const { data: { user }, error: erreurUser } = await supabase.auth.getUser(token)
-
-  if (erreurUser || !user) {
-    return new Response(JSON.stringify({ error: 'Non authentifié' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  try {
-    const { user_id } = await req.json()
-
-    if (!user_id) {
-      throw new Error("L'identifiant utilisateur (user_id) est requis.")
+  if (!caller.isSuperAdmin) {
+    const { data: cible } = await sb
+      .from('user_roles')
+      .select('tenant_id, role, roles(nom)')
+      .eq('user_id', user_id)
+      .maybeSingle()
+    if (!cible || cible.tenant_id !== caller.tenantId) throw new HttpError(403, 'Utilisateur hors de votre entreprise')
+    // deno-lint-ignore no-explicit-any
+    const roleCible = String((cible as any).roles?.nom ?? cible.role ?? '').toLowerCase()
+    if (roleCible === 'super_admin') throw new HttpError(403, 'Impossible de supprimer un super_admin')
+    if (ROLES_PRIVILEGIES.includes(roleCible) && caller.roleNom !== 'admin') {
+      throw new HttpError(403, `Seul un admin peut supprimer un compte ${roleCible}`)
     }
-
-    // 1. Dissocier ou nettoyer les tables métiers pour éviter les erreurs de contraintes
-    await supabase.from('agents').update({ user_id: null }).eq('user_id', user_id)
-    await supabase.from('livreurs').update({ user_id: null }).eq('user_id', user_id)
-    
-    // 2. Supprimer le rôle
-    await supabase.from('user_roles').delete().eq('user_id', user_id)
-
-    // 3. Supprimer le compte dans Supabase Auth
-    const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(user_id)
-    if (deleteAuthError) throw deleteAuthError
-
-    return new Response(JSON.stringify({ status: 'ok', message: 'Compte supprimé avec succès' }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
   }
-})
+
+  await sb.from('agents').update({ user_id: null, actif: false }).eq('user_id', user_id)
+  await sb.from('livreurs').update({ user_id: null, actif: false }).eq('user_id', user_id)
+  await sb.from('user_roles').delete().eq('user_id', user_id)
+
+  const { error } = await sb.auth.admin.deleteUser(user_id)
+  if (error) throw new HttpError(400, error.message)
+
+  return json({ status: 'ok', message: 'Compte supprimé avec succès' })
+}))
