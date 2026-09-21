@@ -1,50 +1,25 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// List user accounts with their role and tenant.
+// Before: NO authentication at all (anyone could list every email of every tenant).
+// Now: super_admin sees everyone; a user with `gerer_utilisateurs` only sees his own tenant.
+import { adminClient, getCaller, handle, json, requireAny } from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['gerer_utilisateurs', 'gerer_comptes'])
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
+  let requete = sb.from('user_roles').select('*')
+  if (!caller.isSuperAdmin) requete = requete.eq('tenant_id', caller.tenantId)
+  const { data: userRoles, error: roleError } = await requete
+  if (roleError) throw roleError
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
+  const { data: authUsers, error: authError } = await sb.auth.admin.listUsers({ page: 1, perPage: 1000 })
+  if (authError) throw authError
 
-  try {
-    // Récupérer tous les utilisateurs de l'Auth
-    const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers()
-    if (authError) throw authError
+  const comptes = (userRoles || []).map((ur) => {
+    const match = authUsers.users.find((u) => u.id === ur.user_id)
+    return { ...ur, email: match?.email ?? ur.email ?? 'Email inconnu' }
+  })
 
-    // Récupérer les rôles et tenants depuis user_roles
-    const { data: userRoles, error: roleError } = await supabase
-      .from('user_roles')
-      .select('*')
-
-    if (roleError) throw roleError
-
-    // Fusionner les données (associer l'email à chaque user_id)
-    const result = userRoles.map((ur) => {
-      const match = authUsers.users.find((u) => u.id === ur.user_id)
-      return {
-        ...ur,
-        email: match ? match.email : 'Email inconnu'
-      }
-    })
-
-    return new Response(JSON.stringify({ status: 'ok', comptes: result }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-})
+  return json({ status: 'ok', comptes })
+}))

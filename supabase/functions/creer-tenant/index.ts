@@ -1,97 +1,63 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Create a company (tenant) and its first admin account.
+// Before: NO authentication at all (anyone on the internet could create a company + admin).
+// Now: super_admin only.
+import { adminClient, getCaller, handle, HttpError, json, readJson } from '../_shared/auth.ts'
 
-// 🚀 LES HEADERS CORS (Indispensables pour éviter le "Failed to fetch")
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  if (!caller.isSuperAdmin) throw new HttpError(403, 'Réservé au super_admin')
 
-serve(async (req) => {
-  // 1. Gérer la requête préliminaire (Preflight) du navigateur pour le CORS
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+  const { nomEntreprise, adminEmail, adminPassword, adminNom } =
+    await readJson(req) as Record<string, string | undefined>
+  if (!nomEntreprise || !adminEmail || !adminPassword) {
+    throw new HttpError(400, 'Tous les champs (nomEntreprise, adminEmail, adminPassword) sont obligatoires.')
   }
 
-  try {
-    // 2. Initialiser Supabase en mode ADMIN (Service Role) pour contourner les règles RLS
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+  // Role names are lowercase in the roles table ('admin', not 'ADMIN').
+  const { data: roleAdmin } = await sb
+    .from('roles')
+    .select('id')
+    .eq('nom', 'admin')
+    .eq('is_system', true)
+    .maybeSingle()
+  if (!roleAdmin) throw new HttpError(500, 'Le rôle système "admin" est introuvable dans la table roles.')
 
-    // Récupérer les données envoyées par Next.js
-    const { nomEntreprise, adminEmail, adminPassword } = await req.json()
+  const { data: tenant, error: tenantError } = await sb
+    .from('tenants')
+    .insert([{ nom_entreprise: nomEntreprise.trim() }])
+    .select()
+    .single()
+  if (tenantError) throw new HttpError(400, `Erreur création entreprise: ${tenantError.message}`)
 
-    if (!nomEntreprise || !adminEmail || !adminPassword) {
-      throw new Error("Tous les champs (nomEntreprise, adminEmail, adminPassword) sont obligatoires.")
-    }
-
-    // 3. Créer l'entreprise (Tenant)
-    const { data: tenant, error: tenantError } = await supabaseAdmin
-      .from('tenants')
-      .insert([{ nom_entreprise: nomEntreprise.trim() }])
-      .select()
-      .single()
-
-    if (tenantError) throw new Error(`Erreur création entreprise: ${tenantError.message}`)
-
-    // 4. Créer l'utilisateur dans auth.users
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: adminEmail.trim(),
-      password: adminPassword,
-      email_confirm: true
-    })
-
-    if (authError) {
-      // Rollback : on supprime l'entreprise si la création du compte échoue
-      await supabaseAdmin.from('tenants').delete().eq('id', tenant.id)
-      throw new Error(`Erreur création compte Admin: ${authError.message}`)
-    }
-
-    const userId = authData.user.id
-
-    // 5. Récupérer l'ID du rôle 'admin' depuis la table relationnelle
-    const { data: roleData, error: roleError } = await supabaseAdmin
-      .from('roles')
-      .select('id')
-      .eq('nom', 'ADMIN') // Assurez-vous que le nom correspond à votre BDD (souvent 'ADMIN' ou 'admin')
-      .single()
-
-    if (roleError || !roleData) {
-      // Rollback en cas d'échec de récupération du rôle
-      await supabaseAdmin.auth.admin.deleteUser(userId)
-      await supabaseAdmin.from('tenants').delete().eq('id', tenant.id)
-      throw new Error("Le rôle 'admin' n'existe pas dans la table 'roles'.")
-    }
-
-    // 6. Lier l'utilisateur à son rôle et à son entreprise
-    const { error: userRoleError } = await supabaseAdmin
-      .from('user_roles')
-      .insert([{
-        user_id: userId,
-        role_id: roleData.id,
-        tenant_id: tenant.id
-      }])
-
-    if (userRoleError) {
-      // Rollback global si l'association échoue
-      await supabaseAdmin.auth.admin.deleteUser(userId)
-      await supabaseAdmin.from('tenants').delete().eq('id', tenant.id)
-      throw new Error(`Erreur liaison rôle: ${userRoleError.message}`)
-    }
-
-    // 7. Succès !
-    return new Response(
-      JSON.stringify({ success: true, tenant, message: 'Entreprise et Admin créés avec succès !' }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-    )
-
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ success: false, message: error.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-    )
+  const { data: authData, error: authError } = await sb.auth.admin.createUser({
+    email: adminEmail.trim(),
+    password: adminPassword,
+    email_confirm: true,
+  })
+  if (authError) {
+    await sb.from('tenants').delete().eq('id', tenant.id)
+    throw new HttpError(400, `Erreur création compte Admin: ${authError.message}`)
   }
-})
+
+  const userId = authData.user.id
+  const nom = adminNom || adminEmail.split('@')[0]
+
+  const { error: userRoleError } = await sb.from('user_roles').insert([{
+    user_id: userId,
+    role_id: roleAdmin.id,
+    role: 'admin',
+    tenant_id: tenant.id,
+    email: adminEmail.trim(),
+    nom,
+  }])
+  if (userRoleError) {
+    await sb.auth.admin.deleteUser(userId)
+    await sb.from('tenants').delete().eq('id', tenant.id)
+    throw new HttpError(400, `Erreur liaison rôle: ${userRoleError.message}`)
+  }
+
+  await sb.from('agents').insert({ user_id: userId, nom, tenant_id: tenant.id, actif: true })
+
+  return json({ success: true, tenant, message: 'Entreprise et Admin créés avec succès !' })
+}))
