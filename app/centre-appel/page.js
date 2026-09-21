@@ -298,7 +298,9 @@ export default function CentreAppelAgent() {
 
   // 🚀 CHARGEMENT STRICTEMENT CLOISONNÉ
   async function chargerCommandes(pageActuelle, onglet, agentId) {
-    if (!tenantKey || !agentId) return
+    // agentId === null      -> vue globale voulue (admin/ceo/manager/super_admin)
+    // agentId === undefined -> rôle pas encore déterminé, on attend
+    if (!tenantKey || agentId === undefined) return
     setLoading(true)
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
@@ -312,9 +314,12 @@ export default function CentreAppelAgent() {
     let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenantKey)
     let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)`).eq('tenant_id', tenantKey)
 
-    // 🔒 RESTRICTION ABSOLUE : L'agent ne voit que SES commandes
-    requeteBase = requeteBase.eq('agent_id', agentId)
-    requeteData = requeteData.eq('agent_id', agentId)
+    // 🔒 RESTRICTION : uniquement si agentId est fourni (agent normal).
+    // Pour admin/ceo/manager/super_admin (agentId === null), pas de filtre -> vue globale du tenant.
+    if (agentId) {
+      requeteBase = requeteBase.eq('agent_id', agentId)
+      requeteData = requeteData.eq('agent_id', agentId)
+    }
 
     if (onglet === 'a_traiter') {
       requeteBase = requeteBase.is('statut_confirmation', null)
@@ -404,7 +409,7 @@ export default function CentreAppelAgent() {
       setTotalItems(count || 0)
       setCommandes(commandesIntelligentes)
     }
-    
+
     setLoading(false)
   }
 
