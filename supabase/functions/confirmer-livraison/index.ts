@@ -1,132 +1,95 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Driver updates a delivery (livré / injoignable / retour) and declares the cash amount.
+// Allowed: permission `gerer_livraison` (livreur, manager, admin) + super_admin.
+// A livreur can only update HIS OWN deliveries, and a delivered order cannot be re-confirmed
+// (so the declared amount cannot be changed afterwards).
+import {
+  adminClient, assertTenant, getCaller, handle, HttpError, json, myLivreurId, readJson, requireAny,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+const STATUTS_VALIDES = ['expedie', 'livre', 'injoignable', 'retour']
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['gerer_livraison'])
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
+  const { livraison_id, statut, motif_retour, montant_a_encaisser } =
+    await readJson(req) as { livraison_id?: string; statut?: string; motif_retour?: string; montant_a_encaisser?: unknown }
 
-  const authHeader = req.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '')
-  const { data: { user }, error: erreurUser } = await supabase.auth.getUser(token)
+  if (!livraison_id || !statut) throw new HttpError(400, 'livraison_id et statut requis')
+  if (!STATUTS_VALIDES.includes(statut)) throw new HttpError(400, 'statut invalide')
 
-  if (erreurUser || !user) {
-    return new Response(JSON.stringify({ error: 'Non authentifié' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const { data: roleData } = await supabase
-    .from('user_roles')
-    .select('roles(nom)')
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  const roleNom = roleData?.roles?.nom?.toLowerCase()
-
-  if (!roleNom || (roleNom !== 'admin' && roleNom !== 'livreur' && roleNom !== 'super_admin')) {
-    return new Response(JSON.stringify({ error: 'Accès refusé : rôle insuffisant' }), {
-      status: 403,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const payload = await req.json()
-  const { livraison_id, statut, motif_retour, montant_a_encaisser } = payload
-
-  if (!livraison_id || !statut) {
-    return new Response(JSON.stringify({ error: 'livraison_id et statut requis' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const statutsValides = ['expedie', 'livre', 'injoignable', 'retour']
-  if (!statutsValides.includes(statut)) {
-    return new Response(JSON.stringify({ error: 'statut invalide' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  // 🚀 CORRECTION 1 : On demande à Supabase de nous donner aussi le tenant_id de cette livraison
-  const { data: livraison, error: erreurLecture } = await supabase
+  const { data: livraison } = await sb
     .from('livraisons')
-    .select('id, commande_id, livreur_id, tenant_id') // 👈 Ajout du tenant_id
+    .select('id, commande_id, livreur_id, tenant_id, statut')
     .eq('id', livraison_id)
-    .single()
+    .maybeSingle()
+  if (!livraison) throw new HttpError(404, 'livraison introuvable')
+  assertTenant(caller, livraison.tenant_id)
 
-  if (erreurLecture || !livraison) {
-    return new Response(JSON.stringify({ error: 'livraison introuvable' }), {
-      status: 404,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  if (caller.roleNom === 'livreur') {
+    const monId = await myLivreurId(sb, caller)
+    if (!monId || livraison.livreur_id !== monId) {
+      throw new HttpError(403, 'Cette livraison ne vous est pas assignée')
+    }
   }
 
-  const { error: erreurUpdate } = await supabase
+  if (livraison.statut === 'livre') {
+    throw new HttpError(400, 'Cette livraison est déjà marquée livrée')
+  }
+
+  let montant = 0
+  if (statut === 'livre') {
+    montant = Number(montant_a_encaisser)
+    if (!Number.isFinite(montant) || montant < 0) throw new HttpError(400, 'montant invalide')
+  }
+
+  const { error: erreurUpdate } = await sb
     .from('livraisons')
     .update({
       statut,
       motif_retour: statut === 'retour' ? (motif_retour || null) : null,
-      date_livraison: statut === 'livre' ? new Date().toISOString() : null
+      date_livraison: statut === 'livre' ? new Date().toISOString() : null,
     })
     .eq('id', livraison_id)
+  if (erreurUpdate) throw new HttpError(400, erreurUpdate.message)
 
-  if (erreurUpdate) {
-    return new Response(JSON.stringify({ error: erreurUpdate.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  await supabase
+  await sb
     .from('commandes')
     .update({ statut_livraison: statut, updated_at: new Date().toISOString() })
     .eq('id', livraison.commande_id)
+    .eq('tenant_id', livraison.tenant_id)
 
   let paiement = null
   if (statut === 'livre') {
-    const { data: nouveauPaiement, error: erreurPaiement } = await supabase
+    const { data: dejaPaye } = await sb
+      .from('paiements')
+      .select('id')
+      .eq('commande_id', livraison.commande_id)
+      .maybeSingle()
+    if (dejaPaye) throw new HttpError(400, 'Un paiement existe déjà pour cette commande')
+
+    const { data: nouveauPaiement, error: erreurPaiement } = await sb
       .from('paiements')
       .insert({
         commande_id: livraison.commande_id,
         livreur_id: livraison.livreur_id,
-        tenant_id: livraison.tenant_id, // 🚀 CORRECTION 2 : On insère le tenant_id dans le paiement !
-        montant: montant_a_encaisser || 0,
+        tenant_id: livraison.tenant_id,
+        montant,
         methode: 'cod',
-        statut: 'en_attente'
+        statut: 'en_attente',
       })
       .select()
       .single()
-
-    // 🚀 CORRECTION 3 : Si la création du paiement échoue, on affiche l'erreur au lieu de la cacher !
-    if (erreurPaiement) {
-      return new Response(JSON.stringify({ error: "Erreur création paiement: " + erreurPaiement.message }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
+    if (erreurPaiement) throw new HttpError(400, 'Erreur création paiement: ' + erreurPaiement.message)
 
     paiement = nouveauPaiement
-    await supabase
+    await sb
       .from('commandes')
       .update({ statut_paiement: 'en_attente' })
       .eq('id', livraison.commande_id)
+      .eq('tenant_id', livraison.tenant_id)
   }
 
-  return new Response(JSON.stringify({ status: 'ok', livraison_id, paiement }), {
-    status: 200,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  })
-})
+  return json({ status: 'ok', livraison_id, paiement })
+}))
