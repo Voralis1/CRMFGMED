@@ -1,98 +1,45 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Mark a payment as cash collected (en_attente -> encaisse).
+// Allowed: `declarer_encaissement` (livreur) or `valider_remise` (manager, admin) + super_admin.
+// A livreur can only mark HIS OWN payments.
+import {
+  adminClient, assertTenant, getCaller, handle, HttpError, json, myLivreurId, readJson, requireAny,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['declarer_encaissement', 'valider_remise'])
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
+  const { paiement_id } = await readJson(req) as { paiement_id?: string }
+  if (!paiement_id) throw new HttpError(400, 'paiement_id requis')
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  // 1. Vérification de la session
-  const authHeader = req.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '')
-  const { data: { user }, error: erreurUser } = await supabase.auth.getUser(token)
-
-  if (erreurUser || !user) {
-    return new Response(JSON.stringify({ error: 'Non authentifié' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  // 🚀 CORRECTION : Utilisation de la relation avec la table "roles" (nom)
-  const { data: roleData } = await supabase
-    .from('user_roles')
-    .select('roles(nom)')
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  const roleNom = roleData?.roles?.nom?.toLowerCase()
-
-  if (!roleNom || (roleNom !== 'admin' && roleNom !== 'livreur' && roleNom !== 'super_admin')) {
-    return new Response(JSON.stringify({ error: 'Accès refusé : rôle insuffisant' }), {
-      status: 403,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const payload = await req.json()
-  const { paiement_id } = payload
-
-  if (!paiement_id) {
-    return new Response(JSON.stringify({ error: 'paiement_id requis' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const { data: paiement, error: erreurLecture } = await supabase
+  const { data: paiement } = await sb
     .from('paiements')
-    .select('id, commande_id, statut')
+    .select('id, commande_id, statut, tenant_id, livreur_id')
     .eq('id', paiement_id)
-    .single()
+    .maybeSingle()
+  if (!paiement) throw new HttpError(404, 'paiement introuvable')
+  assertTenant(caller, paiement.tenant_id)
 
-  if (erreurLecture || !paiement) {
-    return new Response(JSON.stringify({ error: 'paiement introuvable' }), {
-      status: 404,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  if (caller.roleNom === 'livreur') {
+    const monId = await myLivreurId(sb, caller)
+    if (!monId || paiement.livreur_id !== monId) throw new HttpError(403, 'Ce paiement ne vous appartient pas')
   }
 
-  if (paiement.statut !== 'en_attente') {
-    return new Response(JSON.stringify({ error: 'ce paiement n\'est pas en attente' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
+  if (paiement.statut !== 'en_attente') throw new HttpError(400, 'ce paiement n\'est pas en attente')
 
-  const { error: erreurUpdate } = await supabase
+  const { error } = await sb
     .from('paiements')
     .update({ statut: 'encaisse', date_encaissement: new Date().toISOString() })
     .eq('id', paiement_id)
+    .eq('statut', 'en_attente')
+  if (error) throw new HttpError(400, error.message)
 
-  if (erreurUpdate) {
-    return new Response(JSON.stringify({ error: erreurUpdate.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  await supabase
+  await sb
     .from('commandes')
     .update({ statut_paiement: 'paye' })
     .eq('id', paiement.commande_id)
+    .eq('tenant_id', paiement.tenant_id)
 
-  return new Response(JSON.stringify({ status: 'ok', paiement_id }), {
-    status: 200,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  })
-})
+  return json({ status: 'ok', paiement_id })
+}))
