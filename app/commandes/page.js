@@ -173,14 +173,14 @@ export default function GestionCommandesPage() {
       lead_id: leadIdGeneré,
       client_nom: newCmd.client_nom,
       client_telephone: newCmd.client_telephone,
-      pays_id: newCmd.pays_id || null,
+      pays_id: newCmd.pays_id,
       ville_zone: newCmd.ville_zone,
       produit: newCmd.produit,
       quantite: parseInt(newCmd.quantite) || 1,
       prix: parseFloat(newCmd.prix) || 0,
       notes: newCmd.notes,
       commentaire_1: newCmd.commentaire_1,
-      source: 'csv', 
+      source: 'manuel', 
       agent_id: newCmd.agent_id || null,
       tenant_id: tenantKey
     }])
@@ -529,8 +529,8 @@ export default function GestionCommandesPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Pays</label>
-                      <select value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
-                        <option value="">-- Non spécifié --</option>
+                      <select required value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
+                        <option value="">-- Choisir un pays --</option>
                         {listePays.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
                       </select>
                     </div>

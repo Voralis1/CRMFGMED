@@ -1,125 +1,84 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Save the result of a call on an order (confirmed, cancelled, reminder...).
+// Allowed: permission `traiter_appel` (agent, manager, admin) + super_admin.
+// An agent can only treat orders assigned to him (or not yet assigned).
+import {
+  adminClient, assertTenant, getCaller, handle, HttpError, json, myAgentId, readJson, requireAny,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  const caller = await getCaller(req, sb)
+  requireAny(caller, ['traiter_appel'])
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
-  }
-
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  const authHeader = req.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '')
-  const { data: { user }, error: erreurUser } = await supabase.auth.getUser(token)
-  
-  if (erreurUser || !user) {
-    return new Response(JSON.stringify({ error: 'Non authentifié' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const { data: roleData } = await supabase
-    .from('user_roles')
-    .select('roles(nom)')
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  const roleNom = roleData?.roles?.nom?.toLowerCase()
-
-  if (!roleNom || (roleNom !== 'admin' && roleNom !== 'agent' && roleNom !== 'super_admin')) {
-    return new Response(JSON.stringify({ error: 'Accès refusé : rôle insuffisant' }), {
-      status: 403,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  const payload = await req.json()
-  
+  // deno-lint-ignore no-explicit-any
+  const payload = await readJson(req) as Record<string, any>
   const {
-    commande_id, statut, notes, date_rappel, source, tenant_id,
-    client_nom, client_telephone, ville_zone, zone_id, pays_id, produit, quantite, prix
+    commande_id, statut, notes, date_rappel, source,
+    client_nom, client_telephone, ville_zone, zone_id, pays_id, produit, quantite, prix,
   } = payload
 
-  if (!commande_id || !statut || !tenant_id) {
-    return new Response(JSON.stringify({ error: 'commande_id, statut et tenant_id requis' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  if (!commande_id || !statut || typeof statut !== 'string') {
+    throw new HttpError(400, 'commande_id et statut requis')
   }
 
-  // 🚀 SUPPRESSION DE LA LISTE EN DUR !
-  // On accepte désormais tous les statuts dynamiques provenant de l'interface.
+  const { data: commande } = await sb
+    .from('commandes')
+    .select('id, tenant_id, agent_id')
+    .eq('id', commande_id)
+    .maybeSingle()
+  if (!commande) throw new HttpError(404, 'Commande introuvable')
+  assertTenant(caller, commande.tenant_id)
 
-  let agent_id = null
-  if (roleNom === 'agent') {
-    const { data: agentData } = await supabase
-      .from('agents')
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-    agent_id = agentData?.id || null
-  } else {
-    agent_id = payload.agent_id || null
+  const agentId = await myAgentId(sb, caller, commande.tenant_id)
+
+  if (caller.roleNom === 'agent') {
+    if (!agentId) throw new HttpError(403, 'Aucun profil agent pour ce compte')
+    if (commande.agent_id && commande.agent_id !== agentId) {
+      throw new HttpError(403, 'Cette commande est assignée à un autre agent')
+    }
   }
 
-  // 1. JOURNALISATION DE L'APPEL
-  const { data: appel, error: erreurAppel } = await supabase
+  const estRappel = statut.toLowerCase().includes('rappel') || statut.toLowerCase().includes('reminder')
+
+  // 1. Log the call
+  const { data: appel, error: erreurAppel } = await sb
     .from('appels')
     .insert({
       commande_id,
-      agent_id,
-      statut, // 🚀 Enregistre le nouveau statut dynamique (ex: "Reporté à demain")
-      tenant_id, 
+      agent_id: agentId,
+      statut,
+      tenant_id: commande.tenant_id,
       notes: notes || null,
-      // Si le nom du statut contient "rappel" ou "reminder", on garde la date
-      date_rappel: (statut.toLowerCase().includes('rappel') || statut.toLowerCase().includes('reminder')) ? (date_rappel || null) : null
+      date_rappel: estRappel ? (date_rappel || null) : null,
     })
     .select()
     .single()
+  if (erreurAppel) throw new HttpError(400, erreurAppel.message)
 
-  if (erreurAppel) {
-    return new Response(JSON.stringify({ error: erreurAppel.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
+  // 2. Update the order (only fields that were actually sent)
+  // deno-lint-ignore no-explicit-any
+  const maj: Record<string, any> = {
+    statut_confirmation: statut,
+    updated_at: new Date().toISOString(),
   }
+  if (source !== undefined) maj.source = source || null
+  if (client_nom !== undefined) maj.client_nom = client_nom
+  if (client_telephone) maj.client_telephone = client_telephone
+  if (ville_zone !== undefined) maj.ville_zone = ville_zone
+  if (zone_id !== undefined) maj.zone_id = zone_id || null
+  if (pays_id) maj.pays_id = pays_id // pays_id is NOT NULL in the table: never send null
+  if (produit !== undefined) maj.produit = produit
+  if (quantite !== undefined) maj.quantite = Math.max(1, parseInt(quantite) || 1)
+  if (prix !== undefined) maj.prix = Math.max(0, parseFloat(prix) || 0)
+  // An agent who treats an unassigned lead takes it.
+  if (caller.roleNom === 'agent' && !commande.agent_id) maj.agent_id = agentId
 
-  // 2. MISE À JOUR DE LA COMMANDE
-  const { error: erreurCommande } = await supabase
+  const { error: erreurCommande } = await sb
     .from('commandes')
-    .update({
-      statut_confirmation: statut, // 🚀 Met à jour le statut dynamique sur la commande
-      source: source || null,
-      client_nom: client_nom,
-      client_telephone: client_telephone,
-      ville_zone: ville_zone,
-      zone_id: zone_id || null,
-      pays_id: pays_id || null,
-      produit: produit,
-      quantite: Math.max(1, parseInt(quantite) || 1),
-      prix: parseFloat(prix) || 0, 
-      updated_at: new Date().toISOString()
-    })
+    .update(maj)
     .eq('id', commande_id)
+    .eq('tenant_id', commande.tenant_id)
+  if (erreurCommande) throw new HttpError(400, erreurCommande.message)
 
-  if (erreurCommande) {
-    return new Response(JSON.stringify({ error: erreurCommande.message }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    })
-  }
-
-  return new Response(JSON.stringify({ status: 'ok', appel }), {
-    status: 200,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  })
-})
+  return json({ status: 'ok', appel })
+}))
