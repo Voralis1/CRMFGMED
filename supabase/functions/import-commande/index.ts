@@ -1,98 +1,95 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Import one order (lead) — used by Google Sheets / external webhooks.
+// Before: NO authentication, and the tenant_id came from the request, so anyone
+// could inject orders into any company.
+// Now two ways to call it:
+//   1. Webhook (Google Sheets, API): header  x-import-secret: <IMPORT_SECRET>
+//      Set the secret once with:  npx supabase secrets set IMPORT_SECRET=<long random string>
+//      tenant_id is taken from the body and must be an active tenant.
+//   2. Logged-in user with permission `importer_csv`: the order goes into HIS tenant.
+import {
+  adminClient, getCaller, handle, HttpError, json, readJson, requireAny,
+} from '../_shared/auth.ts'
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+function secretValide(req: Request): boolean {
+  const attendu = Deno.env.get('IMPORT_SECRET')
+  const recu = req.headers.get('x-import-secret')
+  return !!attendu && attendu.length >= 16 && recu === attendu
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+Deno.serve(handle(async (req) => {
+  const sb = adminClient()
+  // deno-lint-ignore no-explicit-any
+  const payload = await readJson(req) as Record<string, any>
+
+  let tenantId: string | undefined
+  let viaWebhook = false
+
+  if (secretValide(req)) {
+    viaWebhook = true
+    tenantId = payload.tenant_id
+    if (!tenantId) throw new HttpError(400, 'tenant_id requis')
+    const { data: t } = await sb.from('tenants').select('statut').eq('id', tenantId).maybeSingle()
+    if (!t || t.statut !== 'actif') throw new HttpError(400, 'Entreprise introuvable ou suspendue')
+  } else {
+    const caller = await getCaller(req, sb)
+    requireAny(caller, ['importer_csv'])
+    tenantId = caller.isSuperAdmin && payload.tenant_id ? payload.tenant_id : caller.tenantId
   }
 
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  )
-
-  const payload = await req.json()
   const {
-    lead_id, client_nom, client_telephone, produit,
-    ville_zone, source_url, statut_confirmation,
-    notes, commentaire_1, commentaire_2, whatsapp_tracking,
-    whatsapp_followup, quantite, source_sheet, tenant_id
+    client_nom, client_telephone, produit, ville_zone, source_url, statut_confirmation,
+    notes, commentaire_1, commentaire_2, whatsapp_tracking, whatsapp_followup, quantite, source_sheet, prix,
   } = payload
 
-  if (!client_telephone) {
-    return new Response(JSON.stringify({ error: 'telephone requis' }), { 
-      status: 400, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-    })
+  if (!client_telephone) throw new HttpError(400, 'telephone requis')
+
+  const lead_id = payload.lead_id ||
+    `LEAD-${crypto.randomUUID().replace(/-/g, '').slice(0, 10).toUpperCase()}`
+
+  // pays_id is NOT NULL in commandes: take it from the body, or the tenant's only country.
+  let pays_id = payload.pays_id
+  if (!pays_id) {
+    const { data: pays } = await sb.from('pays').select('id').eq('tenant_id', tenantId).limit(2)
+    if (pays?.length === 1) pays_id = pays[0].id
+    else throw new HttpError(400, 'pays_id requis (l\'entreprise a plusieurs pays ou aucun)')
   }
 
-  if (!tenant_id) {
-    return new Response(JSON.stringify({ error: 'tenant_id requis pour l\'isolation multi-tenant' }), { 
-      status: 400, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-    })
-  }
-
-  // Vérification de l'unicité par lead_id et par tenant
-  const { data: existant } = await supabase
+  const { data: existant } = await sb
     .from('commandes')
     .select('id')
     .eq('lead_id', lead_id)
-    .eq('tenant_id', tenant_id)
+    .eq('tenant_id', tenantId)
     .maybeSingle()
+  if (existant) return json({ status: 'deja_importe', id: existant.id })
 
-  if (existant) {
-    return new Response(JSON.stringify({ status: 'deja_importe', id: existant.id }), { 
-      status: 200, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-    })
-  }
-
-  // 1. Insertion de la commande avec le tenant_id
-  const { data: commande, error } = await supabase
+  const { data: commande, error } = await sb
     .from('commandes')
     .insert({
-      lead_id, 
-      client_nom, 
-      client_telephone, 
+      lead_id,
+      client_nom,
+      client_telephone,
       produit,
-      ville_zone, 
-      source_url, 
-      statut_confirmation: statut_confirmation || 'en_attente',
-      notes, 
-      commentaire_1, 
-      commentaire_2, 
+      pays_id,
+      ville_zone,
+      source_url,
+      // null = "à traiter" in the call center (the call center tab filters on null)
+      statut_confirmation: statut_confirmation || null,
+      notes,
+      commentaire_1,
+      commentaire_2,
       whatsapp_tracking,
-      whatsapp_followup, 
-      quantite: quantite || 1,
-      source_sheet, 
-      source: 'google_sheet',
-      tenant_id // 👈 Rattaché à l'entreprise
+      whatsapp_followup,
+      quantite: Math.max(1, parseInt(quantite) || 1),
+      prix: Math.max(0, parseFloat(prix) || 0),
+      source_sheet,
+      source: payload.source || (viaWebhook ? 'google_sheet' : 'manuel'),
+      tenant_id: tenantId,
     })
     .select()
     .single()
+  if (error) throw new HttpError(400, error.message)
 
-  if (error) {
-    return new Response(JSON.stringify({ error: error.message }), { 
-      status: 400, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-    })
-  }
+  await sb.from('appels').insert({ commande_id: commande.id, statut: 'en_attente', tenant_id: tenantId })
 
-  // 2. Création automatique de l'entrée dans 'appels' avec le tenant_id
-  await supabase.from('appels').insert({ 
-    commande_id: commande.id, 
-    statut: 'en_attente',
-    tenant_id // 👈 Rattaché à l'entreprise également
-  })
-
-  return new Response(JSON.stringify({ status: 'ok', commande }), { 
-    status: 200, 
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-  })
-})
+  return json({ status: 'ok', commande })
+}))
