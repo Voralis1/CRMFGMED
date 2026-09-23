@@ -286,7 +286,8 @@ export default function AssignationLivreurPage() {
                         <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => assigner(cmd.id)}
-                            disabled={envoiEnCoursId === cmd.id || livreursFiltres.length === 0}
+                            disabled={envoiEnCoursId === cmd.id || livreursFiltres.length === 0 || !hasPermission('assigner_livreur')}
+                            title={!hasPermission('assigner_livreur') ? "Vous n'avez pas le droit d'assigner un livreur" : undefined}
                             className="px-4 py-2 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-sm font-bold shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
                           >
                             {envoiEnCoursId === cmd.id ? '...' : 'Assigner'}

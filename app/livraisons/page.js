@@ -14,7 +14,7 @@ const STATUTS_LIVRAISON = [
 
 export default function LivraisonsPage() {
   const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde l'authentification de base
-  const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
   const router = useRouter()
 
   const [livraisons, setLivraisons] = useState([])
@@ -74,8 +74,25 @@ export default function LivraisonsPage() {
   }, [user, authLoading, permsLoading, tenantId])
 
   const chargerLivraisons = useCallback(async (onglet) => {
-    if (!tenantId) return
+    if (!tenantId || permsLoading) return
     setChargement(true)
+
+    // A livreur only sees the deliveries assigned to HIM (manager/admin see the whole tenant)
+    let monLivreurId = null
+    if ((roleNom || '').toLowerCase() === 'livreur') {
+      const { data: moi } = await supabase
+        .from('livreurs')
+        .select('id')
+        .eq('user_id', user?.id)
+        .eq('tenant_id', tenantId)
+        .maybeSingle()
+      if (!moi) {
+        setLivraisons([])
+        setChargement(false)
+        return
+      }
+      monLivreurId = moi.id
+    }
 
     let requete = supabase
       .from('livraisons')
@@ -97,7 +114,11 @@ export default function LivraisonsPage() {
           zones(nom_zone, frais_livraison, frais_retour)
         )
       `)
-      .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
+       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
+
+    if (monLivreurId) {
+      requete = requete.eq('livreur_id', monLivreurId)
+    }
 
     if (onglet === 'en_attente') {
       requete = requete.eq('statut', 'en_attente')
@@ -114,7 +135,7 @@ export default function LivraisonsPage() {
       setLivraisons(data || [])
     }
     setChargement(false)
-  }, [tenantId])
+  }, [tenantId, roleNom, permsLoading, user?.id])
 
   useEffect(() => {
     if (tenantId) {
@@ -425,13 +446,17 @@ export default function LivraisonsPage() {
             </div>
 
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
-              <button
-                onClick={envoyerConfirmation}
-                disabled={envoiEnCours}
-                className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md cursor-pointer"
-              >
-                {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
-              </button>
+              {hasPermission('gerer_livraison') ? (
+                <button
+                  onClick={envoyerConfirmation}
+                  disabled={envoiEnCours}
+                  className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
+                >
+                  {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
+                </button>
+              ) : (
+                <p className="text-center text-xs text-[#1B2632]/50 py-3">Lecture seule : vous n'avez pas le droit de modifier une livraison.</p>
+              )}
             </div>
           </div>
         </>

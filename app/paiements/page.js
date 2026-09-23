@@ -173,7 +173,9 @@ export default function PaiementsPage() {
   }
 
   // 🚀 Vérification dynamique des droits financiers (remplace l'ancienne variable role)
-  const peutVoirCashflow = hasPermission('gerer_utilisateurs') || hasPermission('voir_cashflow')
+  const peutVoirCashflow = hasPermission('voir_caisse')
+  const peutEncaisser = hasPermission('declarer_encaissement') || hasPermission('valider_remise')
+  const peutValiderRemise = hasPermission('valider_remise')
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
@@ -219,7 +221,7 @@ export default function PaiementsPage() {
                     <td className="p-3 text-right">
                       <button
                         onClick={() => encaisser(p.id)}
-                        disabled={envoiEnCoursId === p.id}
+                        disabled={envoiEnCoursId === p.id || !peutEncaisser}
                         className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
                       >
                         {envoiEnCoursId === p.id ? '...' : 'Marquer encaissé'}
@@ -265,7 +267,7 @@ export default function PaiementsPage() {
                         <td className="p-3 text-right">
                           <button
                             onClick={() => remettreEnCaisse(c.id, c.devise)}
-                            disabled={envoiEnCoursId === cleBouton}
+                            disabled={envoiEnCoursId === cleBouton || !peutValiderRemise || c.devise === 'N/A'}
                             className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
                           >
                             {envoiEnCoursId === cleBouton ? '...' : 'Confirmer remise'}

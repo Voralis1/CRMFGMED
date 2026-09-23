@@ -955,13 +955,17 @@ export default function CentreAppelAgent() {
             </div>
 
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
-              <button
-                onClick={validerAppel}
-                disabled={envoiEnCours}
-                className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
-              >
-                {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
-              </button>
+              {hasPermission('traiter_appel') ? (
+                <button
+                  onClick={validerAppel}
+                  disabled={envoiEnCours}
+                  className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
+                >
+                  {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
+                </button>
+              ) : (
+                <p className="text-center text-xs text-[#1B2632]/50 py-3">Lecture seule : vous n'avez pas le droit de traiter un appel.</p>
+              )}
             </div>
           </div>
         </>

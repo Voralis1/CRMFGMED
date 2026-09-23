@@ -13,6 +13,9 @@ export default function UtilisateursPage() {
 
   // 🚀 EXTRACTION SÉCURISÉE DU TENANT ID
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
+  // Only roles with `gerer_utilisateurs` (manager, admin, super_admin) can create / edit / delete.
+  // CEO has `menu_utilisateurs` only: read-only list.
+  const peutGerer = hasPermission('gerer_utilisateurs')
 
   const [ongletActif, setOngletActif] = useState('agents') // 'agents', 'livreurs', 'creation'
   
@@ -266,14 +269,14 @@ export default function UtilisateursPage() {
           >
             Livreurs ({livreurs.length})
           </button>
-          <button
+          {peutGerer && <button
             onClick={() => setOngletActif('creation')}
             className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
               ongletActif === 'creation' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
             }`}
           >
             + Créer un utilisateur
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -312,11 +315,13 @@ export default function UtilisateursPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-right space-x-2">
-                        <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
-                        <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
-                          {a.actif ? 'Désactiver' : 'Activer'}
-                        </button>
-                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        {peutGerer ? (<>
+                          <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                          <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
+                            {a.actif ? 'Désactiver' : 'Activer'}
+                          </button>
+                          <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
                       </td>
                     </tr>
                   ))}
@@ -363,11 +368,13 @@ export default function UtilisateursPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-right space-x-2 whitespace-nowrap">
-                        <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
-                        <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
-                          {l.actif ? 'Désactiver' : 'Activer'}
-                        </button>
-                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        {peutGerer ? (<>
+                          <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                          <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
+                            {l.actif ? 'Désactiver' : 'Activer'}
+                          </button>
+                          <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
                       </td>
                     </tr>
                   ))}
@@ -379,7 +386,7 @@ export default function UtilisateursPage() {
       )}
 
       {/* --- ONGLET CRÉATION --- */}
-      {ongletActif === 'creation' && (
+      {peutGerer && ongletActif === 'creation' && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-8">
           <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
             <h2 className="text-xl font-bold text-[#1B2632]">Créer un nouvel utilisateur</h2>
