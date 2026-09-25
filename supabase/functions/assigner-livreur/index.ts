@@ -13,7 +13,7 @@ Deno.serve(handle(async (req) => {
   // The tenant comes from the order in the database, never from the browser.
   const { data: commande } = await sb
     .from('commandes')
-    .select('id, tenant_id')
+    .select('id, tenant_id, pays_id')
     .eq('id', commande_id)
     .maybeSingle()
   if (!commande) throw new HttpError(404, 'Commande introuvable')
@@ -21,13 +21,17 @@ Deno.serve(handle(async (req) => {
 
   const { data: livreur } = await sb
     .from('livreurs')
-    .select('id, tenant_id, actif')
+    .select('id, tenant_id, actif, pays_id')
     .eq('id', livreur_id)
     .maybeSingle()
   if (!livreur || livreur.tenant_id !== commande.tenant_id) {
     throw new HttpError(400, 'Livreur invalide pour cette entreprise')
   }
   if (livreur.actif === false) throw new HttpError(400, 'Ce livreur est désactivé')
+  // A livreur delivers physically: he can only take an order of his own country.
+  if (!livreur.pays_id || livreur.pays_id !== commande.pays_id) {
+    throw new HttpError(400, 'Ce livreur n\'opère pas dans le pays de cette commande')
+  }
 
   const { data: livraisonExistante } = await sb
     .from('livraisons')

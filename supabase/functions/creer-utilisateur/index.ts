@@ -13,7 +13,7 @@ Deno.serve(handle(async (req) => {
   const caller = await getCaller(req, sb)
   requireAny(caller, ['gerer_utilisateurs', 'gerer_comptes'])
 
-  const { email, mot_de_passe, nom, telephone, tenant_id, role_id, zone } =
+  const { email, mot_de_passe, nom, telephone, tenant_id, role_id, zone, pays_id } =
     await readJson(req) as Record<string, string | undefined>
 
   if (!email || !mot_de_passe || !role_id) throw new HttpError(400, 'email, mot_de_passe et role_id sont requis')
@@ -51,6 +51,19 @@ Deno.serve(handle(async (req) => {
     throw new HttpError(403, `Seul un admin peut créer un compte ${roleNom}`)
   }
 
+  // An agent is routed leads by country and a livreur can only deliver in his own
+  // country, so for both the country is mandatory and must belong to their company.
+  const estAgent = roleNom === 'agent'
+  const estLivreur = roleNom === 'livreur'
+  if (estAgent || estLivreur) {
+    if (!pays_id) {
+      throw new HttpError(400, `Le pays est obligatoire pour un ${estAgent ? 'agent' : 'livreur'}`)
+    }
+    const { data: pays } = await sb
+      .from('pays').select('id').eq('id', pays_id).eq('tenant_id', tenantCible).maybeSingle()
+    if (!pays) throw new HttpError(400, 'Ce pays n\'appartient pas à cette entreprise')
+  }
+
   const nomAffichage = nom || email.split('@')[0]
 
   const { data: nouvel, error: erreurCreation } = await sb.auth.admin.createUser({
@@ -78,12 +91,13 @@ Deno.serve(handle(async (req) => {
   if (roleNom.includes('agent') || roleNom.includes('admin')) {
     const { error } = await sb.from('agents').insert({
       user_id: nouvelUserId, nom: nomAffichage, tenant_id: tenantCible, actif: true,
+      pays_id: estAgent ? pays_id : (pays_id || null),
     })
     if (error) avertissement = 'Compte créé, mais fiche agent non créée : ' + error.message
   } else if (roleNom.includes('livreur')) {
     const { error } = await sb.from('livreurs').insert({
       user_id: nouvelUserId, nom: nomAffichage, telephone: telephone || null,
-      zone: zone || null, tenant_id: tenantCible, actif: true,
+      zone: zone || null, pays_id: pays_id, tenant_id: tenantCible, actif: true,
     })
     if (error) avertissement = 'Compte créé, mais fiche livreur non créée : ' + error.message
   }

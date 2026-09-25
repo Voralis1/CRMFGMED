@@ -60,7 +60,7 @@ export default function AssignationLivreurPage() {
 
     const { data, error } = await supabase
       .from('livreurs')
-      .select('id, nom, zone')
+      .select('id, nom, zone, pays_id')
       .eq('tenant_id', tenantKey)
       .eq('actif', true)
       .order('nom')
@@ -222,7 +222,10 @@ export default function AssignationLivreurPage() {
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
                   {commandes.map((cmd) => {
+                    // A livreur can only deliver in his own country. Inside that
+                    // country, a livreur with no zone is "Volant" (all zones).
                     const livreursFiltres = livreurs.filter((l) => {
+                      if (l.pays_id !== cmd.pays_id) return false;
                       if (!l.zone || l.zone.trim() === '') return true;
                       if (!cmd.ville_zone) return false;
                       return cmd.ville_zone.toLowerCase().includes(l.zone.toLowerCase());
@@ -279,7 +282,7 @@ export default function AssignationLivreurPage() {
                             ))}
                           </select>
                           {livreursFiltres.length === 0 && (
-                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucune zone associée</span>
+                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucun livreur pour ce pays / cette zone</span>
                           )}
                         </td>
 

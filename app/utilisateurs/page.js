@@ -13,6 +13,7 @@ export default function UtilisateursPage() {
 
   // 🚀 EXTRACTION SÉCURISÉE DU TENANT ID
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
+
   // Only roles with `gerer_utilisateurs` (manager, admin, super_admin) can create / edit / delete.
   // CEO has `menu_utilisateurs` only: read-only list.
   const peutGerer = hasPermission('gerer_utilisateurs')
@@ -22,6 +23,7 @@ export default function UtilisateursPage() {
   const [agents, setAgents] = useState([])
   const [livreurs, setLivreurs] = useState([])
   const [listeZones, setListeZones] = useState([])
+  const [listePays, setListePays] = useState([])
 
   const [message, setMessage] = useState({ texte: '', type: '' })
 
@@ -32,6 +34,7 @@ export default function UtilisateursPage() {
   const [telephone, setTelephone] = useState('')
   const [roleUtilisateur, setRoleUtilisateur] = useState('agent')
   const [zoneLivreur, setZoneLivreur] = useState('')
+  const [paysFiche, setPaysFiche] = useState('')
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
   // États pour la modale de modification
@@ -41,6 +44,7 @@ export default function UtilisateursPage() {
   const [editNom, setEditNom] = useState('')
   const [editTelephone, setEditTelephone] = useState('')
   const [editZone, setEditZone] = useState('')
+  const [editPays, setEditPays] = useState('')
 
   // REDIRECTION SÉCURISÉE VIA LA MATRICE DE PERMISSIONS
   useEffect(() => {
@@ -56,15 +60,17 @@ export default function UtilisateursPage() {
   const chargerDonnees = useCallback(async () => {
     if (!tenantKey) return
 
-    const [dataAgents, dataLivreurs, dataZones] = await Promise.all([
+    const [dataAgents, dataLivreurs, dataZones, dataPays] = await Promise.all([
       supabase.from('agents').select('*').eq('tenant_id', tenantKey).not('user_id', 'is', null).order('nom'),
       supabase.from('livreurs').select('*').eq('tenant_id', tenantKey).not('user_id', 'is', null).order('nom'),
-      supabase.from('zones').select('id, nom_zone').eq('tenant_id', tenantKey).order('nom_zone')
+      supabase.from('zones').select('id, nom_zone, pays_id').eq('tenant_id', tenantKey).order('nom_zone'),
+      supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom')
     ])
 
     setAgents(dataAgents.data || [])
     setLivreurs(dataLivreurs.data || [])
     setListeZones(dataZones.data || [])
+    setListePays(dataPays.data || [])
   }, [tenantKey])
 
   useEffect(() => {
@@ -82,6 +88,13 @@ export default function UtilisateursPage() {
   async function creerUtilisateur(e) {
     e.preventDefault()
     if (!tenantKey) return
+
+    // An agent MUST have a country: the lead router only gives him leads from that country.
+    if (!paysFiche) {
+      afficherMessage('Le pays est obligatoire.', 'erreur')
+      return
+    }
+
     setEnvoiEnCours(true)
 
     // 🚀 1. Récupération dynamique du role_id depuis la base de données
@@ -115,6 +128,7 @@ export default function UtilisateursPage() {
           role: roleUtilisateur, // Gardé au cas où la fonction l'utilise
           role_id: roleData.id,  // 🚀 AJOUT DU ROLE_ID REQUIS PAR LA FONCTION
           zone: roleUtilisateur === 'livreur' && zoneLivreur ? zoneLivreur.trim() : null,
+          pays_id: paysFiche,
           tenant_id: tenantKey   // 🚀 CORRECTION DU TENANT ID
         }),
       }
@@ -134,6 +148,7 @@ export default function UtilisateursPage() {
     setNom('')
     setTelephone('')
     setZoneLivreur('')
+    setPaysFiche('')
     await chargerDonnees()
     setOngletActif(roleUtilisateur === 'livreur' ? 'livreurs' : 'agents')
   }
@@ -197,6 +212,7 @@ export default function UtilisateursPage() {
     setEditNom(utilisateur.nom || '')
     setEditTelephone(utilisateur.telephone || '')
     setEditZone(utilisateur.zone ? utilisateur.zone.trim() : '')
+    setEditPays(utilisateur.pays_id || '')
     setModalOuverte(true)
   }
 
@@ -204,13 +220,19 @@ export default function UtilisateursPage() {
     e.preventDefault()
     const table = typeEdition === 'agent' ? 'agents' : 'livreurs'
 
+    if (!editPays) {
+      alert('Le pays est obligatoire.')
+      return
+    }
+
     let payload = {}
     if (typeEdition === 'agent') {
-      payload = { nom: editNom.trim() }
+      payload = { nom: editNom.trim(), pays_id: editPays }
     } else {
       payload = {
         nom: editNom.trim(),
         telephone: editTelephone.trim(),
+        pays_id: editPays,
         zone: editZone === '' ? null : editZone.trim()
       }
     }
@@ -301,6 +323,7 @@ export default function UtilisateursPage() {
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
                     <th className="px-4 py-3">Nom</th>
+                    <th className="px-4 py-3">Pays traité</th>
                     <th className="px-4 py-3">Statut</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -310,17 +333,26 @@ export default function UtilisateursPage() {
                     <tr key={a.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
                       <td className="px-4 py-4 font-semibold text-[#1B2632]">{a.nom}</td>
                       <td className="px-4 py-4">
+                        {a.pays_id ? (
+                          <span className="font-semibold text-xs bg-[#EEE9DF] px-2.5 py-1 rounded-md">
+                            {listePays.find(p => p.id === a.pays_id)?.nom || '—'}
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-xs bg-[#A35139]/10 text-[#A35139] px-2.5 py-1 rounded-md">Non défini</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-semibold ${a.actif ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                           {a.actif ? 'Actif' : 'Inactif'}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-right space-x-2">
                         {peutGerer ? (<>
-                          <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
-                          <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
-                            {a.actif ? 'Désactiver' : 'Activer'}
-                          </button>
-                          <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                        <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
+                          {a.actif ? 'Désactiver' : 'Activer'}
+                        </button>
+                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
                         </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
                       </td>
                     </tr>
@@ -347,6 +379,7 @@ export default function UtilisateursPage() {
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
                     <th className="px-4 py-3">Nom</th>
                     <th className="px-4 py-3">Téléphone</th>
+                    <th className="px-4 py-3">Pays</th>
                     <th className="px-4 py-3">Zone assignée</th>
                     <th className="px-4 py-3">Statut</th>
                     <th className="px-4 py-3 text-right">Actions</th>
@@ -358,8 +391,17 @@ export default function UtilisateursPage() {
                       <td className="px-4 py-4 font-semibold text-[#1B2632]">{l.nom}</td>
                       <td className="px-4 py-4 font-mono text-xs text-[#A35139]">{l.telephone || '-'}</td>
                       <td className="px-4 py-4">
+                        {l.pays_id ? (
+                          <span className="font-semibold text-xs bg-[#EEE9DF] px-2.5 py-1 rounded-md">
+                            {listePays.find(p => p.id === l.pays_id)?.nom || '—'}
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-xs bg-[#A35139]/10 text-[#A35139] px-2.5 py-1 rounded-md">Non défini</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
                         <span className="font-semibold text-xs bg-[#EEE9DF] px-2.5 py-1 rounded-md">
-                          {l.zone ? l.zone.trim() : 'Volant (Toutes les zones)'}
+                          {l.zone ? l.zone.trim() : 'Volant (Toutes les zones du pays)'}
                         </span>
                       </td>
                       <td className="px-4 py-4">
@@ -369,11 +411,11 @@ export default function UtilisateursPage() {
                       </td>
                       <td className="px-4 py-4 text-right space-x-2 whitespace-nowrap">
                         {peutGerer ? (<>
-                          <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
-                          <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
-                            {l.actif ? 'Désactiver' : 'Activer'}
-                          </button>
-                          <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                        <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
+                          {l.actif ? 'Désactiver' : 'Activer'}
+                        </button>
+                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
                         </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
                       </td>
                     </tr>
@@ -451,6 +493,26 @@ export default function UtilisateursPage() {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Pays <span className="text-[#A35139]">*</span></label>
+                <select
+                  value={paysFiche}
+                  onChange={(e) => { setPaysFiche(e.target.value); setZoneLivreur('') }}
+                  required
+                  className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
+                >
+                  <option value="">-- Choisir un pays --</option>
+                  {listePays.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nom}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-[#1B2632]/60 mt-1.5">
+                  {roleUtilisateur === 'agent'
+                    ? 'L’agent ne recevra que les leads de ce pays.'
+                    : 'Le livreur ne pourra livrer que dans ce pays.'}
+                </p>
+              </div>
+
               {roleUtilisateur === 'livreur' && (
                 <div>
                   <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Zone d'activité initiale</label>
@@ -459,8 +521,8 @@ export default function UtilisateursPage() {
                     onChange={(e) => setZoneLivreur(e.target.value)}
                     className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                   >
-                    <option value="">-- Volant (Toutes les zones) --</option>
-                    {listeZones.map((z) => (
+                    <option value="">-- Volant (Toutes les zones du pays) --</option>
+                    {listeZones.filter((z) => !paysFiche || z.pays_id === paysFiche).map((z) => (
                       <option key={z.id} value={z.nom_zone}>{z.nom_zone}</option>
                     ))}
                   </select>
@@ -506,6 +568,21 @@ export default function UtilisateursPage() {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">Pays <span className="text-[#A35139]">*</span></label>
+                <select
+                  value={editPays}
+                  onChange={(e) => { setEditPays(e.target.value); setEditZone('') }}
+                  required
+                  className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-2.5 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
+                >
+                  <option value="">-- Choisir un pays --</option>
+                  {listePays.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nom}</option>
+                  ))}
+                </select>
+              </div>
+
               {typeEdition === 'livreur' && (
                 <div>
                   <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">Téléphone</label>
@@ -526,8 +603,8 @@ export default function UtilisateursPage() {
                     onChange={(e) => setEditZone(e.target.value)}
                     className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-2.5 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                   >
-                    <option value="">-- Volant (Toutes les zones) --</option>
-                    {listeZones.map((z) => (
+                    <option value="">-- Volant (Toutes les zones du pays) --</option>
+                    {listeZones.filter((z) => !editPays || z.pays_id === editPays).map((z) => (
                       <option key={z.id} value={z.nom_zone}>{z.nom_zone}</option>
                     ))}
                   </select>
