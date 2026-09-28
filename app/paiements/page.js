@@ -6,12 +6,16 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext' // 👈 Conservé pour tenantId et user
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
 
+const TAILLE_PAGE = 50
+
 export default function PaiementsPage() {
   const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde l'auth de base
   const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
   const router = useRouter()
 
   const [paiements, setPaiements] = useState([])
+  const [totalPaiements, setTotalPaiements] = useState(0)
+  const [pagePaiements, setPagePaiements] = useState(0)
   const [caissesParLivreur, setCaissesParLivreur] = useState([])
   const [chargement, setChargement] = useState(true)
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
@@ -28,62 +32,64 @@ export default function PaiementsPage() {
     }
   }, [user, authLoading, permsLoading, hasPermission, router])
 
-  const chargerPaiements = useCallback(async () => {
+  const chargerPaiements = useCallback(async (page = 0) => {
     if (!tenantId) return
 
-    // 🚀 On embarque la devise du pays de la commande (via pays_id) pour ne jamais afficher un montant nu
-    const { data, error } = await supabase
+    // 🚀 On embarque la devise du pays de la commande (via pays_id) pour ne jamais afficher un montant nu.
+    // `count: 'exact'` + `.range()` : le LIMIT/OFFSET est fait par la base, pas par le navigateur.
+    const debut = page * TAILLE_PAGE
+    const { data, error, count } = await supabase
       .from('paiements')
-      .select('id, montant, statut, livreurs(nom), commandes(client_nom, pays(devise))')
+      .select('id, montant, statut, livreurs(nom), commandes(client_nom, pays(devise))', { count: 'exact' })
       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
       .eq('statut', 'en_attente')
       .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(debut, debut + TAILLE_PAGE - 1)
 
     if (error) {
       alert('Erreur paiements: ' + error.message)
+      setPaiements([])
+      setTotalPaiements(0)
     } else {
       setPaiements(data || [])
+      setTotalPaiements(count || 0)
     }
   }, [tenantId])
 
   const chargerCaisses = useCallback(async () => {
     if (!tenantId) return
 
-    // 🚀 On embarque la devise pour pouvoir regrouper séparément par devise
+    // 🚀 La somme est faite par la base (vue v_caisses_livreur), jamais ici :
+    // un total d'argent calculé sur une liste tronquée serait faux en silence.
+    // Une ligne par LIVREUR et par DEVISE — deux devises ne sont jamais additionnées.
     const { data, error } = await supabase
-      .from('paiements')
-      .select('montant, livreurs(id, nom), commandes(pays(devise))')
+      .from('v_caisses_livreur')
+      .select('livreur_id, livreur_nom, devise, total, nb_paiements')
       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
-      .eq('statut', 'encaisse')
+      .order('livreur_nom')
 
     if (error) {
       alert('Erreur caisses: ' + error.message)
       return
     }
 
-    // 🚀 Regroupement par LIVREUR + DEVISE — on ne mélange jamais deux devises
-    // dans un même total (ex: un livreur qui aurait des paiements en AOA et en MAD
-    // doit voir deux lignes séparées, pas un total combiné sans signification).
-    const regroupement = {}
-    for (const p of (data || [])) {
-      const nomLivreur = p.livreurs?.nom || 'Inconnu'
-      const idLivreur = p.livreurs?.id
-      const devise = p.commandes?.pays?.devise || 'N/A'
-      const cle = `${idLivreur}__${devise}`
-
-      if (!regroupement[cle]) {
-        regroupement[cle] = { id: idLivreur, nom: nomLivreur, devise, total: 0 }
-      }
-      regroupement[cle].total += Number(p.montant)
-    }
-    setCaissesParLivreur(Object.values(regroupement))
+    setCaissesParLivreur(
+      (data || []).map((c) => ({
+        id: c.livreur_id,
+        nom: c.livreur_nom || 'Inconnu',
+        devise: c.devise || 'N/A',
+        total: Number(c.total),
+        nb_paiements: c.nb_paiements,
+      }))
+    )
   }, [tenantId])
 
   const chargerTout = useCallback(async () => {
     setChargement(true)
-    await Promise.all([chargerPaiements(), chargerCaisses()])
+    await Promise.all([chargerPaiements(pagePaiements), chargerCaisses()])
     setChargement(false)
-  }, [chargerPaiements, chargerCaisses])
+  }, [chargerPaiements, chargerCaisses, pagePaiements])
 
   useEffect(() => {
     if (authLoading || permsLoading || !user || !tenantId) return
@@ -197,7 +203,7 @@ export default function PaiementsPage() {
         {/* Section 1 : Paiements à encaisser */}
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-6">
           <h2 className="text-lg font-bold text-[#1B2632] mb-4">
-            Paiements à encaisser ({paiements.length})
+            Paiements à encaisser ({totalPaiements})
           </h2>
 
           {paiements.length === 0 ? (
@@ -232,6 +238,31 @@ export default function PaiementsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
+          )}
+
+          {totalPaiements > TAILLE_PAGE && (
+            <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-4 border-t border-[#C9C1B1]/40">
+              <span className="text-sm text-[#1B2632]/70 font-medium">
+                Page {pagePaiements + 1} sur {Math.max(1, Math.ceil(totalPaiements / TAILLE_PAGE))}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPagePaiements((p) => Math.max(0, p - 1))}
+                  disabled={pagePaiements === 0 || chargement}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
+                >
+                  Précédent
+                </button>
+                <button
+                  onClick={() => setPagePaiements((p) =>
+                    Math.min(Math.ceil(totalPaiements / TAILLE_PAGE) - 1, p + 1))}
+                  disabled={pagePaiements >= Math.ceil(totalPaiements / TAILLE_PAGE) - 1 || chargement}
+                  className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
+                >
+                  Suivant
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -6,6 +6,8 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext' // 👈 Conservé pour le tenantId et user
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte des permissions
 
+const TAILLE_PAGE = 50
+
 const STATUTS_LIVRAISON = [
   { value: 'livre', label: 'Livré' },
   { value: 'injoignable', label: 'Injoignable' },
@@ -18,6 +20,8 @@ export default function LivraisonsPage() {
   const router = useRouter()
 
   const [livraisons, setLivraisons] = useState([])
+  const [totalLivraisons, setTotalLivraisons] = useState(0)
+  const [pageActuelle, setPageActuelle] = useState(0)
   const [listeZones, setListeZones] = useState([])
   const [chargement, setChargement] = useState(true)
   const [ongletActif, setOngletActif] = useState('en_attente')
@@ -73,7 +77,7 @@ export default function LivraisonsPage() {
     initialiserLivreurEtZones()
   }, [user, authLoading, permsLoading, tenantId])
 
-  const chargerLivraisons = useCallback(async (onglet) => {
+  const chargerLivraisons = useCallback(async (onglet, page = 0) => {
     if (!tenantId || permsLoading) return
     setChargement(true)
 
@@ -88,12 +92,15 @@ export default function LivraisonsPage() {
         .maybeSingle()
       if (!moi) {
         setLivraisons([])
+        setTotalLivraisons(0)
         setChargement(false)
         return
       }
       monLivreurId = moi.id
     }
 
+    // `count: 'exact'` + `.range()` : Supabase traduit cela en COUNT + LIMIT/OFFSET,
+    // donc seules les 50 lignes de la page voyagent, jamais toute la table.
     let requete = supabase
       .from('livraisons')
       .select(`
@@ -113,7 +120,7 @@ export default function LivraisonsPage() {
           tenant_id,
           zones(nom_zone, frais_livraison, frais_retour)
         )
-      `)
+      `, { count: 'exact' })
       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
 
     if (monLivreurId) {
@@ -126,22 +133,30 @@ export default function LivraisonsPage() {
       requete = requete.in('statut', ['livre', 'injoignable', 'retour'])
     }
 
-    const { data, error } = await requete.order('created_at', { ascending: false })
+    const debut = page * TAILLE_PAGE
+    const { data, error, count } = await requete
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(debut, debut + TAILLE_PAGE - 1)
 
     if (error) {
       alert('Erreur: ' + error.message)
       setLivraisons([])
+      setTotalLivraisons(0)
     } else {
       setLivraisons(data || [])
+      setTotalLivraisons(count || 0)
     }
     setChargement(false)
   }, [tenantId, roleNom, permsLoading, user?.id])
 
   useEffect(() => {
     if (tenantId) {
-      chargerLivraisons(ongletActif)
+      chargerLivraisons(ongletActif, pageActuelle)
     }
-  }, [ongletActif, tenantId, chargerLivraisons])
+  }, [ongletActif, pageActuelle, tenantId, chargerLivraisons])
+
+  const totalPages = Math.max(1, Math.ceil(totalLivraisons / TAILLE_PAGE))
 
   function ouvrirFormulaire(liv) {
     setLivraisonSelectionnee(liv)
@@ -189,7 +204,7 @@ export default function LivraisonsPage() {
     }
 
     setLivraisonSelectionnee(null)
-    await chargerLivraisons(ongletActif)
+    await chargerLivraisons(ongletActif, pageActuelle)
   }
 
   const zoneAssociee = livraisonSelectionnee?.commandes?.zones || 
@@ -225,7 +240,7 @@ export default function LivraisonsPage() {
           <div className="flex items-center gap-4">
             <div className="flex gap-2">
               <button
-                onClick={() => { setOngletActif('en_attente'); setLivraisonSelectionnee(null); }}
+                onClick={() => { setOngletActif('en_attente'); setPageActuelle(0); setLivraisonSelectionnee(null); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
                   ongletActif === 'en_attente' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
@@ -233,7 +248,7 @@ export default function LivraisonsPage() {
                 Livraisons à effectuer
               </button>
               <button
-                onClick={() => { setOngletActif('historique'); setLivraisonSelectionnee(null); }}
+                onClick={() => { setOngletActif('historique'); setPageActuelle(0); setLivraisonSelectionnee(null); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
                   ongletActif === 'historique' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
@@ -329,6 +344,29 @@ export default function LivraisonsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
+          <span className="text-sm text-[#1B2632]/70 font-medium">
+            {totalLivraisons} livraison{totalLivraisons > 1 ? 's' : ''} · Page {pageActuelle + 1} sur {totalPages}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPageActuelle((p) => Math.max(0, p - 1))}
+              disabled={pageActuelle === 0 || chargement}
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
+            >
+              Précédent
+            </button>
+            <button
+              onClick={() => setPageActuelle((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={pageActuelle >= totalPages - 1 || chargement}
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
+            >
+              Suivant
+            </button>
+          </div>
         </div>
       </div>
 
