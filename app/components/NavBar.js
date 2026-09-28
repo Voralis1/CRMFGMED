@@ -57,9 +57,14 @@ export default function NavBar({ isOpen, toggleMenu }) {
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #2C3B4D; border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #3A4D63; }
       `}</style>
-      <nav 
-        className={`flex flex-col h-full bg-[#1B2632] text-[#EEE9DF] flex-shrink-0 shadow-xl transition-all duration-300 ease-in-out overflow-hidden ${
-          isOpen ? 'w-64' : 'w-0'
+      {/*
+        Phone  : the menu is an overlay drawer that slides over the page (fixed).
+        Desktop: it stays a normal column that the content sits next to, and it
+                 can still be collapsed to zero width like before.
+      */}
+      <nav
+        className={`fixed md:relative inset-y-0 left-0 z-40 w-64 md:w-64 flex flex-col h-full bg-[#1B2632] text-[#EEE9DF] md:flex-shrink-0 shadow-xl transition-all duration-300 ease-in-out overflow-hidden ${
+          isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0 md:w-0'
         }`}
       >
         <div className="w-64 flex flex-col h-full">
