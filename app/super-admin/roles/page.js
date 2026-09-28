@@ -175,9 +175,9 @@ export default function SuperAdminRoles() {
   }
 
   return (
-    <div className="space-y-6 pt-16 px-6 pb-10 max-w-[1400px] mx-auto">
+    <div className="space-y-6 pt-4 sm:pt-16 px-4 sm:px-6 pb-10 max-w-[1400px] mx-auto">
       {/* En-tête */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-[#C9C1B1]/40">
+      <div className="flex flex-wrap gap-3 justify-between items-center bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-[#C9C1B1]/40">
         <div>
           <h2 className="text-2xl font-bold text-[#1B2632]">Gestion des Rôles & Permissions</h2>
           <p className="text-sm text-gray-500 mt-1">Gérez vos rôles et leurs droits d'accès.</p>
@@ -191,16 +191,16 @@ export default function SuperAdminRoles() {
       </div>
 
       {/* Liste des Rôles */}
-      <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-3 sm:p-6">
         {loading ? <div className="text-center py-10">Chargement...</div> : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {roles.map((role) => (
-              <div key={role.id} className="p-5 border border-gray-100 rounded-xl hover:shadow-md transition-shadow bg-gray-50/50 flex flex-col justify-between">
+              <div key={role.id} className="p-4 sm:p-5 border border-gray-100 rounded-xl hover:shadow-md transition-shadow bg-gray-50/50 flex flex-col justify-between">
                 <div>
-                  <h3 className="text-lg font-bold text-[#1B2632] uppercase">{role.nom}</h3>
+                  <h3 className="text-lg font-bold text-[#1B2632] uppercase break-words">{role.nom}</h3>
                   <p className="text-sm text-gray-500 mt-2 line-clamp-2">{role.description || 'Aucune description'}</p>
                 </div>
-                <div className="mt-6 flex gap-2">
+                <div className="mt-6 flex flex-wrap gap-2">
                   <button 
                     onClick={() => handleOpenEdit(role)} 
                     className="flex-1 bg-[#1B2632]/10 hover:bg-[#1B2632] hover:text-white text-[#1B2632] px-4 py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer"

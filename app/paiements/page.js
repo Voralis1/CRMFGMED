@@ -178,7 +178,7 @@ export default function PaiementsPage() {
   const peutValiderRemise = hasPermission('valider_remise')
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
       
       {/* En-tête de la page */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
@@ -203,7 +203,8 @@ export default function PaiementsPage() {
           {paiements.length === 0 ? (
             <p className="text-sm text-[#1B2632]/60 py-4">Aucun paiement en attente.</p>
           ) : (
-            <table className="w-full text-left border-collapse text-sm">
+            <div className="overflow-x-auto -mx-6 px-6">
+            <table className="w-full min-w-[560px] text-left border-collapse text-sm">
               <thead>
                 <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
                   <th className="p-3">Client</th>
@@ -231,6 +232,7 @@ export default function PaiementsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
@@ -247,7 +249,8 @@ export default function PaiementsPage() {
             {caissesParLivreur.length === 0 ? (
               <p className="text-sm text-[#1B2632]/60 py-4">Aucun montant en attente de remise.</p>
             ) : (
-              <table className="w-full text-left border-collapse text-sm">
+              <div className="overflow-x-auto -mx-6 px-6">
+            <table className="w-full min-w-[560px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
                     <th className="p-3">Livreur</th>
@@ -278,6 +281,7 @@ export default function PaiementsPage() {
                   })}
                 </tbody>
               </table>
+            </div>
             )}
           </div>
         )}

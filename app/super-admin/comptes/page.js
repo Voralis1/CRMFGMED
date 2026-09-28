@@ -212,8 +212,8 @@ export default function SuperAdminComptes() {
   }
   
   return (
-    <div className="space-y-6 pt-16 px-6 pb-10 max-w-[1400px] mx-auto">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-[#C9C1B1]/40">
+    <div className="space-y-6 pt-4 sm:pt-16 px-4 sm:px-6 pb-10 max-w-[1400px] mx-auto">
+      <div className="flex flex-wrap gap-3 justify-between items-center bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-[#C9C1B1]/40">
         <div>
           <h2 className="text-2xl font-bold text-[#1B2632]">Comptes & Accès</h2>
         </div>
@@ -222,10 +222,10 @@ export default function SuperAdminComptes() {
         </button>
       </div>
   
-      <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-3 sm:p-6">
         {loading ? <div className="text-center py-10">Chargement...</div> : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full min-w-[760px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-bold text-gray-400 uppercase">
                   <th className="py-3 px-4">Utilisateur / Nom & Email</th>
@@ -240,17 +240,19 @@ export default function SuperAdminComptes() {
                     <td className="py-4 px-4">
                       <div className="font-bold text-[#1B2632]">{c.nom || 'Sans nom'}</div>
                       <div className="font-medium text-xs text-gray-600 mt-0.5">{c.email || 'Email non renseigné'}</div>
-                      <div className="font-mono text-[11px] text-gray-400 mt-0.5">{c.user_id}</div>
+                      <div className="hidden sm:block font-mono text-[11px] text-gray-400 mt-0.5 break-all">{c.user_id}</div>
                     </td>
                     <td className="py-4 px-4"><span className="px-3 py-1 bg-[#1B2632]/5 text-[#1B2632] font-semibold rounded-lg text-xs uppercase">{getRoleName(c.role_id)}</span></td>
                     <td className="py-4 px-4 font-medium text-[#1B2632]">{getTenantName(c.tenant_id)}</td>
-                    <td className="py-4 px-4 text-right space-x-2">
+                    <td className="py-4 px-4">
+                      <div className="flex justify-end gap-2 whitespace-nowrap">
                       <button onClick={() => handleOpenEdit(c)} className="bg-[#1B2632]/10 hover:bg-[#1B2632] hover:text-white text-[#1B2632] px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors">
                         Modifier
                       </button>
                       <button onClick={() => handleDeleteUser(c.user_id)} className="bg-[#A35139]/10 hover:bg-[#A35139] hover:text-white text-[#A35139] px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors">
                         Supprimer
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

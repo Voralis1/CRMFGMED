@@ -148,7 +148,7 @@ export default function PerformancesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
 
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
         <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">

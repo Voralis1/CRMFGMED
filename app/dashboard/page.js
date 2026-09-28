@@ -577,7 +577,7 @@ export default function DashboardFGMED() {
             </div>
           </div>
           <div className="fg-donut-wrap">
-            <div style={{ width: 180, height: 180 }}>
+            <div className="w-[180px] max-w-full h-[180px] shrink-0">
               <ResponsiveContainer>
                 <PieChart>
                   <Pie data={data.statutsLivraison} dataKey="valeur" nameKey="nom" innerRadius={50} outerRadius={80} paddingAngle={2} stroke="none">
@@ -784,7 +784,7 @@ function StyleFGMED() {
       .fg-root{
         --abyssal:#1B2632; --blue:#2C3B4D; --palladian:#EEE9DF;
         --oatmeal:#C9C1B1; --flame:#FFB162; --truffle:#A35139;
-        background:var(--palladian); min-height:100%; padding:28px;
+        background:var(--palladian); min-height:100%; padding:16px;
         font-family:'Inter',system-ui,sans-serif; color:var(--abyssal);
       }
       .fg-root *{box-sizing:border-box;}
@@ -806,7 +806,8 @@ function StyleFGMED() {
       .fg-grid-2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px;}
       .fg-grid-3{display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;}
 
-      .fg-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;}
+      .fg-card-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;}
+      .fg-card-head>*{min-width:0;max-width:100%;}
       .fg-card-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;margin:0;}
       .fg-card-sub{font-size:12.5px;color:#9a9384;margin:3px 0 0;}
 
@@ -866,7 +867,7 @@ function StyleFGMED() {
       .fg-top-fill{height:100%;background:var(--blue);border-radius:6px;}
       .fg-qte{font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:14px;text-align:right;}
 
-      .fg-pill{display:inline-flex;align-items:center;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500;font-family:'Inter';white-space:nowrap;}
+      .fg-pill{display:inline-flex;align-items:center;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500;font-family:'Inter';white-space:normal;max-width:100%;}
 
       .fg-agents-card{margin-bottom:16px;}
       .fg-table-wrap{overflow-x:auto;margin:0 -4px;padding:0 4px;}
@@ -912,9 +913,23 @@ function StyleFGMED() {
       }
       @media (max-width:800px){
         .fg-grid-3{grid-template-columns:1fr;}
-        .fg-root{padding:16px;}
+        .fg-root{padding:14px;}
         .fg-periode{flex-wrap:wrap;}
         .fg-taux-col{width:120px;min-width:110px;}
+      }
+      @media (max-width:600px){
+        .fg-root{padding:12px;}
+        .fg-title{font-size:24px;}
+        .fg-card{padding:16px;}
+        .fg-stat-body{padding:16px;}
+        .fg-stat-value{font-size:23px;}
+        .fg-card-head{flex-wrap:wrap;}
+        .fg-pill{white-space:normal;}
+        .fg-periode{width:100%;}
+        .fg-date-wrap{border-left:none;padding-left:0;margin-left:0;flex-wrap:wrap;}
+        .fg-legend{gap:10px;font-size:11px;flex-wrap:wrap;}
+        .fg-overview li{grid-template-columns:86px 1fr 32px;gap:8px;}
+        .fg-top li{grid-template-columns:24px 1fr 44px 28px;gap:8px;}
       }
     `}</style>
   );

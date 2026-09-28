@@ -260,7 +260,7 @@ export default function UtilisateursPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-16 px-6 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
       
       {/* En-tête */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
@@ -274,7 +274,7 @@ export default function UtilisateursPage() {
         </div>
 
         {/* Système d'onglets */}
-        <div className="flex gap-3 mt-2">
+        <div className="flex flex-wrap gap-2 sm:gap-3 mt-2">
           <button
             onClick={() => setOngletActif('agents')}
             className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
@@ -311,7 +311,7 @@ export default function UtilisateursPage() {
 
       {/* --- ONGLET AGENTS --- */}
       {ongletActif === 'agents' && (
-        <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-6">
+        <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-3 sm:p-6">
           <h2 className="text-xl font-bold text-[#1B2632] mb-4 pb-3 border-b border-[#C9C1B1]/40">
             Liste des Agents du Centre d'Appel
           </h2>
@@ -319,7 +319,7 @@ export default function UtilisateursPage() {
             <p className="text-sm text-[#1B2632]/60 py-8 text-center">Aucun agent enregistré.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
+              <table className="w-full min-w-[640px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
                     <th className="px-4 py-3">Nom</th>
@@ -366,7 +366,7 @@ export default function UtilisateursPage() {
 
       {/* --- ONGLET LIVREURS --- */}
       {ongletActif === 'livreurs' && (
-        <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-6">
+        <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-3 sm:p-6">
           <h2 className="text-xl font-bold text-[#1B2632] mb-4 pb-3 border-b border-[#C9C1B1]/40">
             Liste des Livreurs & Zones d'Activité
           </h2>
@@ -374,7 +374,7 @@ export default function UtilisateursPage() {
             <p className="text-sm text-[#1B2632]/60 py-8 text-center">Aucun livreur enregistré.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
+              <table className="w-full min-w-[640px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
                     <th className="px-4 py-3">Nom</th>

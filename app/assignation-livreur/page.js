@@ -178,7 +178,7 @@ export default function AssignationLivreurPage() {
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
 
-      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 pt-16">
+      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 pt-4 sm:pt-16">
         <div className="flex justify-between items-end flex-wrap gap-4 px-6 md:px-0">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">

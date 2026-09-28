@@ -114,7 +114,7 @@ export default function LivraisonsPage() {
           zones(nom_zone, frais_livraison, frais_retour)
         )
       `)
-       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
+      .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
 
     if (monLivreurId) {
       requete = requete.eq('livreur_id', monLivreurId)
@@ -201,7 +201,7 @@ export default function LivraisonsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-16 px-6 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
 
       <style>{`
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
@@ -447,13 +447,13 @@ export default function LivraisonsPage() {
 
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
               {hasPermission('gerer_livraison') ? (
-                <button
-                  onClick={envoyerConfirmation}
-                  disabled={envoiEnCours}
-                  className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
-                >
-                  {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
-                </button>
+              <button
+                onClick={envoyerConfirmation}
+                disabled={envoiEnCours}
+                className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md cursor-pointer"
+              >
+                {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
+              </button>
               ) : (
                 <p className="text-center text-xs text-[#1B2632]/50 py-3">Lecture seule : vous n'avez pas le droit de modifier une livraison.</p>
               )}

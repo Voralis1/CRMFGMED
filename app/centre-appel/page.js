@@ -113,9 +113,11 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
   return { iso, nom, paysTrouve }
 }
 
+const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
+
 export default function CentreAppelAgent() {
   const { user, tenantId, loading: authLoading } = useAuth() 
-  const { hasPermission, loading: permsLoading } = usePermissions() 
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions() 
   const router = useRouter()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
@@ -253,29 +255,16 @@ export default function CentreAppelAgent() {
   useEffect(() => {
     if (authLoading || permsLoading || !user || !tenantKey) return
 
-
     async function verifierAgentEtCharger() {
-      // 1. Récupérer le rôle de l'utilisateur d'abord
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user.id)
-        .eq('tenant_id', tenantKey)
-        .maybeSingle()
-
-      const role = roleData?.role
-
-      // 2. Rôles qui voient TOUTES les commandes du tenant (pas besoin de fiche agent)
-      const rolesVueGlobale = ['admin', 'ceo', 'manager', 'super_admin']
-
-      if (rolesVueGlobale.includes(role)) {
-        setAgentActuel(null)        
+      // Admin / manager / CEO / super_admin: global view, no agent profile needed.
+      // (tenant isolation is still enforced by the query filter + RLS)
+      if (ROLES_VUE_GLOBALE.includes((roleNom || '').toLowerCase())) {
+        setAgentActuel(null)
         setAgentIntrouvable(false)
-        await chargerCommandes(page, ongletActif, null)  
+        await chargerCommandes(page, ongletActif, null)
         return
       }
 
-      // 3. Sinon (agent), comportement inchangé : besoin d'une fiche agent
       const { data: agentData } = await supabase
         .from('agents')
         .select('id, nom')
@@ -288,19 +277,21 @@ export default function CentreAppelAgent() {
         setAgentIntrouvable(false)
         await chargerCommandes(page, ongletActif, agentData.id)
       } else {
+        // L'utilisateur n'est pas reconnu comme agent dans ce tenant
         setAgentIntrouvable(true)
         setLoading(false)
       }
     }
+
     verifierAgentEtCharger()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey])
+  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom])
 
   // 🚀 CHARGEMENT STRICTEMENT CLOISONNÉ
+  // agentId = null  -> global view (admin / manager / ceo / super_admin)
   async function chargerCommandes(pageActuelle, onglet, agentId) {
-    // agentId === null      -> vue globale voulue (admin/ceo/manager/super_admin)
-    // agentId === undefined -> rôle pas encore déterminé, on attend
     if (!tenantKey || agentId === undefined) return
+    const estSuperAdmin = (roleNom || '').toLowerCase() === 'super_admin'
     setLoading(true)
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
@@ -311,11 +302,16 @@ export default function CentreAppelAgent() {
     const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantKey)
     setListeZones(zonesListDB || [])
 
-    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenantKey)
-    let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)`).eq('tenant_id', tenantKey)
+    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
+    let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)`)
 
-    // 🔒 RESTRICTION : uniquement si agentId est fourni (agent normal).
-    // Pour admin/ceo/manager/super_admin (agentId === null), pas de filtre -> vue globale du tenant.
+    // super_admin sees every tenant; everybody else only his own tenant
+    if (!estSuperAdmin) {
+      requeteBase = requeteBase.eq('tenant_id', tenantKey)
+      requeteData = requeteData.eq('tenant_id', tenantKey)
+    }
+
+    // 🔒 An agent only sees HIS orders
     if (agentId) {
       requeteBase = requeteBase.eq('agent_id', agentId)
       requeteData = requeteData.eq('agent_id', agentId)
@@ -409,7 +405,7 @@ export default function CentreAppelAgent() {
       setTotalItems(count || 0)
       setCommandes(commandesIntelligentes)
     }
-
+    
     setLoading(false)
   }
 
@@ -551,7 +547,7 @@ export default function CentreAppelAgent() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-16 px-6 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
       <style>{`
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -565,15 +561,15 @@ export default function CentreAppelAgent() {
         <div className="flex justify-between items-center flex-wrap gap-3">
           <div>
             <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1 flex items-center gap-2">
-              Espace Personnel <span className="text-[#1B2632]/30">•</span> {agentActuel?.nom || 'Agent Connecté'}
+              Espace Personnel <span className="text-[#1B2632]/30">•</span> {agentActuel?.nom || 'Vue globale'}
             </p>
-            <h1 className="text-3xl font-bold text-[#1B2632]">Centre d'appels</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-[#1B2632]">Centre d'appels</h1>
           </div>
         </div>
 
-        <div className="flex justify-between items-center mt-2 flex-wrap gap-4">
-          <div className="flex items-center gap-4">
-            <div className="flex gap-2">
+        <div className="flex justify-between items-start mt-2 flex-wrap gap-3 sm:gap-4">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full lg:w-auto">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => { setOngletActif('a_traiter'); setPage(1); setCommandeSelectionnee(null); setFiltreStatut(''); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
@@ -592,15 +588,15 @@ export default function CentreAppelAgent() {
               </button>
             </div>
 
-            <div className="h-6 w-px bg-[#C9C1B1]/50"></div>
+            <div className="hidden sm:block h-6 w-px bg-[#C9C1B1]/50"></div>
 
             <div className="text-sm text-[#1B2632]/60 font-medium">
               {totalItems} commande{totalItems > 1 ? 's' : ''} affectée{totalItems > 1 ? 's' : ''}
             </div>
           </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-[#C9C1B1] shadow-sm w-[280px] focus-within:border-[#FFB162] transition-colors">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap w-full lg:w-auto">
+            <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-[#C9C1B1] shadow-sm w-full sm:w-[280px] focus-within:border-[#FFB162] transition-colors">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/30 shrink-0">
                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
               </svg>
@@ -636,7 +632,7 @@ export default function CentreAppelAgent() {
               {panneauFiltresOuvert && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setPanneauFiltresOuvert(false)} />
-                  <div className="absolute right-0 top-full mt-2 w-[300px] bg-white rounded-2xl border border-[#C9C1B1] shadow-xl z-30 p-5 pop-in">
+                  <div className="absolute right-0 top-full mt-2 w-[min(300px,calc(100vw-2rem))] bg-white rounded-2xl border border-[#C9C1B1] shadow-xl z-30 p-5 pop-in">
                     <div className="flex items-center justify-between mb-4">
                       <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">Filtres</span>
                       {nombreFiltresActifs > 0 && (
@@ -671,15 +667,15 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
-            <div className="flex items-center gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm">
-              <div className="flex items-center gap-2 px-3 py-1.5">
-                <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest">Du</span>
-                <input type="date" value={dateDebut} onChange={(e) => { setDateDebut(e.target.value); setPage(1); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer" />
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm w-full sm:w-auto">
+              <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
+                <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest shrink-0">Du</span>
+                <input type="date" value={dateDebut} onChange={(e) => { setDateDebut(e.target.value); setPage(1); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
               </div>
-              <div className="w-[1px] h-6 bg-[#C9C1B1]/40"></div>
-              <div className="flex items-center gap-2 px-3 py-1.5">
-                <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest">Au</span>
-                <input type="date" value={dateFin} onChange={(e) => { setDateFin(e.target.value); setPage(1); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer" />
+              <div className="hidden sm:block w-[1px] h-6 bg-[#C9C1B1]/40"></div>
+              <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
+                <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest shrink-0">Au</span>
+                <input type="date" value={dateFin} onChange={(e) => { setDateFin(e.target.value); setPage(1); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
               </div>
             </div>
 
@@ -722,7 +718,7 @@ export default function CentreAppelAgent() {
               {loading ? (
                 <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Aucun lead ne vous est assigné.</td></tr>
+                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.' : 'Aucune commande pour ce filtre.'}</td></tr>
               ) : (
                 commandes.map((cmd) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
@@ -840,7 +836,7 @@ export default function CentreAppelAgent() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Zone officielle</label>
                     <select
@@ -877,8 +873,8 @@ export default function CentreAppelAgent() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2">
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Produit</label>
                     <input
                       type="text"
@@ -956,13 +952,13 @@ export default function CentreAppelAgent() {
 
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
               {hasPermission('traiter_appel') ? (
-                <button
-                  onClick={validerAppel}
-                  disabled={envoiEnCours}
-                  className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
-                >
-                  {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
-                </button>
+              <button
+                onClick={validerAppel}
+                disabled={envoiEnCours}
+                className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
+              >
+                {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
+              </button>
               ) : (
                 <p className="text-center text-xs text-[#1B2632]/50 py-3">Lecture seule : vous n'avez pas le droit de traiter un appel.</p>
               )}

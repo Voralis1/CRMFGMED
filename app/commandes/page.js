@@ -70,10 +70,15 @@ function IconPlus(props) {
 
 export default function GestionCommandesPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
-  const { hasPermission, loading: permsLoading } = usePermissions()
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
+
+  // Only these roles may pick the agent by hand. A seller never sees the agent:
+  // his lead is routed automatically by the database.
+  const ROLES_AFFECTATION = ['admin', 'manager', 'ceo', 'super_admin']
+  const peutChoisirAgent = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
 
   const [commandes, setCommandes] = useState([])
   const [agents, setAgents] = useState([])
@@ -173,14 +178,14 @@ export default function GestionCommandesPage() {
       lead_id: leadIdGeneré,
       client_nom: newCmd.client_nom,
       client_telephone: newCmd.client_telephone,
-      pays_id: newCmd.pays_id,
+      pays_id: newCmd.pays_id || null,
       ville_zone: newCmd.ville_zone,
       produit: newCmd.produit,
       quantite: parseInt(newCmd.quantite) || 1,
       prix: parseFloat(newCmd.prix) || 0,
       notes: newCmd.notes,
       commentaire_1: newCmd.commentaire_1,
-      source: 'manuel', 
+      source: 'csv', 
       agent_id: newCmd.agent_id || null,
       tenant_id: tenantKey
     }])
@@ -342,7 +347,7 @@ export default function GestionCommandesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1600px] mx-auto pt-16 px-6 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1600px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
       
       {/* En-tête */}
       <header className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 border-b border-[#C9C1B1]/50 pb-4">
@@ -355,12 +360,12 @@ export default function GestionCommandesPage() {
           </h1>
         </div>
         
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
           {hasPermission('exporter_csv') && (
             <button
               onClick={exporterCSV}
               title="Exporter toutes les colonnes en CSV"
-              className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
+              className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
             >
               <IconExporter />
               Exporter CSV
@@ -369,7 +374,7 @@ export default function GestionCommandesPage() {
 
           <label
             title="Importer des commandes depuis un fichier CSV ou Excel"
-            className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
+            className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
           >
             <IconImporter />
             Importer CSV
@@ -378,7 +383,7 @@ export default function GestionCommandesPage() {
           
           <button 
             onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-[#1B2632] text-white rounded-full text-sm font-bold hover:bg-[#2C3B4D] transition-colors shadow-sm cursor-pointer"
+            className="flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2.5 bg-[#1B2632] text-white rounded-full text-sm font-bold hover:bg-[#2C3B4D] transition-colors shadow-sm cursor-pointer"
           >
             <IconPlus />
             Nouvelle commande
@@ -529,8 +534,8 @@ export default function GestionCommandesPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Pays</label>
-                      <select required value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
-                        <option value="">-- Choisir un pays --</option>
+                      <select value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
+                        <option value="">-- Non spécifié --</option>
                         {listePays.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
                       </select>
                     </div>
@@ -547,7 +552,7 @@ export default function GestionCommandesPage() {
                     <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Produit <span className="text-[#A35139]">*</span></label>
                     <input type="text" required value={newCmd.produit} onChange={(e) => setNewCmd({...newCmd, produit: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Nom du produit..." />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Quantité</label>
                       <input type="number" min="1" value={newCmd.quantite} onChange={(e) => setNewCmd({...newCmd, quantite: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" />
@@ -558,13 +563,16 @@ export default function GestionCommandesPage() {
                     </div>
                   </div>
 
-                  <div className="border-t border-[#C9C1B1] pt-4 mt-4">
-                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Assigner un agent immédiatement (Optionnel)</label>
-                    <select value={newCmd.agent_id} onChange={(e) => setNewCmd({...newCmd, agent_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-[#FFB162]/10 text-[#8a5a1f] font-bold">
-                      <option value="">-- Automatique (Trigger) ou Aucun --</option>
-                      {agents.map(ag => <option key={ag.id} value={ag.id}>{ag.nom}</option>)}
-                    </select>
-                  </div>
+                  {peutChoisirAgent && (
+                    <div className="border-t border-[#C9C1B1] pt-4 mt-4">
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Assigner un agent immédiatement (Optionnel)</label>
+                      <select value={newCmd.agent_id} onChange={(e) => setNewCmd({...newCmd, agent_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-[#FFB162]/10 text-[#8a5a1f] font-bold">
+                        <option value="">-- Automatique --</option>
+                        {agents.map(ag => <option key={ag.id} value={ag.id}>{ag.nom}</option>)}
+                      </select>
+                      <p className="text-[11px] text-[#1B2632]/60 mt-1.5">Laisser vide : le lead est attribué automatiquement.</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-white p-5 rounded-xl border border-[#C9C1B1] shadow-sm space-y-4">

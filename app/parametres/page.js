@@ -283,7 +283,7 @@ export default function ParametresAdmin() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-16 px-6">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
       <StyleParametres />
 
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
@@ -346,8 +346,8 @@ export default function ParametresAdmin() {
                 </div>
               </form>
 
-              <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
-                <table className="fg-table w-full">
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
                       <th>Pays</th>
@@ -422,8 +422,8 @@ export default function ParametresAdmin() {
                 </div>
               </form>
 
-              <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
-                <table className="fg-table w-full">
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
                       <th>Zone</th>
@@ -517,8 +517,8 @@ export default function ParametresAdmin() {
                 </div>
               </form>
 
-              <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
-                <table className="fg-table w-full">
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
                       <th>Statut</th>
@@ -672,8 +672,8 @@ export default function ParametresAdmin() {
                 </div>
               </form>
 
-              <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
-                <table className="fg-table w-full">
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr><th>Nom de l'entrepôt</th><th>Localisation</th><th className="text-center">Statut</th></tr>
                   </thead>
@@ -742,8 +742,8 @@ export default function ParametresAdmin() {
                 </div>
               </form>
 
-              <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
-                <table className="fg-table w-full">
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
                       <th>Produit</th>

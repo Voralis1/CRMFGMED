@@ -224,7 +224,7 @@ export default function TenantsPage() {
   }
 
   return (
-    <div className="p-6 max-w-[1400px] mx-auto space-y-6 relative pt-16 px-6 pb-10">
+    <div className="max-w-[1400px] mx-auto space-y-6 relative pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
 
       {errorMsg && (
         <div className="bg-[#A35139]/10 border border-[#A35139]/30 text-[#A35139] px-4 py-3 rounded-xl">
@@ -233,7 +233,7 @@ export default function TenantsPage() {
       )}
 
       {/* En-tête */}
-      <div className="bg-white p-6 shadow-sm rounded-xl border border-[#C9C1B1]/50 flex justify-between items-center">
+      <div className="bg-white p-4 sm:p-6 shadow-sm rounded-xl border border-[#C9C1B1]/50 flex flex-wrap gap-3 justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-[#1B2632]">Gestion des Entreprises</h1>
           <p className="text-sm text-[#7a7365] mt-1">Gérez les tenants et leurs administrateurs principaux.</p>
@@ -249,7 +249,7 @@ export default function TenantsPage() {
       {/* Tableau des Tenants */}
       <div className="bg-white shadow-sm rounded-xl border border-[#C9C1B1]/50 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-[#3a3529]">
+          <table className="w-full min-w-[640px] text-left text-sm text-[#3a3529]">
             <thead className="bg-[#EEE9DF]/60 text-[#7a7365] text-xs uppercase font-semibold border-b border-[#C9C1B1]/50">
               <tr>
                 <th className="px-6 py-4">Nom de l'entreprise</th>
