@@ -74,6 +74,7 @@ export async function getCaller(req: Request, sb: SupabaseClient): Promise<Calle
   }
 
   // Permissions come from role_permissions (managed in /super-admin/roles).
+  // If role_id is missing (user created by hand in SQL), fall back to the system role with that name.
   let roleId: string | null = ur.role_id ?? null
   if (!roleId && roleNom) {
     const { data: r } = await sb.from('roles').select('id').eq('nom', roleNom).eq('is_system', true).maybeSingle()

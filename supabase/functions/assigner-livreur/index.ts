@@ -33,12 +33,38 @@ Deno.serve(handle(async (req) => {
     throw new HttpError(400, 'Ce livreur n\'opère pas dans le pays de cette commande')
   }
 
+  // The database assigns a livreur automatically as soon as the order is
+  // confirmed, so a livraison usually already exists. A manager may still change
+  // it by hand — but only while the delivery has not been carried out yet:
+  // once it is `livre` / `retour` / `injoignable`, money and history depend on it.
   const { data: livraisonExistante } = await sb
     .from('livraisons')
-    .select('id')
+    .select('id, statut, livreur_id')
     .eq('commande_id', commande_id)
     .maybeSingle()
-  if (livraisonExistante) throw new HttpError(400, 'Cette commande est déjà assignée à un livreur.')
+
+  if (livraisonExistante) {
+    if (livraisonExistante.statut !== 'en_attente') {
+      throw new HttpError(
+        400,
+        'Cette livraison a déjà été traitée par le livreur : le livreur ne peut plus être changé.',
+      )
+    }
+    if (livraisonExistante.livreur_id === livreur_id) {
+      return json({ status: 'ok', livraison: livraisonExistante, inchange: true })
+    }
+
+    const { data: maj, error: erreurMaj } = await sb
+      .from('livraisons')
+      .update({ livreur_id })
+      .eq('id', livraisonExistante.id)
+      .eq('statut', 'en_attente') // garde-fou : rien ne change si le livreur vient d'agir
+      .select()
+      .single()
+    if (erreurMaj) throw new HttpError(400, erreurMaj.message)
+
+    return json({ status: 'ok', livraison: maj, remplace: true })
+  }
 
   const { data: livraison, error } = await sb
     .from('livraisons')

@@ -502,6 +502,14 @@ export default function CentreAppelAgent() {
     setPage(1)
   }
 
+  // Un statut appartient soit à tous les pays (pays_id vide), soit à un seul.
+  // L'agent ne doit voir que ceux qui valent pour le pays de SA commande : sinon
+  // il enregistre un statut d'un autre pays, et la base refuse d'y accrocher
+  // l'assignation automatique du livreur (le statut ne correspond pas au pays).
+  const statutsDeLaCommande = listeStatutsDB.filter(
+    (s) => !s.pays_id || !commandeSelectionnee?.pays_id || s.pays_id === commandeSelectionnee.pays_id
+  )
+
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
   const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
   const filtresActifs = dateDebut || dateFin || recherche || nombreFiltresActifs > 0
@@ -923,7 +931,7 @@ export default function CentreAppelAgent() {
                   className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2.5 text-sm font-bold text-[#1B2632] bg-white shadow-sm"
                 >
                   <option value="" disabled>-- Choisir --</option>
-                  {listeStatutsDB.map((s) => (
+                  {statutsDeLaCommande.map((s) => (
                     <option key={s.id} value={s.nom}>{s.nom}</option>
                   ))}
                 </select>
