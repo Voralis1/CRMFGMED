@@ -221,28 +221,28 @@ export default function CentreAppelAgent() {
     async function chargerOptionsFiltres() {
       if (!user || !tenantKey) return
 
+      // Les valeurs distinctes viennent de la base (vue v_options_filtres) :
+      // quelques dizaines de lignes au lieu de 6000 rapatriées pour être triées ici.
       const [
-        { data: produits }, 
-        { data: villes }, 
-        { data: sources }, 
+        { data: options },
         { data: pays },
-        { data: statuts } 
+        { data: statuts }
       ] = await Promise.all([
-        supabase.from('commandes').select('produit').eq('tenant_id', tenantKey).not('produit', 'is', null).limit(2000),
-        supabase.from('commandes').select('ville_zone').eq('tenant_id', tenantKey).not('ville_zone', 'is', null).limit(2000),
-        supabase.from('commandes').select('source').eq('tenant_id', tenantKey).not('source', 'is', null).limit(2000),
+        supabase.from('v_options_filtres').select('champ, valeur').eq('tenant_id', tenantKey),
         supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom'),
         supabase.from('statuts').select('*').eq('tenant_id', tenantKey).order('nom')
       ])
 
-      const uniques = (rows, key) =>
-        [...new Set((rows || []).map(r => (r[key] || '').trim()).filter(Boolean))]
+      const valeursDe = (champ) =>
+        (options || [])
+          .filter(o => o.champ === champ)
+          .map(o => o.valeur)
           .sort((a, b) => a.localeCompare(b, 'fr'))
 
       setOptionsFiltres({
-        produits: uniques(produits, 'produit'),
-        villes: uniques(villes, 'ville_zone'),
-        sources: uniques(sources, 'source'),
+        produits: valeursDe('produit'),
+        villes: valeursDe('ville'),
+        sources: valeursDe('source'),
         pays: (pays || []).map(p => ({ id: p.id, nom: p.nom }))
       })
 
@@ -618,8 +618,13 @@ export default function CentreAppelAgent() {
 
               {panneauFiltresOuvert && (
                 <>
-                  <div className="fixed inset-0 z-20" onClick={() => setPanneauFiltresOuvert(false)} />
-                  <div className="absolute right-0 top-full mt-2 w-[min(300px,calc(100vw-2rem))] bg-white rounded-2xl border border-[#C9C1B1] shadow-xl z-30 p-5 pop-in">
+                  {/* Téléphone : feuille ancrée en bas, avec son propre défilement,
+                      donc rien ne peut la rogner. Ordinateur : petit panneau sous le bouton. */}
+                  <div
+                    className="fixed inset-0 z-40 bg-black/30 sm:bg-transparent"
+                    onClick={() => setPanneauFiltresOuvert(false)}
+                  />
+                  <div className="fixed inset-x-3 bottom-3 max-h-[85dvh] overflow-y-auto z-50 sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[300px] sm:max-h-none sm:overflow-visible bg-white rounded-2xl border border-[#C9C1B1] shadow-xl p-5 pop-in">
                     <div className="flex items-center justify-between mb-4">
                       <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">Filtres</span>
                       {nombreFiltresActifs > 0 && (
@@ -646,7 +651,7 @@ export default function CentreAppelAgent() {
                       <SelectFiltre label="Source" value={filtreSource} onChange={appliquer(setFiltreSource)} options={optionsFiltres.sources.map(s => ({ value: s, label: s }))} placeholder="Toutes les sources" />
                     </div>
 
-                    <button onClick={() => setPanneauFiltresOuvert(false)} className="w-full mt-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors">
+                    <button onClick={() => setPanneauFiltresOuvert(false)} className="w-full mt-5 py-3 sm:py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors">
                       Appliquer
                     </button>
                   </div>
