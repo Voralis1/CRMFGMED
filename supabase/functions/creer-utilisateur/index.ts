@@ -63,6 +63,15 @@ Deno.serve(handle(async (req) => {
       .from('pays').select('id').eq('id', pays_id).eq('tenant_id', tenantCible).maybeSingle()
     if (!pays) throw new HttpError(400, 'Ce pays n\'appartient pas à cette entreprise')
   }
+  // A livreur is auto-assigned by zone: without a zone he would never get an order.
+  if (estLivreur) {
+    if (!zone || !String(zone).trim()) throw new HttpError(400, 'La zone est obligatoire pour un livreur')
+    const { data: zoneOk } = await sb
+      .from('zones').select('id')
+      .eq('tenant_id', tenantCible).eq('pays_id', pays_id).eq('nom_zone', String(zone).trim())
+      .limit(1).maybeSingle()
+    if (!zoneOk) throw new HttpError(400, 'Cette zone n\'existe pas dans ce pays')
+  }
 
   const nomAffichage = nom || email.split('@')[0]
 
@@ -97,7 +106,7 @@ Deno.serve(handle(async (req) => {
   } else if (roleNom.includes('livreur')) {
     const { error } = await sb.from('livreurs').insert({
       user_id: nouvelUserId, nom: nomAffichage, telephone: telephone || null,
-      zone: zone || null, pays_id: pays_id, tenant_id: tenantCible, actif: true,
+      zone: String(zone).trim(), pays_id: pays_id, tenant_id: tenantCible, actif: true,
     })
     if (error) avertissement = 'Compte créé, mais fiche livreur non créée : ' + error.message
   }

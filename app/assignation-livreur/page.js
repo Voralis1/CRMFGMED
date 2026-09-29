@@ -27,8 +27,10 @@ export default function AssignationLivreurPage() {
   // dont le statut est marqué "declenche_assignation" dans Paramètres → Statuts.
   // C'est cette case à cocher, au moment de créer/modifier un statut, qui décide
   // seule si les commandes apparaissent ici — pas un choix fait sur cette page.
-  const [codesEligibles, setCodesEligibles] = useState([])
-  const [statutsCharges, setStatutsCharges] = useState(false)
+  // Onglet "a_assigner" : commandes confirmées sans aucun livreur (le plus souvent
+  // parce qu'aucun livreur du pays / de la zone n'était disponible).
+  // Onglet "assignees"  : livraisons en attente, pour changer le livreur au besoin.
+  const [ongletActif, setOngletActif] = useState('a_assigner')
 
   useEffect(() => {
     if (!authLoading && !permsLoading) {
@@ -39,21 +41,6 @@ export default function AssignationLivreurPage() {
       }
     }
   }, [user, authLoading, permsLoading, hasPermission, router])
-
-  // Chargement des statuts marqués éligibles (via leur CODE, stable, jamais le nom
-  // affichable) pour rester cohérent avec Centre d'appel qui écrit
-  // statut_confirmation = code du statut choisi.
-  async function chargerStatuts() {
-    if (!tenantKey) return
-    const { data } = await supabase
-      .from('statuts')
-      .select('code, declenche_assignation')
-      .eq('tenant_id', tenantKey)
-      .eq('declenche_assignation', true)
-
-    setCodesEligibles((data || []).map((s) => s.code))
-    setStatutsCharges(true)
-  }
 
   async function chargerLivreurs() {
     if (!tenantKey) return
@@ -68,64 +55,65 @@ export default function AssignationLivreurPage() {
     if (!error) setLivreurs(data || [])
   }
 
-  async function chargerCommandes(page, eligibles) {
+  async function chargerCommandes(page, onglet) {
     if (!tenantKey) return
     setChargement(true)
-
-    // Aucun statut n'est encore marqué éligible : rien à montrer
-    if (eligibles.length === 0) {
-      setCommandes([])
-      setTotalCommandes(0)
-      setChargement(false)
-      return
-    }
 
     const debut = page * TAILLE_PAGE
     const fin = debut + TAILLE_PAGE - 1
 
-    const { data: idsAvecLivraison } = await supabase
-      .from('livraisons')
-      .select('commande_id')
-      .eq('tenant_id', tenantKey)
+    if (onglet === 'a_assigner') {
+      // La vue ne renvoie que les commandes confirmées sans livraison : c'est la
+      // base qui fait le calcul, la page ne télécharge plus la table `livraisons`.
+      const { data, error, count } = await supabase
+        .from('v_commandes_a_assigner')
+        .select('*, pays(nom)', { count: 'exact' })
+        .eq('tenant_id', tenantKey)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(debut, fin)
 
-    const idsExclus = (idsAvecLivraison || []).map((l) => l.commande_id)
-
-    let requete = supabase
-      .from('commandes')
-      .select('*, prix, zone_id, pays(nom)', { count: 'exact' })
-      .eq('tenant_id', tenantKey)
-      .in('statut_confirmation', eligibles)
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: false })
-      .range(debut, fin)
-
-    if (idsExclus.length > 0) {
-      requete = requete.not('id', 'in', `(${idsExclus.join(',')})`)
-    }
-
-    const { data, error, count } = await requete
-
-    if (error) {
-      alert('Erreur: ' + error.message)
+      if (error) alert('Erreur: ' + error.message)
+      else {
+        setCommandes((data || []).map((c) => ({ ...c, livreur_actuel: null })))
+        setTotalCommandes(count || 0)
+      }
     } else {
-      setCommandes(data || [])
-      setTotalCommandes(count || 0)
+      // Livraisons encore en attente : on peut encore changer le livreur
+      const { data, error, count } = await supabase
+        .from('livraisons')
+        .select('id, livreur_id, livreurs(nom), commandes(*, pays(nom))', { count: 'exact' })
+        .eq('tenant_id', tenantKey)
+        .eq('statut', 'en_attente')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(debut, fin)
+
+      if (error) alert('Erreur: ' + error.message)
+      else {
+        setCommandes(
+          (data || [])
+            .filter((v) => v.commandes)
+            .map((v) => ({ ...v.commandes, livreur_actuel: v.livreurs?.nom || null, livreur_id: v.livreur_id }))
+        )
+        setTotalCommandes(count || 0)
+      }
     }
+
     setChargement(false)
   }
 
   useEffect(() => {
     if (authLoading || permsLoading || !user || !tenantKey) return
     chargerLivreurs()
-    chargerStatuts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading, permsLoading, tenantKey])
 
   useEffect(() => {
-    if (!tenantKey || !statutsCharges) return
-    chargerCommandes(pageActuelle, codesEligibles)
+    if (!tenantKey) return
+    chargerCommandes(pageActuelle, ongletActif)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageActuelle, tenantKey, codesEligibles, statutsCharges])
+  }, [pageActuelle, ongletActif, tenantKey])
 
   function choisirLivreur(commandeId, livreurId) {
     setLivreurChoisiParCommande((prec) => ({ ...prec, [commandeId]: livreurId }))
@@ -166,7 +154,7 @@ export default function AssignationLivreurPage() {
       return
     }
 
-    await chargerCommandes(pageActuelle, codesEligibles)
+    await chargerCommandes(pageActuelle, ongletActif)
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
@@ -190,19 +178,45 @@ export default function AssignationLivreurPage() {
           </div>
         </div>
 
-        {statutsCharges && codesEligibles.length === 0 && (
-          <div className="mx-6 md:mx-0 p-4 bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-xl text-sm font-medium text-[#8a5a1f]">
-            Aucun statut n'est encore marqué "déclenche l'assignation" dans Paramètres → Statuts configurables.
-            Ouvrez un statut (ex : "Confirmée") et cochez cette option pour que les commandes apparaissent ici.
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2 px-6 md:px-0">
+          <button
+            onClick={() => { setOngletActif('a_assigner'); setPageActuelle(0) }}
+            className={`px-4 sm:px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+              ongletActif === 'a_assigner'
+                ? 'bg-[#1B2632] text-white shadow-md'
+                : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+            }`}
+          >
+            À assigner
+          </button>
+          <button
+            onClick={() => { setOngletActif('assignees'); setPageActuelle(0) }}
+            className={`px-4 sm:px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+              ongletActif === 'assignees'
+                ? 'bg-[#1B2632] text-white shadow-md'
+                : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+            }`}
+          >
+            Assignées (en attente)
+          </button>
+        </div>
+
+        <p className="px-6 md:px-0 text-sm text-[#1B2632]/60">
+          {ongletActif === 'a_assigner'
+            ? "Commandes confirmées qu'aucun livreur n'a pu prendre automatiquement : à assigner à la main."
+            : 'Livraisons pas encore effectuées. Le livreur peut encore être changé.'}
+        </p>
       </header>
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col mx-6 md:mx-0">
         {chargement ? (
           <p className="text-sm text-[#1B2632]/60 p-6">Chargement...</p>
         ) : commandes.length === 0 ? (
-          <p className="text-sm text-[#1B2632]/60 p-6">Aucune commande en attente d'assignation.</p>
+          <p className="text-sm text-[#1B2632]/60 p-6">
+            {ongletActif === 'a_assigner'
+              ? 'Aucune commande en attente : tout a trouvé un livreur automatiquement.'
+              : 'Aucune livraison en cours.'}
+          </p>
         ) : (
           <>
             <div className="overflow-x-auto min-h-[400px]">
@@ -222,14 +236,16 @@ export default function AssignationLivreurPage() {
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
                   {commandes.map((cmd) => {
-                    // A livreur can only deliver in his own country. Inside that
-                    // country, a livreur with no zone is "Volant" (all zones).
-                    const livreursFiltres = livreurs.filter((l) => {
-                      if (l.pays_id !== cmd.pays_id) return false;
-                      if (!l.zone || l.zone.trim() === '') return true;
-                      if (!cmd.ville_zone) return false;
-                      return cmd.ville_zone.toLowerCase().includes(l.zone.toLowerCase());
-                    });
+                    // Hard rule: same country. The automatic routing already tried the
+                    // livreurs of the order's zone; when it found nobody (or the manager
+                    // wants to override), any livreur of the country can be chosen —
+                    // those of the matching zone come first.
+                    const memeZone = (l) =>
+                      !!cmd.ville_zone && !!l.zone &&
+                      cmd.ville_zone.toLowerCase().includes(l.zone.trim().toLowerCase());
+                    const livreursFiltres = livreurs
+                      .filter((l) => l.pays_id === cmd.pays_id)
+                      .sort((a, b) => Number(memeZone(b)) - Number(memeZone(a)));
 
                     return (
                       <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
@@ -269,20 +285,25 @@ export default function AssignationLivreurPage() {
                         </td>
 
                         <td className="px-6 py-4">
+                          {cmd.livreur_actuel && (
+                            <div className="text-xs font-semibold text-[#1B2632] mb-1.5">
+                              Actuel : <span className="bg-[#EEE9DF] px-2 py-0.5 rounded-md">{cmd.livreur_actuel}</span>
+                            </div>
+                          )}
                           <select
                             value={livreurChoisiParCommande[cmd.id] || ''}
                             onChange={(e) => choisirLivreur(cmd.id, e.target.value)}
                             className="border border-[#C9C1B1] rounded-xl px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-w-[180px] shadow-sm cursor-pointer"
                           >
-                            <option value="">-- choisir --</option>
+                            <option value="">{cmd.livreur_actuel ? '-- changer --' : '-- choisir --'}</option>
                             {livreursFiltres.map((l) => (
                               <option key={l.id} value={l.id}>
-                                {l.nom} {!l.zone ? '(Volant)' : ''}
+                                {l.nom} — {l.zone ? l.zone.trim() : 'sans zone'}{memeZone(l) ? ' ✓' : ''}
                               </option>
                             ))}
                           </select>
                           {livreursFiltres.length === 0 && (
-                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucun livreur pour ce pays / cette zone</span>
+                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucun livreur dans ce pays</span>
                           )}
                         </td>
 
@@ -293,7 +314,7 @@ export default function AssignationLivreurPage() {
                             title={!hasPermission('assigner_livreur') ? "Vous n'avez pas le droit d'assigner un livreur" : undefined}
                             className="px-4 py-2 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-sm font-bold shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
                           >
-                            {envoiEnCoursId === cmd.id ? '...' : 'Assigner'}
+                            {envoiEnCoursId === cmd.id ? '...' : (cmd.livreur_actuel ? 'Changer' : 'Assigner')}
                           </button>
                         </td>
                       </tr>
