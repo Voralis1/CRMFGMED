@@ -351,6 +351,9 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.or(filtre)
     }
 
+    // Le pays est désormais obligatoire et verrouillé en base, donc on filtre
+    // dessus côté serveur : plus besoin de rapatrier 5000 lignes pour trier ici.
+    if (filtrePays) { requeteBase = requeteBase.eq('pays_id', filtrePays); requeteData = requeteData.eq('pays_id', filtrePays); }
     if (filtreProduit) { requeteBase = requeteBase.eq('produit', filtreProduit); requeteData = requeteData.eq('produit', filtreProduit); }
     if (filtreVille) { requeteBase = requeteBase.eq('ville_zone', filtreVille); requeteData = requeteData.eq('ville_zone', filtreVille); }
     if (filtreSource) { requeteBase = requeteBase.eq('source', filtreSource); requeteData = requeteData.eq('source', filtreSource); }
@@ -361,11 +364,7 @@ export default function CentreAppelAgent() {
       requeteData = requeteData.order('created_at', { ascending: false }).order('id', { ascending: false })
     }
 
-    if (!filtrePays) {
-      requeteData = requeteData.range(debut, fin)
-    } else {
-      requeteData = requeteData.limit(5000)
-    }
+    requeteData = requeteData.range(debut, fin)
 
     const { count } = await requeteBase
     const { data } = await requeteData
@@ -374,37 +373,25 @@ export default function CentreAppelAgent() {
       const { appels, ...cmdSansJointure } = cmd
       const detection = detecterPaysDepuisTelephone(cmdSansJointure, paysListDB)
 
+      // Le pays enregistré sur la commande fait foi : c'est lui qui décide de
+      // l'agent et c'est sur lui que porte le filtre. La déduction à partir du
+      // téléphone ne sert plus que si la commande n'a pas de pays rattaché.
       let paysFinal
-      if (detection?.paysTrouve) {
+      if (cmdSansJointure.pays?.nom) {
+        paysFinal = cmdSansJointure.pays
+      } else if (detection?.paysTrouve) {
         paysFinal = detection.paysTrouve
       } else if (detection) {
         paysFinal = { nom: detection.nom, iso: detection.iso }
       } else {
-        paysFinal = cmdSansJointure.pays?.nom ? cmdSansJointure.pays : { nom: 'Non spécifié' }
+        paysFinal = { nom: 'Non spécifié' }
       }
 
       return { ...cmdSansJointure, pays: paysFinal }
     })
 
-    if (filtrePays) {
-      const paysSelectionne = paysListDB.find(p => String(p.id) === String(filtrePays))
-      const resFiltre = commandesIntelligentes.filter(cmd => {
-        if (!paysSelectionne) return false
-        return (
-          String(cmd.pays_id) === String(filtrePays) ||
-          cmd.pays?.id === paysSelectionne.id ||
-          cmd.pays?.nom === paysSelectionne.nom ||
-          cmd.pays?.iso === paysSelectionne.code ||
-          cmd.pays?.code === paysSelectionne.code
-        )
-      })
-
-      setTotalItems(resFiltre.length)
-      setCommandes(resFiltre.slice(debut, debut + ITEMS_PER_PAGE))
-    } else {
-      setTotalItems(count || 0)
-      setCommandes(commandesIntelligentes)
-    }
+    setTotalItems(count || 0)
+    setCommandes(commandesIntelligentes)
     
     setLoading(false)
   }
