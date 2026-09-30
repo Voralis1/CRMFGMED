@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from './AuthContext' // ← ajustez le chemin
 
@@ -62,10 +62,25 @@ export function PermissionsProvider({ children }) {
     return () => { cancelled = true }
   }, [user?.id, authLoading])  // ← SE RELANCE À CHAQUE LOGIN/LOGOUT 🎉
 
-  const hasPermission = (permCode) => permissions.includes(permCode)
+  // useCallback / useMemo ne sont PAS de l'optimisation ici, ils sont nécessaires.
+  // Sans eux, `hasPermission` et l'objet du Provider sont recréés à chaque rendu.
+  // Or plusieurs pages écrivent `hasPermission` dans les dépendances d'un
+  // useEffect : celui-ci se croyait donc relancé à chaque rendu. Sur le tableau
+  // de bord, l'effet chargeait les données, ce qui provoquait un rendu, qui
+  // relançait l'effet... une boucle infinie de requêtes, jusqu'à ce que le
+  // navigateur tue l'onglet ("This page couldn't load" sur téléphone).
+  const hasPermission = useCallback(
+    (permCode) => permissions.includes(permCode),
+    [permissions],
+  )
+
+  const valeur = useMemo(
+    () => ({ permissions, roleNom, loading, hasPermission }),
+    [permissions, roleNom, loading, hasPermission],
+  )
 
   return (
-    <PermissionsContext.Provider value={{ permissions, roleNom, loading, hasPermission }}>
+    <PermissionsContext.Provider value={valeur}>
       {children}
     </PermissionsContext.Provider>
   )

@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 
 const AuthContext = createContext({})
@@ -51,9 +51,12 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  // Même raison que dans PermissionsContext : un objet recréé à chaque rendu
+  // fait re-rendre tous les consommateurs pour rien.
+  const valeur = useMemo(() => ({ user, tenantId, loading }), [user, tenantId, loading])
+
   return (
-    // On retire `role` et `permissions` du Provider
-    <AuthContext.Provider value={{ user, tenantId, loading }}>
+    <AuthContext.Provider value={valeur}>
       {children}
     </AuthContext.Provider>
   )
