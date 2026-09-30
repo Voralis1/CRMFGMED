@@ -78,11 +78,16 @@ export default function GestionCommandesPage() {
   // Only these roles may pick the agent by hand. A seller never sees the agent:
   // his lead is routed automatically by the database.
   const ROLES_AFFECTATION = ['admin', 'manager', 'ceo', 'super_admin']
+  // Un seller ne voit que SES leads : ni ceux des autres sellers, ni ceux des
+  // imports faits par le manager. La base applique la même règle (RLS), l'écran
+  // ne fait que demander ce qu'il a le droit de lire.
+  const estSeller = String(roleNom || '').toLowerCase() === 'seller'
   const peutChoisirAgent = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
 
   const [commandes, setCommandes] = useState([])
   const [agents, setAgents] = useState([])
   const [listePays, setListePays] = useState([])
+  const [listeSellers, setListeSellers] = useState([])
   const [listeStatutsDB, setListeStatutsDB] = useState([]) 
   const [totalCommandes, setTotalCommandes] = useState(0)
   const [pageActuelle, setPageActuelle] = useState(0)
@@ -109,14 +114,17 @@ export default function GestionCommandesPage() {
   // CHARGEMENT DES RÉFÉRENTIELS
   const chargerReferentiels = useCallback(async () => {
     if (!tenantKey) return
-    const [{ data: agentsData }, { data: paysData }, { data: statutsData }] = await Promise.all([
+    const [{ data: agentsData }, { data: paysData }, { data: statutsData }, { data: sellersData }] = await Promise.all([
       supabase.from('agents').select('id, nom').eq('tenant_id', tenantKey).eq('actif', true),
       supabase.from('pays').select('id, nom, code').eq('tenant_id', tenantKey),
-      supabase.from('statuts').select('*').eq('tenant_id', tenantKey)
+      supabase.from('statuts').select('*').eq('tenant_id', tenantKey),
+      // sert à retrouver le seller nommé dans un fichier importé
+      supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey).eq('role', 'seller')
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
     if (statutsData) setListeStatutsDB(statutsData)
+    if (sellersData) setListeSellers(sellersData)
   }, [tenantKey])
 
   // CHARGEMENT DES COMMANDES (Récupère TOUTES les colonnes de la base)
@@ -127,10 +135,14 @@ export default function GestionCommandesPage() {
     const debut = page * TAILLE_PAGE
     const fin = debut + TAILLE_PAGE - 1
 
-    const { data, count, error } = await supabase
+    let requete = supabase
       .from('commandes')
       .select('*, pays(nom), agents(nom)', { count: 'exact' })
       .eq('tenant_id', tenantKey)
+    // un seller ne demande que ses propres leads
+    if (estSeller && user?.id) requete = requete.eq('vendeur_id', user.id)
+
+    const { data, count, error } = await requete
       .order('created_at', { ascending: false })
       .range(debut, fin)
 
@@ -141,7 +153,7 @@ export default function GestionCommandesPage() {
       setTotalCommandes(count || 0)
     }
     setChargement(false)
-  }, [tenantKey])
+  }, [tenantKey, estSeller, user?.id])
 
   useEffect(() => {
     if (authLoading || permsLoading || !tenantKey) return
@@ -185,8 +197,9 @@ export default function GestionCommandesPage() {
       prix: parseFloat(newCmd.prix) || 0,
       notes: newCmd.notes,
       commentaire_1: newCmd.commentaire_1,
-      source: 'csv', 
+      source: 'manuel',
       agent_id: newCmd.agent_id || null,
+      vendeur_id: user?.id || null,
       tenant_id: tenantKey
     }])
 
@@ -252,6 +265,24 @@ export default function GestionCommandesPage() {
   }
 
   // IMPORT EXCEL / CSV
+  // Le fichier peut nommer le seller (colonne « vendeur », « seller » ou
+  // « vendeur_email ») : on retrouve son compte par email ou par nom, dans cette
+  // entreprise uniquement. Un seller qui importe lui-même ne peut poser que son
+  // propre nom. Sans colonne et importé par un manager, le lead n'appartient à
+  // aucun seller : personne d'autre que les responsables ne le verra.
+  function vendeurDeLaLigne(ligne) {
+    if (estSeller) return user?.id || null
+    const brut = String(
+      ligne['vendeur'] || ligne['seller'] || ligne['vendeur_email'] ||
+      ligne['seller_email'] || ligne['email_vendeur'] || ''
+    ).trim().toLowerCase()
+    if (!brut) return null
+    const trouve = listeSellers.find(
+      (v) => (v.email || '').toLowerCase() === brut || (v.nom || '').toLowerCase() === brut
+    )
+    return trouve ? trouve.user_id : null
+  }
+
   async function importerFichier(event) {
     const fichier = event.target.files[0]
     if (!fichier || !tenantKey) return
@@ -313,7 +344,8 @@ export default function GestionCommandesPage() {
             commentaire_1: ligneNormalisee['commentaire_1'] || '',
             lead_id: finalLeadId,
             tenant_id: tenantKey,
-            pays_id: paysIdTrouve 
+            pays_id: paysIdTrouve,
+            vendeur_id: vendeurDeLaLigne(ligneNormalisee)
           }
         }).filter(cmd => cmd.client_telephone !== '')
 

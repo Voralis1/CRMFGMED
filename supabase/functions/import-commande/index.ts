@@ -78,6 +78,29 @@ Deno.serve(handle(async (req) => {
     throw new HttpError(400, 'Le pays est requis (colonne "pays") : l\'entreprise a plusieurs pays')
   }
 
+  // Which seller owns this lead. The sheet names him by email (or by name):
+  // "vendeur", "seller", "vendeur_email"... He must be a seller OF THIS company,
+  // so a sheet cannot hand a lead to someone else's account. No column and the
+  // lead belongs to no seller: only the managers will see it.
+  let vendeur_id: string | null = null
+  const vendeurTexte = String(
+    payload.vendeur ?? payload.seller ?? payload.vendeur_email ?? payload.seller_email ?? '',
+  ).trim().toLowerCase()
+
+  if (vendeurTexte !== '') {
+    const { data: sellers } = await sb
+      .from('user_roles')
+      .select('user_id, email, nom')
+      .eq('tenant_id', tenantId)
+      .eq('role', 'seller')
+    const trouve = (sellers ?? []).find((v) =>
+      String(v.email ?? '').trim().toLowerCase() === vendeurTexte ||
+      String(v.nom ?? '').trim().toLowerCase() === vendeurTexte
+    )
+    if (!trouve) throw new HttpError(400, `Vendeur "${vendeurTexte}" introuvable dans cette entreprise`)
+    vendeur_id = trouve.user_id
+  }
+
   const { data: existant } = await sb
     .from('commandes')
     .select('id')
@@ -107,6 +130,7 @@ Deno.serve(handle(async (req) => {
       prix: Math.max(0, parseFloat(prix) || 0),
       source_sheet,
       source: payload.source || (viaWebhook ? 'google_sheet' : 'manuel'),
+      vendeur_id,
       tenant_id: tenantId,
     })
     .select('id, lead_id, agent_id')
