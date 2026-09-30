@@ -147,258 +147,45 @@ const AVATAR_COLORS = ["#1B2632", "#A35139", "#2C3B4D", "#8a5a1f", "#5c5648"];
 // ==================================================================
 //  RÉCUPÉRATION ET CALCUL DES DONNÉES
 // ==================================================================
+// La base fait tout le calcul (voir supabase/sql/stats_dashboard.sql) : la page
+// ne télécharge plus des milliers de lignes pour les compter dans le navigateur.
+// La fonction tourne avec les droits de l'appelant, donc un seller n'obtient que
+// les chiffres de SES leads — c'est la base qui tranche, pas l'écran.
 async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
-  const filtreTenantCmd = tenantId ? supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)").eq("tenant_id", tenantId) : supabase.from("commandes").select("id, statut_confirmation, date_commande, created_at, updated_at, quantite, produit, pays(devise)");
-  const filtreTenantLiv = tenantId ? supabase.from("livraisons").select("statut, commande_id").eq("tenant_id", tenantId) : supabase.from("livraisons").select("statut, commande_id");
-  const filtreTenantPai = tenantId ? supabase.from("paiements").select("montant, commandes(pays(devise))").eq("tenant_id", tenantId) : supabase.from("paiements").select("montant, commandes(pays(devise))");
-  const filtreTenantApp = tenantId ? supabase.from("appels").select("agent_id, commande_id, created_at, statut").eq("tenant_id", tenantId) : supabase.from("appels").select("agent_id, commande_id, created_at, statut");
-  const filtreTenantAge = tenantId ? supabase.from("agents").select("id, nom").eq("tenant_id", tenantId) : supabase.from("agents").select("id, nom");
-
-  const countQueryCmd = tenantId 
-    ? supabase.from("commandes").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId)
-    : supabase.from("commandes").select("*", { count: "exact", head: true });
-
-  const { count: vraiTotalCommandes } = await countQueryCmd;
+  if (!tenantId) return null;
 
   const maintenant = new Date();
-  let dateDebut = new Date(0);
-  let dateFin = new Date();
+  let debut = new Date(0);
+  let fin = new Date();
 
   if (periode === "Aujourd'hui") {
-    dateDebut = new Date();
-    dateDebut.setHours(0, 0, 0, 0);
+    debut = new Date();
+    debut.setHours(0, 0, 0, 0);
   } else if (periode === "7 jours") {
-    dateDebut = new Date();
-    dateDebut.setDate(maintenant.getDate() - 7);
+    debut = new Date();
+    debut.setDate(maintenant.getDate() - 7);
   } else if (periode === "30 jours") {
-    dateDebut = new Date();
-    dateDebut.setDate(maintenant.getDate() - 30);
+    debut = new Date();
+    debut.setDate(maintenant.getDate() - 30);
   } else if (periode === "Personnalisé") {
-    if (dateDebutPerso) dateDebut = new Date(dateDebutPerso);
+    if (dateDebutPerso) debut = new Date(dateDebutPerso);
     if (dateFinPerso) {
-      dateFin = new Date(dateFinPerso);
-      dateFin.setHours(23, 59, 59, 999);
+      fin = new Date(dateFinPerso);
+      fin.setHours(23, 59, 59, 999);
     }
   }
 
-  const todayYMD = `${maintenant.getFullYear()}-${String(maintenant.getMonth() + 1).padStart(2, "0")}-${String(maintenant.getDate()).padStart(2, "0")}`;
-
-  const todayQuery = tenantId
-    ? supabase.from("commandes").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId).gte("created_at", `${todayYMD}T00:00:00`)
-    : supabase.from("commandes").select("*", { count: "exact", head: true }).gte("created_at", `${todayYMD}T00:00:00`);
-
-  const { count: commandesAujourdhuiExact } = await todayQuery;
-
-  const [resCmds, resLivs, resPaiements, resAppels, resAgents] = await Promise.all([
-    filtreTenantCmd.order("created_at", { ascending: false }).limit(5000),
-    filtreTenantLiv.order("created_at", { ascending: false }).limit(5000),
-    filtreTenantPai.in("statut", ["en_attente", "encaisse", "remis"]).order("created_at", { ascending: false }).limit(5000),
-    filtreTenantApp.order("created_at", { ascending: false }).limit(5000),
-    filtreTenantAge.limit(1000),
-  ]);
-
-  const cmds = resCmds.data || [];
-  const livs = resLivs.data || [];
-  const paiements = resPaiements.data || [];
-  const appels = resAppels.data || [];
-  const agents = resAgents.data || [];
-
-  const totalCmds = vraiTotalCommandes || cmds.length;
-
-  const commandesAujourdhui = commandesAujourdhuiExact !== null ? commandesAujourdhuiExact : cmds.filter((c) => {
-    const dateCible = c.created_at || c.date_commande;
-    if (!dateCible) return false;
-    return String(dateCible).split("T")[0] === todayYMD;
-  }).length;
-
-  const cmdsConfirmees = cmds.filter((c) => c.statut_confirmation === "confirmed").length;
-  const tauxConfirmation = totalCmds > 0 ? ((cmdsConfirmees / totalCmds) * 100).toFixed(1) : 0;
-
-  const livrees = livs.filter((l) => l.statut === "livre" || l.statut === "livrée");
-  const tauxLivraison = livs.length > 0 ? ((livrees.length / livs.length) * 100).toFixed(1) : 0;
-
-  const caEncaisseParDevise = {};
-  paiements.forEach((p) => {
-    const devise = p.commandes?.pays?.devise || "N/A";
-    caEncaisseParDevise[devise] = (caEncaisseParDevise[devise] || 0) + (Number(p.montant) || 0);
-  });
-  const caEncaisseListe = Object.entries(caEncaisseParDevise)
-    .map(([devise, total]) => ({ devise, total }))
-    .sort((a, b) => b.total - a.total);
-
-  const hourly = Array.from({ length: 24 }, (_, h) => ({ heure: h, confirmees: 0, annulees: 0 }));
-  cmds.forEach((c) => {
-    const dateAction = c.updated_at || c.created_at || c.date_commande;
-    if (!dateAction) return;
-    const dateCmd = new Date(dateAction);
-    if (dateCmd < dateDebut) return;
-    if (periode === "Personnalisé" && dateFinPerso && dateCmd > dateFin) return;
-
-    const hour = dateCmd.getHours();
-    if (c.statut_confirmation === "confirmed") {
-      hourly[hour].confirmees++;
-    } else if (c.statut_confirmation === "cancelled") {
-      hourly[hour].annulees++;
-    }
+  const { data, error } = await supabase.rpc("stats_dashboard", {
+    p_tenant: tenantId,
+    p_debut: debut.toISOString(),
+    p_fin: fin.toISOString(),
   });
 
-  const countLivs = {};
-  livs.forEach((l) => {
-    let s = (l.statut || "en_attente").toLowerCase().trim().replace(/\s+/g, "_");
-    if (s.includes("expedi") || s === "a_expedier") s = "en_attente";
-    if (s === "livrée" || s === "livree") s = "livre";
-    countLivs[s] = (countLivs[s] || 0) + 1;
-  });
-
-  const labelsLivraison = { en_attente: "En attente", livre: "Livrée", injoignable: "Injoignable", retour: "Retour" };
-  const couleursLivraison = { en_attente: "#FFB162", livre: "#1B2632", injoignable: "#C9C1B1", retour: "#A35139" };
-  const statutsLivraison = Object.entries(countLivs).map(([cle, valeur]) => ({
-    nom: labelsLivraison[cle] || cle,
-    valeur,
-    couleur: couleursLivraison[cle] || "#C9C1B1",
-  }));
-
-  const appelCounts = {};
-  cmds.forEach((c) => {
-    const s = c.statut_confirmation || "en_attente";
-    appelCounts[s] = (appelCounts[s] || 0) + 1;
-  });
-  const labelsAppels = {
-    en_attente: "En file",
-    unreached: "Injoignable",
-    reminder: "À rappeler",
-    double: "Doublon",
-    confirmed: "Confirmée",
-    cancelled: "Annulée",
-    spam: "Spam",
-    not_active_yet: "Attente activation",
-  };
-  const overviewAppels = Object.entries(appelCounts)
-    .map(([statut, valeur]) => ({
-      label: labelsAppels[statut] || statut,
-      valeur,
-      pct: cmds.length > 0 ? Math.round((valeur / cmds.length) * 100) : 0,
-    }))
-    .sort((a, b) => b.valeur - a.valeur);
-
-  const prodCounts = {};
-  cmds.forEach((c) => {
-    if (!c.produit) return;
-    prodCounts[c.produit] = (prodCounts[c.produit] || 0) + (Number(c.quantite) || 1);
-  });
-  const topProduits = Object.entries(prodCounts)
-    .map(([nom, qte]) => ({ nom, qte }))
-    .sort((a, b) => b.qte - a.qte)
-    .slice(0, 5)
-    .map((p, i) => ({ rang: i + 1, nom: p.nom, qte: p.qte }));
-
-  const livreesCmdIds = new Set(livrees.map((l) => l.commande_id));
-  const agentDeliveredCounts = {};
-  const commandesAttribuees = new Set();
-
-  appels.forEach((appel) => {
-    if (livreesCmdIds.has(appel.commande_id)) {
-      if (!commandesAttribuees.has(appel.commande_id)) {
-        agentDeliveredCounts[appel.agent_id] = (agentDeliveredCounts[appel.agent_id] || 0) + 1;
-        commandesAttribuees.add(appel.commande_id);
-      }
-    }
-  });
-
-  const topAgents = Object.entries(agentDeliveredCounts)
-    .map(([agentId, count]) => {
-      const sansAgent = !agentId || agentId === "null" || agentId === "undefined";
-      const agentObj = sansAgent ? null : agents.find((a) => String(a.id) === String(agentId));
-      return {
-        nom: sansAgent ? "Agent non assigné" : (agentObj?.nom || `Agent #${agentId}`),
-        livrees: count,
-      };
-    })
-    .sort((a, b) => b.livrees - a.livrees)
-    .slice(0, 5);
-
-  const statutParCommande = {};
-  cmds.forEach((c) => {
-    statutParCommande[c.id] = c.statut_confirmation || "en_attente";
-  });
-
-  const statsAgents = {};
-
-  const getAgentBucket = (agentId) => {
-    const key = agentId || "sans_agent";
-    if (!statsAgents[key]) {
-      statsAgents[key] = {
-        appels: 0,
-        confirmees: 0,
-        injoignables: 0,
-        annulees: 0,
-        reprogrammees: 0,
-        _commandesVues: new Set(),
-      };
-    }
-    return statsAgents[key];
-  };
-
-  appels.forEach((appel) => {
-    const bucket = getAgentBucket(appel.agent_id);
-    bucket.appels++;
-
-    const cmdId = appel.commande_id;
-    if (!cmdId || bucket._commandesVues.has(cmdId)) return;
-    bucket._commandesVues.add(cmdId);
-
-    const st = statutParCommande[cmdId];
-    if (st === "confirmed") bucket.confirmees++;
-    else if (st === "unreached") bucket.injoignables++;
-    else if (st === "cancelled") bucket.annulees++;
-    else if (st === "reminder") bucket.reprogrammees++;
-  });
-
-  const analyticsAgents = Object.entries(statsAgents)
-    .map(([agentId, s]) => {
-      const sansAgent = agentId === "sans_agent";
-      const agentObj = sansAgent ? null : agents.find((a) => String(a.id) === String(agentId));
-      const traitees = s.confirmees + s.injoignables + s.annulees + s.reprogrammees;
-      return {
-        nom: sansAgent ? "Agent non assigné" : (agentObj?.nom || `Agent #${agentId}`),
-        appels: s.appels,
-        confirmees: s.confirmees,
-        injoignables: s.injoignables,
-        annulees: s.annulees,
-        reprogrammees: s.reprogrammees,
-        traitees,
-        taux: traitees > 0 ? Math.round((s.confirmees / traitees) * 100) : 0,
-      };
-    })
-    .sort((a, b) => b.confirmees - a.confirmees || b.appels - a.appels);
-
-  const totauxAgents = analyticsAgents.reduce(
-    (acc, a) => ({
-      appels: acc.appels + a.appels,
-      confirmees: acc.confirmees + a.confirmees,
-      injoignables: acc.injoignables + a.injoignables,
-      annulees: acc.annulees + a.annulees,
-      reprogrammees: acc.reprogrammees + a.reprogrammees,
-    }),
-    { appels: 0, confirmees: 0, injoignables: 0, annulees: 0, reprogrammees: 0 }
-  );
-
-  return {
-    caEncaisseListe,
-    kpis: {
-      commandesTotal: totalCmds,
-      commandesJour: commandesAujourdhui,
-      tauxConfirmation: Number(tauxConfirmation),
-      tauxLivraison: Number(tauxLivraison),
-    },
-    confirmationParHeure: hourly,
-    statutsLivraison,
-    overviewAppels,
-    topProduits,
-    topAgents,
-    analyticsAgents,
-    totauxAgents,
-  };
+  if (error) {
+    console.error("stats_dashboard:", error.message);
+    return null;
+  }
+  return data;
 }
 
 // ==================================================================
@@ -418,6 +205,9 @@ export default function DashboardFGMED() {
   const router = useRouter();
 
   const tenantKey = typeof tenantId === "object" ? tenantId?.id : tenantId;
+  // Un seller ne voit que ses propres chiffres : la base les lui sert déjà
+  // filtrés, et les tableaux qui parlent des agents n'ont rien à faire chez lui.
+  const estSeller = String(roleNom || "").toLowerCase() === "seller";
 
   // 🚀 REDIRECTION SÉCURISÉE (RBAC STRICT)
   useEffect(() => {
@@ -601,7 +391,8 @@ export default function DashboardFGMED() {
         </div>
       </section>
 
-      {/* Analytics par agent */}
+      {/* Analytics par agent — un seller ne voit jamais le travail des agents */}
+      {!estSeller && (<>
       <section className="fg-card fg-agents-card">
         <div className="fg-card-head">
           <div>
@@ -700,7 +491,7 @@ export default function DashboardFGMED() {
             </table>
           </div>
         )}
-      </section>
+      </section></>)}
 
       {/* Grille de 3 pour les analyses détaillées */}
       <section className="fg-grid-3">
@@ -741,7 +532,7 @@ export default function DashboardFGMED() {
           </ol>
         </div>
 
-        <div className="fg-card">
+        {!estSeller && (<div className="fg-card">
           <div className="fg-card-head">
             <h2 className="fg-card-title">Top Agents (Livrées)</h2>
             <StatutPill ton="positif">Livrées</StatutPill>
@@ -767,7 +558,7 @@ export default function DashboardFGMED() {
               </li>
             ))}
           </ol>
-        </div>
+        </div>)}
       </section>
     </div>
   );
@@ -917,6 +708,18 @@ function StyleFGMED() {
         .fg-periode{flex-wrap:wrap;}
         .fg-taux-col{width:120px;min-width:110px;}
       }
+      @media (max-width:680px){
+        /* Les champs date natifs ne descendent jamais sous ~130px : côte à côte,
+           "Du __ Au __" ne tient pas sur un téléphone. On les empile. */
+        .fg-periode{width:100%;flex-wrap:wrap;}
+        .fg-periode-btn{flex:1 1 auto;text-align:center;}
+        .fg-date-wrap{
+          width:100%;border-left:none;padding-left:0;margin-left:0;
+          display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center;
+          padding-top:8px;border-top:1px solid var(--oatmeal);
+        }
+        .fg-date-input{width:100%;min-width:0;}
+      }
       @media (max-width:600px){
         .fg-root{padding:12px;}
         .fg-title{font-size:24px;}
@@ -926,7 +729,6 @@ function StyleFGMED() {
         .fg-card-head{flex-wrap:wrap;}
         .fg-pill{white-space:normal;}
         .fg-periode{width:100%;}
-        .fg-date-wrap{border-left:none;padding-left:0;margin-left:0;flex-wrap:wrap;}
         .fg-legend{gap:10px;font-size:11px;flex-wrap:wrap;}
         .fg-overview li{grid-template-columns:86px 1fr 32px;gap:8px;}
         .fg-top li{grid-template-columns:24px 1fr 44px 28px;gap:8px;}
