@@ -34,7 +34,10 @@ function StatCardEncaisse({ liste }) {
 
   useEffect(() => {
     if (n <= 1 || pause) return;
-    const t = setInterval(() => setIndex((i) => i + 1), 3500);
+    // L'index reste borné : il tournait à l'infini, si bien qu'au bout de
+    // quelques heures on demandait une rotation de plusieurs centaines de
+    // milliers de degrés.
+    const t = setInterval(() => setIndex((i) => (i + 1) % n), 3500);
     return () => clearInterval(t);
   }, [n, pause]);
 
@@ -53,11 +56,14 @@ function StatCardEncaisse({ liste }) {
     );
   }
 
-  const angle = 360 / n;
-  const faceH = 38;
-  const radius = Math.round(faceH / 2 / Math.tan(Math.PI / n)) + 4;
   const actif = ((index % n) + n) % n;
+  const courant = liste[actif];
 
+  // Anciennement un cube qui tournait en 3D (perspective + preserve-3d +
+  // translateZ, animé en continu). Sur un téléphone, une couche 3D animée sans
+  // fin réserve de la mémoire graphique en permanence : Chrome finissait par
+  // tuer l'onglet ("This page couldn't load"). Un simple fondu donne la même
+  // information sans rien réserver.
   return (
     <div
       className="fg-card fg-stat"
@@ -69,26 +75,15 @@ function StatCardEncaisse({ liste }) {
         <div className="fg-ca-head">
           <span className="fg-stat-label">Encaissé (COD)</span>
           <div className="fg-ca-nav">
-            <button type="button" onClick={() => setIndex((i) => i - 1)} aria-label="Devise précédente">‹</button>
-            <button type="button" onClick={() => setIndex((i) => i + 1)} aria-label="Devise suivante">›</button>
+            <button type="button" onClick={() => setIndex((i) => (i - 1 + n) % n)} aria-label="Devise précédente">‹</button>
+            <button type="button" onClick={() => setIndex((i) => (i + 1) % n)} aria-label="Devise suivante">›</button>
           </div>
         </div>
 
-        <div className="fg-ca-scene" style={{ height: faceH }}>
-          <div
-            className="fg-ca-cube"
-            style={{ transform: `translateZ(${-radius}px) rotateX(${-index * angle}deg)` }}
-          >
-            {liste.map((c, i) => (
-              <div
-                key={c.devise}
-                className="fg-ca-face"
-                style={{ transform: `rotateX(${i * angle}deg) translateZ(${radius}px)` }}
-              >
-                <span className="fg-ca-montant">{formatMontant(c.total)}</span>
-                <span className="fg-ca-devise">{c.devise}</span>
-              </div>
-            ))}
+        <div className="fg-ca-scene">
+          <div key={courant.devise} className="fg-ca-face">
+            <span className="fg-ca-montant">{formatMontant(courant.total)}</span>
+            <span className="fg-ca-devise">{courant.devise}</span>
           </div>
         </div>
 
@@ -618,11 +613,11 @@ function StyleFGMED() {
         display:flex;align-items:center;justify-content:center;padding:0;transition:.15s;
       }
       .fg-ca-nav button:hover{background:var(--abyssal);border-color:var(--abyssal);color:#fff;}
-      .fg-ca-scene{perspective:700px;margin:2px 0;}
-      .fg-ca-cube{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform .65s cubic-bezier(.34,.1,.2,1);}
+      .fg-ca-scene{margin:2px 0;min-height:38px;display:flex;align-items:center;}
+      .fg-ca-face{animation:fg-fondu .35s ease-out;}
+      @keyframes fg-fondu{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
       .fg-ca-face{
-        position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;gap:10px;
-        backface-visibility:hidden;-webkit-backface-visibility:hidden;background:#fff;
+        width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;
       }
       .fg-ca-montant{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:20px;color:var(--abyssal);line-height:1.1;}
       .fg-ca-devise{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;letter-spacing:.08em;color:var(--truffle);background:#A3513914;border:1px solid #A3513926;padding:2px 7px;border-radius:20px;flex:none;}
