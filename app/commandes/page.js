@@ -82,12 +82,23 @@ export default function GestionCommandesPage() {
   // imports faits par le manager. La base applique la même règle (RLS), l'écran
   // ne fait que demander ce qu'il a le droit de lire.
   const estSeller = String(roleNom || '').toLowerCase() === 'seller'
+  // Un responsable voit tous les leads de l'entreprise ; le filtre lui permet
+  // de ne regarder qu'un seller à la fois.
+  const peutFiltrerParVendeur = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
   const peutChoisirAgent = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
 
   const [commandes, setCommandes] = useState([])
   const [agents, setAgents] = useState([])
   const [listePays, setListePays] = useState([])
-  const [listeSellers, setListeSellers] = useState([])
+  const [personnel, setPersonnel] = useState([])
+  const [filtreVendeur, setFiltreVendeur] = useState('')
+
+  const listeSellers = personnel.filter((p) => p.role === 'seller')
+  const nomDuVendeur = (id) => {
+    if (!id) return null
+    const p = personnel.find((x) => x.user_id === id)
+    return p ? (p.nom || p.email || '—') : null
+  }
   const [listeStatutsDB, setListeStatutsDB] = useState([]) 
   const [totalCommandes, setTotalCommandes] = useState(0)
   const [pageActuelle, setPageActuelle] = useState(0)
@@ -118,13 +129,15 @@ export default function GestionCommandesPage() {
       supabase.from('agents').select('id, nom').eq('tenant_id', tenantKey).eq('actif', true),
       supabase.from('pays').select('id, nom, code').eq('tenant_id', tenantKey),
       supabase.from('statuts').select('*').eq('tenant_id', tenantKey),
-      // sert à retrouver le seller nommé dans un fichier importé
-      supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey).eq('role', 'seller')
+      // sert à nommer le vendeur d'un lead et à retrouver celui nommé dans un
+      // fichier importé. La RLS fait le tri : un responsable reçoit l'équipe,
+      // un seller ne reçoit que sa propre ligne.
+      supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey)
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
     if (statutsData) setListeStatutsDB(statutsData)
-    if (sellersData) setListeSellers(sellersData)
+    if (sellersData) setPersonnel(sellersData)
   }, [tenantKey])
 
   // CHARGEMENT DES COMMANDES (Récupère TOUTES les colonnes de la base)
@@ -141,6 +154,9 @@ export default function GestionCommandesPage() {
       .eq('tenant_id', tenantKey)
     // un seller ne demande que ses propres leads
     if (estSeller && user?.id) requete = requete.eq('vendeur_id', user.id)
+    // un responsable peut n'en regarder qu'un à la fois
+    else if (filtreVendeur === 'aucun') requete = requete.is('vendeur_id', null)
+    else if (filtreVendeur) requete = requete.eq('vendeur_id', filtreVendeur)
 
     const { data, count, error } = await requete
       .order('created_at', { ascending: false })
@@ -153,7 +169,7 @@ export default function GestionCommandesPage() {
       setTotalCommandes(count || 0)
     }
     setChargement(false)
-  }, [tenantKey, estSeller, user?.id])
+  }, [tenantKey, estSeller, user?.id, filtreVendeur])
 
   useEffect(() => {
     if (authLoading || permsLoading || !tenantKey) return
@@ -225,7 +241,7 @@ export default function GestionCommandesPage() {
     const entetes = [
       "Lead ID", "Source", "Source Sheet", "Client", "Téléphone", "Pays", "Ville / Zone", 
       "Produit", "Quantité", "Prix", "Statut Confirmation", "Statut Livraison", "Statut Paiement", 
-      "Doublon", "Agent Assigné", "Commentaire 1", "Commentaire 2", "Notes",
+      "Doublon", "Agent Assigné", "Vendeur", "Commentaire 1", "Commentaire 2", "Notes",
       "Date Rappel", "Date Création", "Date MAJ"
     ]
 
@@ -245,6 +261,7 @@ export default function GestionCommandesPage() {
       c.statut_paiement || "",
       c.is_doublon ? "Oui" : "Non",
       `"${(c.agents?.nom || "Non assigné").replace(/"/g, '""')}"`,
+      `"${(nomDuVendeur(c.vendeur_id) || "").replace(/"/g, '""')}"`,
       `"${(c.commentaire_1 || "").replace(/"/g, '""')}"`,
       `"${(c.commentaire_2 || "").replace(/"/g, '""')}"`,
       `"${(c.notes || "").replace(/"/g, '""')}"`,
@@ -393,6 +410,21 @@ export default function GestionCommandesPage() {
         </div>
         
         <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+          {peutFiltrerParVendeur && listeSellers.length > 0 && (
+            <select
+              value={filtreVendeur}
+              onChange={(e) => { setFiltreVendeur(e.target.value); setPageActuelle(0) }}
+              title="N'afficher que les leads d'un vendeur"
+              className="flex-1 sm:flex-none px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
+            >
+              <option value="">Tous les vendeurs</option>
+              {listeSellers.map((v) => (
+                <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>
+              ))}
+              <option value="aucun">Sans vendeur (imports)</option>
+            </select>
+          )}
+
           {hasPermission('exporter_csv') && (
             <button
               onClick={exporterCSV}
@@ -430,6 +462,7 @@ export default function GestionCommandesPage() {
             <thead className="sticky top-0 z-10 bg-[#F4F0E6] shadow-[0_1px_0_#C9C1B1]">
               <tr className="border-b border-[#C9C1B1]/50 uppercase tracking-wider text-[#1B2632]/60 font-semibold">
                 <th className="px-4 py-3.5">Lead ID / Source</th>
+                {!estSeller && <th className="px-4 py-3.5">Vendeur</th>}
                 <th className="px-4 py-3.5">Dates (Création / MAJ / Rappel)</th>
                 <th className="px-4 py-3.5">Client & Tél</th>
                 <th className="px-4 py-3.5">Localisation (Pays / Ville)</th>
@@ -440,9 +473,9 @@ export default function GestionCommandesPage() {
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="7" className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
+                <tr><td colSpan={estSeller ? 7 : 8} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan="7" className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
+                <tr><td colSpan={estSeller ? 7 : 8} className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
               ) : (
                 commandes.map((cmd) => (
                   <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
@@ -455,6 +488,15 @@ export default function GestionCommandesPage() {
                       </div>
                     </td>
                     
+                    {/* VENDEUR — qui a apporté ce lead */}
+                    {!estSeller && (
+                      <td className="px-4 py-3 align-top">
+                        {nomDuVendeur(cmd.vendeur_id)
+                          ? <span className="font-semibold text-[#1B2632]">{nomDuVendeur(cmd.vendeur_id)}</span>
+                          : <span className="text-[#1B2632]/40">—</span>}
+                      </td>
+                    )}
+
                     {/* DATES */}
                     <td className="px-4 py-3 align-top">
                       <div className="text-[#1B2632]"><b>Créé:</b> {cmd.created_at ? new Date(cmd.created_at).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'}) : '-'}</div>
