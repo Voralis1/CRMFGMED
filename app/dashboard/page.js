@@ -177,8 +177,10 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
   });
 
   if (error) {
+    // On renvoie l'erreur au lieu de null : sinon la page reste indéfiniment
+    // sur « Chargement… » et personne ne sait pourquoi.
     console.error("stats_dashboard:", error.message);
-    return null;
+    return { erreur: error.message };
   }
   return data;
 }
@@ -234,6 +236,20 @@ export default function DashboardFGMED() {
       chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
     }
   }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading, hasPermission, roleNom]);
+
+  if (data?.erreur) {
+    return (
+      <div className="p-8 max-w-xl mx-auto mt-20 text-center">
+        <h1 className="text-xl font-bold text-[#A35139] mb-2">Le tableau de bord n'a pas pu être chargé</h1>
+        <p className="text-sm text-[#1B2632]/70 mb-4">
+          La base a refusé la requête. Message exact :
+        </p>
+        <pre className="text-xs text-left bg-[#EEE9DF] border border-[#C9C1B1] rounded-xl p-4 whitespace-pre-wrap break-words">
+          {data.erreur}
+        </pre>
+      </div>
+    );
+  }
 
   if (authLoading || permsLoading || !data) {
     return (
