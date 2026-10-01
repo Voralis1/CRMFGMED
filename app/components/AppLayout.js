@@ -5,12 +5,15 @@ import { usePathname } from 'next/navigation'
 import NavBar from './NavBar'
 import { supabase } from '../../lib/supabaseClient'
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte global
+import { useAuth } from '../context/AuthContext'
 
 const LARGEUR_BUREAU = 768   // tailwind `md`
 
 export default function AppLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [utilisateur, setUtilisateur] = useState({ nom: '' }) // Plus besoin de stocker le rôle ici
+  const { estSuperAdmin, tenantId, tenantChoisi, setTenantChoisi } = useAuth()
+  const [entreprises, setEntreprises] = useState([])
   
   // 🚀 Ajout de l'état isMounted pour éviter l'erreur "Hydration Mismatch"
   const [isMounted, setIsMounted] = useState(false)
@@ -55,6 +58,34 @@ export default function AppLayout({ children }) {
     // On charge le profil partout sauf sur la page de connexion
     if (pathname !== '/') chargerProfil()
   }, [pathname])
+
+  // La liste des entreprises, pour le seul super admin. S'il n'en a choisi
+  // aucune, on prend la première : sans entreprise, toutes les pages du CRM
+  // restent vides et il croirait l'application cassée.
+  useEffect(() => {
+    if (!estSuperAdmin) return
+    let annule = false
+
+    async function chargerEntreprises() {
+      // `select('*')` sans `order` : nommer une colonne qui n'existe pas fait
+      // échouer toute la requête, et la table ne porte pas le même nom de
+      // colonne partout (`nom` ici, `nom_entreprise` là). On trie nous-mêmes.
+      const { data, error } = await supabase.from('tenants').select('*')
+      if (annule) return
+      if (error) {
+        console.error('tenants:', error.message)
+        return
+      }
+      const liste = (data || []).slice().sort((a, b) =>
+        String(a.nom || a.nom_entreprise || '').localeCompare(String(b.nom || b.nom_entreprise || ''))
+      )
+      setEntreprises(liste)
+      if (!tenantChoisi && !tenantId && liste.length > 0) setTenantChoisi(liste[0].id)
+    }
+
+    chargerEntreprises()
+    return () => { annule = true }
+  }, [estSuperAdmin, tenantChoisi, tenantId, setTenantChoisi])
 
   // Sécurité contre l'erreur d'hydration
   if (!isMounted) {
@@ -108,7 +139,29 @@ export default function AppLayout({ children }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="hidden md:block" />
+          {/* Entreprise regardée — super admin uniquement. Toujours visible :
+              créer un agent dans la mauvaise entreprise sans s'en apercevoir
+              est pénible à rattraper. */}
+          {estSuperAdmin && entreprises.length > 0 ? (
+            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-2xl border border-[#C9C1B1]/40 shadow-sm min-w-0">
+              <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-[#A35139] shrink-0">
+                Entreprise
+              </span>
+              <select
+                value={tenantId || ''}
+                onChange={(e) => setTenantChoisi(e.target.value)}
+                title="Choisir l'entreprise que vous regardez"
+                className="max-w-[130px] sm:max-w-none bg-transparent text-sm font-bold text-[#1B2632] outline-none cursor-pointer truncate"
+              >
+                {entreprises.map((t) => (
+                  <option key={t.id} value={t.id}>{t.nom || t.nom_entreprise || 'Entreprise'}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="hidden md:block" />
+          )}
+
           <div className="flex items-center gap-3 bg-white px-3 sm:px-4 py-2 rounded-2xl border border-[#C9C1B1]/40 shadow-sm min-w-0">
             <div className="w-9 h-9 shrink-0 rounded-full bg-[#1B2632] flex items-center justify-center text-white font-bold text-sm shadow-sm">
               {utilisateur.nom ? utilisateur.nom.charAt(0).toUpperCase() : 'U'}

@@ -5,35 +5,64 @@ import { supabase } from '../../lib/supabaseClient'
 
 const AuthContext = createContext({})
 
+// Un super admin n'appartient pas vraiment à une entreprise : sa ligne dans
+// `user_roles` en nomme une, et tout le CRM se mettait à filtrer sur celle-là,
+// alors que la base l'autorise à tout voir. Il choisit donc l'entreprise qu'il
+// regarde, et ce choix remplace la sienne partout — les pages lisent toutes le
+// tenant d'ici, aucune n'a besoin d'être modifiée.
+const CLE_ENTREPRISE = 'fg_entreprise_super_admin'
+
+function lireChoix() {
+  try {
+    return localStorage.getItem(CLE_ENTREPRISE) || null
+  } catch {
+    return null // navigation privée ou stockage bloqué : on s'en passe
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
-  const [tenantId, setTenantId] = useState(null)
+  const [tenantReel, setTenantReel] = useState(null)
+  const [estSuperAdmin, setEstSuperAdmin] = useState(false)
+  const [tenantChoisi, setTenantChoisiEtat] = useState(null)
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setTenantChoisiEtat(lireChoix())
+  }, [])
+
+  function setTenantChoisi(id) {
+    setTenantChoisiEtat(id)
+    try {
+      if (id) localStorage.setItem(CLE_ENTREPRISE, id)
+      else localStorage.removeItem(CLE_ENTREPRISE)
+    } catch {
+      // le choix ne survivra pas au rechargement, la session reste utilisable
+    }
+  }
 
   useEffect(() => {
     async function fetchUserData(sessionUser) {
       if (!sessionUser) {
         setUser(null)
-        setTenantId(null)
+        setTenantReel(null)
+        setEstSuperAdmin(false)
         setLoading(false)
         return
       }
 
       setUser(sessionUser)
 
-      // 🚀 On ne récupère PLUS que le tenant_id. 
-      // Le rôle et les permissions sont désormais gérés par le PermissionsContext !
       const { data: roleData } = await supabase
         .from('user_roles')
-        .select('tenant_id')
+        .select('tenant_id, role')
         .eq('user_id', sessionUser.id)
         .maybeSingle()
 
       if (roleData) {
-        setTenantId(roleData.tenant_id)
+        setTenantReel(roleData.tenant_id)
+        setEstSuperAdmin(String(roleData.role || '').toLowerCase() === 'super_admin')
       }
-
-      // N.B. : L'appel RPC "get_mes_permissions" a été supprimé car obsolète.
 
       setLoading(false)
     }
@@ -51,9 +80,15 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  // Même raison que dans PermissionsContext : un objet recréé à chaque rendu
-  // fait re-rendre tous les consommateurs pour rien.
-  const valeur = useMemo(() => ({ user, tenantId, loading }), [user, tenantId, loading])
+  // Pour tout le monde sauf le super admin, c'est son entreprise, point.
+  const tenantId = estSuperAdmin && tenantChoisi ? tenantChoisi : tenantReel
+
+  // Mémorisé : un objet recréé à chaque rendu ferait re-rendre tous les
+  // consommateurs et relancerait les effets qui en dépendent.
+  const valeur = useMemo(
+    () => ({ user, tenantId, loading, estSuperAdmin, tenantChoisi, setTenantChoisi }),
+    [user, tenantId, loading, estSuperAdmin, tenantChoisi],
+  )
 
   return (
     <AuthContext.Provider value={valeur}>
