@@ -97,10 +97,14 @@ Deno.serve(handle(async (req) => {
   }
 
   let avertissement: string | null = null
-  if (roleNom.includes('agent') || roleNom.includes('admin')) {
+  // Une ligne dans `agents` veut dire « agent du centre d'appel » : c'est de là
+  // que sortent la liste des agents, la page Performances et le tableau par
+  // agent du tableau de bord. Un admin n'en est pas un ; lui en créer une le
+  // faisait apparaître partout comme agent.
+  if (estAgent) {
     const { error } = await sb.from('agents').insert({
       user_id: nouvelUserId, nom: nomAffichage, tenant_id: tenantCible, actif: true,
-      pays_id: estAgent ? pays_id : (pays_id || null),
+      pays_id,
     })
     if (error) avertissement = 'Compte créé, mais fiche agent non créée : ' + error.message
   } else if (roleNom.includes('livreur')) {
