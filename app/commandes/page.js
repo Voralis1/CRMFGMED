@@ -436,22 +436,26 @@ export default function GestionCommandesPage() {
             </button>
           )}
 
-          <label
-            title="Importer des commandes depuis un fichier CSV ou Excel"
-            className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
-          >
-            <IconImporter />
-            Importer CSV
-            <input type="file" accept=".csv, .xlsx, .xls" onChange={importerFichier} className="hidden" />
-          </label>
+          {hasPermission('importer_csv') && (
+            <label
+              title="Importer des commandes depuis un fichier CSV ou Excel"
+              className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
+            >
+              <IconImporter />
+              Importer CSV
+              <input type="file" accept=".csv, .xlsx, .xls" onChange={importerFichier} className="hidden" />
+            </label>
+          )}
           
-          <button 
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2.5 bg-[#1B2632] text-white rounded-full text-sm font-bold hover:bg-[#2C3B4D] transition-colors shadow-sm cursor-pointer"
-          >
-            <IconPlus />
-            Nouvelle commande
-          </button>
+          {hasPermission('creer_commande') && (
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2.5 bg-[#1B2632] text-white rounded-full text-sm font-bold hover:bg-[#2C3B4D] transition-colors shadow-sm cursor-pointer"
+            >
+              <IconPlus />
+              Nouvelle commande
+            </button>
+          )}
         </div>
       </header>
 
@@ -581,7 +585,7 @@ export default function GestionCommandesPage() {
       </div>
 
       {/* Modale de création manuelle */}
-      {isCreateModalOpen && (
+      {isCreateModalOpen && hasPermission('creer_commande') && (
         <div className="fixed inset-0 bg-[#1B2632]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#EEE9DF] rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
             
