@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
-import * as XLSX from 'xlsx'
+
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -114,6 +114,9 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
 }
 
 const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
+// Changer l'agent d'un lead, c'est arbitrer la charge de travail : le CEO lit,
+// il n'arbitre pas.
+const ROLES_ASSIGNATION_AGENT = ['admin', 'manager', 'super_admin']
 
 export default function CentreAppelAgent() {
   const { user, tenantId, loading: authLoading } = useAuth() 
@@ -141,6 +144,14 @@ export default function CentreAppelAgent() {
   const [filtrePays, setFiltrePays] = useState('')
   
   const [panneauFiltresOuvert, setPanneauFiltresOuvert] = useState(false)
+  // Mode « qui appelle quoi » : réservé aux responsables. Il remplace la colonne
+  // Statut par l'agent chargé du lead, et permet de le changer tant que l'appel
+  // n'a pas eu lieu. Volontairement une vue de cette page, pas un menu de plus :
+  // c'est ici qu'on regarde la file d'attente.
+  const [modeAgents, setModeAgents] = useState(false)
+  const [listeAgents, setListeAgents] = useState([])
+  const [agentChoisi, setAgentChoisi] = useState({})
+  const [agentEnCours, setAgentEnCours] = useState(null)
   const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], pays: [] })
 
   const [page, setPage] = useState(1)
@@ -286,6 +297,55 @@ export default function CentreAppelAgent() {
     verifierAgentEtCharger()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom])
+
+  const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
+  // La requête des commandes ne ramène que `agent_id` ; le nom vient de la liste
+  // déjà chargée, ce qui évite une jointure sur chaque page.
+  const nomAgent = (id) => {
+    if (!id) return null
+    if (listeAgents.length === 0) return '…' // liste pas encore chargée
+    return listeAgents.find((a) => a.id === id)?.nom || 'Agent supprimé'
+  }
+  const nbColonnes = modeAgents ? 10 : 9
+
+  useEffect(() => {
+    if (!tenantKey || !peutChangerAgent) return
+    let annule = false
+    supabase
+      .from('agents')
+      .select('id, nom, pays_id')
+      .eq('tenant_id', tenantKey)
+      .eq('actif', true)
+      .not('user_id', 'is', null)
+      .order('nom')
+      .then(({ data }) => { if (!annule) setListeAgents(data || []) })
+    return () => { annule = true }
+  }, [tenantKey, peutChangerAgent])
+
+  // Un lead déjà traité garde son agent : le statut et l'historique sont à lui.
+  async function changerAgent(commandeId, agentId) {
+    if (!agentId) return
+    setAgentEnCours(commandeId)
+
+    const { data, error } = await supabase
+      .from('commandes')
+      .update({ agent_id: agentId })
+      .eq('id', commandeId)
+      .eq('tenant_id', tenantKey)
+      .is('statut_confirmation', null)
+      .select('id')
+
+    setAgentEnCours(null)
+
+    if (error) { alert('Erreur : ' + error.message); return }
+    if (!data || data.length === 0) {
+      alert("Ce lead vient d'être traité : son agent ne peut plus être changé.")
+      return
+    }
+
+    setCommandes((prec) => prec.map((c) => (c.id === commandeId ? { ...c, agent_id: agentId } : c)))
+    setAgentChoisi((prec) => ({ ...prec, [commandeId]: '' }))
+  }
 
   // 🚀 CHARGEMENT STRICTEMENT CLOISONNÉ
   // agentId = null  -> global view (admin / manager / ceo / super_admin)
@@ -607,6 +667,23 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
+            {peutChangerAgent && (
+              <button
+                onClick={() => setModeAgents(o => !o)}
+                title="Afficher l'agent affecté à chaque lead et le changer"
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border transition-all ${
+                  modeAgents
+                    ? 'bg-[#A35139] text-white border-[#A35139]'
+                    : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+                {modeAgents ? 'Masquer les agents' : 'Agents'}
+              </button>
+            )}
+
             <div className="relative">
               <button
                 onClick={() => setPanneauFiltresOuvert(o => !o)}
@@ -710,15 +787,16 @@ export default function CentreAppelAgent() {
                 <th className="px-6 py-4">Ville / Zone</th>
                 <th className="px-6 py-4">Produit</th>
                 <th className="px-6 py-4">Prix</th>
+                {modeAgents && <th className="px-6 py-4">Agent affecté</th>}
                 <th className="px-6 py-4">Statut</th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {loading ? (
-                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.' : 'Aucune commande pour ce filtre.'}</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.' : 'Aucune commande pour ce filtre.'}</td></tr>
               ) : (
                 commandes.map((cmd) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
@@ -748,6 +826,45 @@ export default function CentreAppelAgent() {
                       <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
                         {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
                       </td>
+                      {modeAgents && (
+                        // La ligne entière ouvre le panneau de traitement : sans
+                        // stopPropagation, choisir un agent déclencherait l'appel.
+                        <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                          <div className="text-sm font-semibold text-[#1B2632] whitespace-nowrap mb-1">
+                            {nomAgent(cmd.agent_id) || <span className="text-[#A35139]">Non affecté</span>}
+                          </div>
+
+                          {cmd.statut_confirmation ? (
+                            <div className="text-[11px] text-[#1B2632]/40">Lead traité — agent figé</div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={agentChoisi[cmd.id] || ''}
+                                onChange={(e) => setAgentChoisi((prec) => ({ ...prec, [cmd.id]: e.target.value }))}
+                                className="text-xs border border-[#C9C1B1] rounded-lg px-2 py-1.5 bg-white text-[#1B2632] outline-none focus:border-[#FFB162] max-w-[140px]"
+                              >
+                                <option value="">Changer…</option>
+                                {/* Un agent ne peut traiter que les leads de son pays :
+                                    la même règle qu'en base, mais visible ici. */}
+                                {listeAgents
+                                  .filter((a) => !cmd.pays_id || !a.pays_id || a.pays_id === cmd.pays_id)
+                                  .filter((a) => a.id !== cmd.agent_id)
+                                  .map((a) => <option key={a.id} value={a.id}>{a.nom}</option>)}
+                              </select>
+
+                              {agentChoisi[cmd.id] && (
+                                <button
+                                  onClick={() => changerAgent(cmd.id, agentChoisi[cmd.id])}
+                                  disabled={agentEnCours === cmd.id}
+                                  className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors whitespace-nowrap"
+                                >
+                                  {agentEnCours === cmd.id ? '…' : 'OK'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="px-6 py-4">
                         <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
                       </td>
