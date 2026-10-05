@@ -47,8 +47,12 @@ Deno.serve(handle(async (req) => {
   if (roleNom === 'super_admin' && !caller.isSuperAdmin) {
     throw new HttpError(403, 'Seul un super_admin peut créer un super_admin')
   }
-  if (ROLES_PRIVILEGIES.includes(roleNom) && !caller.isSuperAdmin && caller.roleNom !== 'admin') {
-    throw new HttpError(403, `Seul un admin peut créer un compte ${roleNom}`)
+  // Les autres rôles — y compris admin, ceo et manager — sont créés par un
+  // admin ou un manager, et toujours DANS LEUR PROPRE ENTREPRISE : `tenantCible`
+  // est imposé plus haut pour quiconque n'est pas super admin.
+  if (ROLES_PRIVILEGIES.includes(roleNom) && !caller.isSuperAdmin
+      && !['admin', 'manager'].includes(String(caller.roleNom || '').toLowerCase())) {
+    throw new HttpError(403, `Seul un admin ou un manager peut créer un compte ${roleNom}`)
   }
 
   // An agent is routed leads by country and a livreur can only deliver in his own

@@ -22,8 +22,13 @@ export default function SuperAdminComptes() {
   const [message, setMessage] = useState({ text: '', type: '' })
   
   const [formData, setFormData] = useState({
-    email: '', mot_de_passe: '', tenant_id: '', role_id: '', nom: ''
+    email: '', mot_de_passe: '', tenant_id: '', role_id: '', nom: '', pays_id: '', zone: ''
   })
+  // Pays et zones de l'entreprise choisie dans le formulaire : un agent reçoit
+  // les leads de son pays, un livreur ne livre que dans sa zone. La base refuse
+  // un agent sans pays et un livreur sans zone.
+  const [paysTenant, setPaysTenant] = useState([])
+  const [zonesTenant, setZonesTenant] = useState([])
   
   const [selectedUser, setSelectedUser] = useState(null)
   
@@ -67,7 +72,39 @@ export default function SuperAdminComptes() {
     }
   }, [user, hasPermission])
   
-  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value })
+  useEffect(() => {
+    let annule = false
+    async function chargerPaysZones() {
+      if (!formData.tenant_id) {
+        setPaysTenant([]); setZonesTenant([]); return
+      }
+      const [{ data: pays }, { data: zones }] = await Promise.all([
+        supabase.from('pays').select('id, nom').eq('tenant_id', formData.tenant_id).order('nom'),
+        supabase.from('zones').select('id, nom_zone, pays_id').eq('tenant_id', formData.tenant_id).order('nom_zone'),
+      ])
+      if (annule) return
+      setPaysTenant(pays || [])
+      setZonesTenant(zones || [])
+    }
+    chargerPaysZones()
+    return () => { annule = true }
+  }, [formData.tenant_id])
+
+  // Changer d'entreprise ou de rôle invalide le pays et la zone déjà choisis :
+  // ils appartiennent à l'entreprise précédente.
+  const handleChange = (e) => {
+    const { name, value } = e.target
+    setFormData((f) => ({
+      ...f,
+      [name]: value,
+      ...(name === 'tenant_id' ? { pays_id: '', zone: '' } : {}),
+      ...(name === 'pays_id' ? { zone: '' } : {}),
+    }))
+  }
+
+  const roleChoisi = String(roles.find((r) => r.id === formData.role_id)?.nom || '').toLowerCase()
+  const besoinPays = roleChoisi === 'agent' || roleChoisi === 'livreur'
+  const besoinZone = roleChoisi === 'livreur'
   const handleEditChange = (e) => setSelectedUser({ ...selectedUser, [e.target.name]: e.target.value })
   
   const handleOpenEdit = (userItem) => {
@@ -108,7 +145,7 @@ export default function SuperAdminComptes() {
       if (data?.error) throw new Error(data.error)
   
       setMessage({ text: 'Compte créé avec succès !', type: 'success' })
-      setFormData({ email: '', mot_de_passe: '', nom: '', tenant_id: '', role_id: '' })
+      setFormData({ email: '', mot_de_passe: '', nom: '', tenant_id: '', role_id: '', pays_id: '', zone: '' })
       await chargerDonnees()
 
       setTimeout(() => { setIsModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
@@ -284,6 +321,39 @@ export default function SuperAdminComptes() {
                 <option value="">Sélectionner un rôle</option>
                 {roles.map(r => <option key={r.id} value={r.id}>{r.nom.toUpperCase()}</option>)}
               </select>
+
+              {besoinPays && (
+                <select
+                  name="pays_id"
+                  required
+                  value={formData.pays_id}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]"
+                >
+                  <option value="">
+                    {formData.tenant_id ? 'Sélectionner un pays' : "Choisir d'abord l'entreprise"}
+                  </option>
+                  {paysTenant.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
+                </select>
+              )}
+
+              {besoinZone && (
+                <select
+                  name="zone"
+                  required
+                  value={formData.zone}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]"
+                >
+                  <option value="">
+                    {formData.pays_id ? 'Sélectionner une zone' : "Choisir d'abord le pays"}
+                  </option>
+                  {zonesTenant
+                    .filter(z => !formData.pays_id || z.pays_id === formData.pays_id)
+                    .map(z => <option key={z.id} value={z.nom_zone}>{z.nom_zone}</option>)}
+                </select>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-semibold text-[#1B2632] cursor-pointer transition-colors">Annuler</button>
                 <button type="submit" disabled={submitting} className="flex-1 py-2.5 bg-[#1B2632] hover:bg-[#2C3E50] text-white rounded-xl text-sm font-semibold cursor-pointer transition-colors">

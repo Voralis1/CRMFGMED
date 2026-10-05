@@ -18,7 +18,11 @@ export default function UtilisateursPage() {
   // CEO has `menu_utilisateurs` only: read-only list.
   const peutGerer = hasPermission('gerer_utilisateurs')
 
-  const [ongletActif, setOngletActif] = useState('agents') // 'agents', 'livreurs', 'creation'
+  const [ongletActif, setOngletActif] = useState('agents') // 'agents', 'livreurs', 'equipe', 'creation'
+  // Les rôles sans fiche métier (seller, manager, ceo, admin) n'existent que
+  // dans user_roles : sans cet onglet, on les créerait sans jamais les revoir.
+  const [equipe, setEquipe] = useState([])
+  const ROLES_SANS_FICHE = ['seller', 'manager', 'ceo', 'admin']
   
   const [agents, setAgents] = useState([])
   const [livreurs, setLivreurs] = useState([])
@@ -60,17 +64,20 @@ export default function UtilisateursPage() {
   const chargerDonnees = useCallback(async () => {
     if (!tenantKey) return
 
-    const [dataAgents, dataLivreurs, dataZones, dataPays] = await Promise.all([
+    const [dataAgents, dataLivreurs, dataZones, dataPays, dataEquipe] = await Promise.all([
       supabase.from('agents').select('*').eq('tenant_id', tenantKey).not('user_id', 'is', null).order('nom'),
       supabase.from('livreurs').select('*').eq('tenant_id', tenantKey).not('user_id', 'is', null).order('nom'),
       supabase.from('zones').select('id, nom_zone, pays_id').eq('tenant_id', tenantKey).order('nom_zone'),
-      supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom')
+      supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom'),
+      supabase.from('user_roles').select('user_id, email, nom, role')
+        .eq('tenant_id', tenantKey).order('role')
     ])
 
     setAgents(dataAgents.data || [])
     setLivreurs(dataLivreurs.data || [])
     setListeZones(dataZones.data || [])
     setListePays(dataPays.data || [])
+    setEquipe((dataEquipe.data || []).filter((u) => ROLES_SANS_FICHE.includes(String(u.role || '').toLowerCase())))
   }, [tenantKey])
 
   useEffect(() => {
@@ -89,9 +96,12 @@ export default function UtilisateursPage() {
     e.preventDefault()
     if (!tenantKey) return
 
-    // An agent MUST have a country: the lead router only gives him leads from that country.
-    if (!paysFiche) {
-      afficherMessage('Le pays est obligatoire.', 'erreur')
+    // Le pays ne concerne que les deux rôles qui travaillent sur le terrain :
+    // il décide des leads qu'un agent reçoit et des livraisons qu'un livreur
+    // peut prendre. Un seller, un manager, un CEO ou un admin n'en ont pas.
+    const roleAvecPays = roleUtilisateur === 'agent' || roleUtilisateur === 'livreur'
+    if (roleAvecPays && !paysFiche) {
+      afficherMessage('Le pays est obligatoire pour un agent et pour un livreur.', 'erreur')
       return
     }
 
@@ -133,7 +143,7 @@ export default function UtilisateursPage() {
           role: roleUtilisateur, // Gardé au cas où la fonction l'utilise
           role_id: roleData.id,  // 🚀 AJOUT DU ROLE_ID REQUIS PAR LA FONCTION
           zone: roleUtilisateur === 'livreur' ? zoneLivreur.trim() : null,
-          pays_id: paysFiche,
+          pays_id: roleAvecPays ? paysFiche : null,
           tenant_id: tenantKey   // 🚀 CORRECTION DU TENANT ID
         }),
       }
@@ -155,7 +165,11 @@ export default function UtilisateursPage() {
     setZoneLivreur('')
     setPaysFiche('')
     await chargerDonnees()
-    setOngletActif(roleUtilisateur === 'livreur' ? 'livreurs' : 'agents')
+    setOngletActif(
+      roleUtilisateur === 'livreur' ? 'livreurs'
+      : roleUtilisateur === 'agent' ? 'agents'
+      : 'equipe'
+    )
   }
 
   // --- STATUT AGENT / LIVREUR ---
@@ -301,6 +315,14 @@ export default function UtilisateursPage() {
           >
             Livreurs ({livreurs.length})
           </button>
+          <button
+            onClick={() => setOngletActif('equipe')}
+            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
+              ongletActif === 'equipe' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+            }`}
+          >
+            Équipe ({equipe.length})
+          </button>
           {peutGerer && <button
             onClick={() => setOngletActif('creation')}
             className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
@@ -438,6 +460,41 @@ export default function UtilisateursPage() {
       )}
 
       {/* --- ONGLET CRÉATION --- */}
+      {/* --- ONGLET EQUIPE : les rôles qui n'ont pas de fiche métier --- */}
+      {ongletActif === 'equipe' && (
+        <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-3 sm:p-6">
+          <h2 className="text-xl font-bold text-[#1B2632] mb-4 pb-3 border-b border-[#C9C1B1]/40">
+            Sellers, managers, CEO et admins
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px] text-left text-sm">
+              <thead className="text-xs uppercase tracking-wider text-[#1B2632]/60 border-b border-[#C9C1B1]/40">
+                <tr>
+                  <th className="px-4 py-3">Nom</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Rôle</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#C9C1B1]/30">
+                {equipe.length === 0 ? (
+                  <tr><td colSpan="3" className="px-4 py-8 text-center text-[#1B2632]/50">Personne pour l'instant.</td></tr>
+                ) : equipe.map((u) => (
+                  <tr key={u.user_id} className="hover:bg-[#EEE9DF]/20">
+                    <td className="px-4 py-3 font-semibold text-[#1B2632]">{u.nom || '—'}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-[#1B2632]/70">{u.email || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wide bg-[#EEE9DF] text-[#1B2632] px-2.5 py-1 rounded-full">
+                        {u.role}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {peutGerer && ongletActif === 'creation' && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-8">
           <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
@@ -498,11 +555,16 @@ export default function UtilisateursPage() {
                   onChange={(e) => setRoleUtilisateur(e.target.value)}
                   className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                 >
-                  <option value="agent">Agent</option>
+                  <option value="agent">Agent — centre d'appel</option>
                   <option value="livreur">Livreur</option>
+                  <option value="seller">Seller — apporte les leads</option>
+                  <option value="manager">Manager</option>
+                  <option value="ceo">CEO — lecture seule</option>
+                  <option value="admin">Admin</option>
                 </select>
               </div>
 
+              {(roleUtilisateur === 'agent' || roleUtilisateur === 'livreur') && (
               <div>
                 <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Pays <span className="text-[#A35139]">*</span></label>
                 <select
@@ -522,6 +584,7 @@ export default function UtilisateursPage() {
                     : 'Le livreur ne pourra livrer que dans ce pays.'}
                 </p>
               </div>
+              )}
 
               {roleUtilisateur === 'livreur' && (
                 <div>
