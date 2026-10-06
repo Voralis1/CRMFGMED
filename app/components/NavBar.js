@@ -14,6 +14,8 @@ const TOUS_LES_LIENS = [
   { href: '/assignation-livreur', label: 'Assignation livreur', permission: 'menu_assignation_livreur' },
   { href: '/livraisons', label: 'Livraisons', permission: 'menu_livraisons' },
   { href: '/paiements', label: 'Paiements', permission: 'menu_paiements' },
+  { href: '/produits', label: 'Produits', permission: 'menu_produits' },
+  { href: '/expeditions', label: 'Expéditions', permission: 'menu_expeditions' },
   { href: '/utilisateurs', label: 'Utilisateurs', permission: 'menu_utilisateurs' },
   { href: '/parametres', label: 'Paramètres', permission: 'menu_parametres' },
   { href: '/profile', label: 'Profil' }, 
