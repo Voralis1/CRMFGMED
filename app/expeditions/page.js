@@ -24,7 +24,7 @@ const STATUTS = {
 const VIDE = {
   poids_kg: '', mode_transport: 'Maritime', details: '',
   transporteur: '', transporteur_telephone: '',
-  pays: '', pays_code: '', pays_destination_id: '',
+  pays: '', pays_code: '', entrepot_destination_id: '',
   date_expedition: '', date_reception: '',
 }
 
@@ -62,7 +62,7 @@ export default function ExpeditionsPage() {
 
   const [expeditions, setExpeditions] = useState([])
   const [vendeurs, setVendeurs] = useState([])
-  const [listePays, setListePays] = useState([])
+  const [entrepots, setEntrepots] = useState([])
   const [catalogue, setCatalogue] = useState([])
   // Les produits transportés, pendant la saisie. Ils ne partent en base
   // qu'une fois l'expédition créée : avant, il n'y a pas d'identifiant
@@ -128,9 +128,11 @@ export default function ExpeditionsPage() {
       .eq('tenant_id', tenantKey)
     setVendeurs(gens || [])
 
-    const { data: paysDB } = await supabase
-      .from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom')
-    setListePays(paysDB || [])
+    // L'entrepôt qui reçoit, avec son pays pour le distinguer : deux dépôts
+    // peuvent s'appeler « Central ».
+    const { data: entrepotsDB } = await supabase
+      .from('entrepots').select('id, nom, pays(nom)').eq('tenant_id', tenantKey).order('nom')
+    setEntrepots(entrepotsDB || [])
 
     // Seuls les produits encore en vente sont proposés : en expédier un retiré
     // du catalogue est presque toujours une erreur de saisie.
@@ -176,8 +178,7 @@ export default function ExpeditionsPage() {
   }, [expeditions, recherche, filtreStatut, filtreMode, filtrePays])
 
   // Les pays de départ déjà saisis, pour le filtre et pour la saisie assistée.
-  // À ne pas confondre avec `listePays`, qui est la table des pays d'opération
-  // et sert à la destination.
+  // Le pays de DÉPART, saisi librement. La destination, elle, est un entrepôt.
   const listePaysSaisis = useMemo(
     () => [...new Set(expeditions.map((e) => e.pays).filter(Boolean))].sort(),
     [expeditions],
@@ -228,7 +229,7 @@ export default function ExpeditionsPage() {
       transporteur_telephone: e.transporteur_telephone || '',
       pays: e.pays || '',
       pays_code: e.pays_code || paysParNom(e.pays)?.code || '',
-      pays_destination_id: e.pays_destination_id || '',
+      entrepot_destination_id: e.entrepot_destination_id || '',
       date_expedition: pourInput(e.date_expedition),
       date_reception: pourInput(e.date_reception),
     })
@@ -272,7 +273,7 @@ export default function ExpeditionsPage() {
       transporteur_telephone: formulaire.transporteur_telephone.trim() || null,
       pays: formulaire.pays.trim(),
       pays_code: formulaire.pays_code || null,
-      pays_destination_id: formulaire.pays_destination_id || null,
+      entrepot_destination_id: formulaire.entrepot_destination_id || null,
       date_expedition: formulaire.date_expedition || null,
     }
     // La date de réception appartient au responsable : c'est lui qui constate
@@ -388,7 +389,7 @@ export default function ExpeditionsPage() {
       e.reference, e.poids_kg ?? '', e.mode_transport || '', e.details || '',
       nbProduits[e.id] ? `${nbProduits[e.id].articles} produits / ${nbProduits[e.id].pieces} pieces` : '',
       e.transporteur || '', e.transporteur_telephone || '', e.pays || '',
-      listePays.find((p) => p.id === e.pays_destination_id)?.nom || '',
+      entrepots.find((x) => x.id === e.entrepot_destination_id)?.nom || '',
       e.date_expedition ? dateCourte(e.date_expedition) : '',
       e.date_reception ? dateCourte(e.date_reception) : '',
       STATUTS[e.statut]?.label || e.statut, nomVendeur(e.vendeur_id), e.motif_refus || '',
@@ -662,9 +663,9 @@ export default function ExpeditionsPage() {
                           {e.pays_code && <span className="text-base leading-none">{drapeau(e.pays_code)}</span>}
                           {e.pays || '—'}
                         </div>
-                        {e.pays_destination_id && (
+                        {e.entrepot_destination_id && (
                           <div className="text-xs text-[#1B2632]/50 mt-0.5">
-                            → {listePays.find((p) => p.id === e.pays_destination_id)?.nom || '—'}
+                            → {entrepots.find((x) => x.id === e.entrepot_destination_id)?.nom || '—'}
                           </div>
                         )}
                       </td>
@@ -984,15 +985,15 @@ export default function ExpeditionsPage() {
                   <div className="flex flex-col gap-5">
                     <Bloc titre="Entrepôt">
                       <div>
-                        <label className="ex-label">Vers (pays de l&apos;entrepôt) *</label>
-                        <select className="ex-input" required value={formulaire.pays_destination_id}
-                          onChange={(ev) => setFormulaire({ ...formulaire, pays_destination_id: ev.target.value })}>
+                        <label className="ex-label">Vers (entrepôt) *</label>
+                        <select className="ex-input" required value={formulaire.entrepot_destination_id}
+                          onChange={(ev) => setFormulaire({ ...formulaire, entrepot_destination_id: ev.target.value })}>
                           <option value="">Choisir...</option>
-                          {listePays.map((p) => <option key={p.id} value={p.id}>{p.nom}</option>)}
+                          {entrepots.map((en) => <option key={en.id} value={en.id}>{en.nom}{en.pays?.nom ? ` — ${en.pays.nom}` : ''}</option>)}
                         </select>
-                        {listePays.length === 0 && (
+                        {entrepots.length === 0 && (
                           <p className="text-[11px] text-[#A35139] mt-1">
-                            Aucun pays configuré. À ajouter dans Paramètres.
+                            Aucun entrepôt. À créer dans Paramètres → Entrepôts.
                           </p>
                         )}
                       </div>

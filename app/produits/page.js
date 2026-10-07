@@ -93,7 +93,7 @@ export default function ProduitsPage() {
   const [analyseOuverte, setAnalyseOuverte] = useState(false)
 
   const [entrepots, setEntrepots] = useState([])
-  const [entrepotsDuProduit, setEntrepotsDuProduit] = useState([])
+  const [entrepotsChoisis, setEntrepotsChoisis] = useState([])
   const [stocks, setStocks] = useState([])
   const [mouvements, setMouvements] = useState([])
   const [ficheOuverte, setFicheOuverte] = useState(null)
@@ -140,8 +140,9 @@ export default function ProduitsPage() {
     setStocks(stocks || [])
 
     const { data: entrepotsDB } = await supabase
-      .from('entrepots').select('id, nom, pays_id').eq('tenant_id', tenantKey).order('nom')
+      .from('entrepots').select('id, nom, pays_id, pays(nom)').eq('tenant_id', tenantKey).order('nom')
     setEntrepots(entrepotsDB || [])
+
 
     const regroupe = {}
     for (const s of stocks || []) {
@@ -238,7 +239,7 @@ export default function ProduitsPage() {
 
   function ouvrirCreation() {
     setFormulaire(VIDE)
-    setEntrepotsDuProduit([])
+    setEntrepotsChoisis([])
     setIdEnEdition(null)
     setModaleOuverte(true)
   }
@@ -253,7 +254,7 @@ export default function ProduitsPage() {
       description: p.description || '',
       product_page: p.product_page || '', statut: p.statut || 'actif',
     })
-    setEntrepotsDuProduit(stocks.filter((st) => st.produit_id === p.id).map((st) => st.entrepot_id))
+    setEntrepotsChoisis(stocks.filter((st) => st.produit_id === p.id).map((st) => st.entrepot_id))
     setIdEnEdition(p.id)
     setModaleOuverte(true)
   }
@@ -311,13 +312,13 @@ export default function ProduitsPage() {
       return annonce("Aucune modification enregistrée : votre rôle ne permet pas de gérer les produits.", 'erreur')
     }
 
-    // Les entrepôts cochés deviennent des lignes de stock à zéro. On n'ajoute
-    // que ce qui manque et on ne retire que ce qui est encore vide : supprimer
-    // une ligne qui contient de la marchandise effacerait un inventaire.
+    // Les entrepôts choisis deviennent des lignes de stock à zéro. On ne
+    // retire que celles encore vides : supprimer une ligne qui contient de
+    // la marchandise effacerait un inventaire d'un clic.
     const produitId = data[0].id
     const dejaLa = stocks.filter((st) => st.produit_id === produitId)
-    const aCreer = entrepotsDuProduit.filter((eid) => !dejaLa.some((st) => st.entrepot_id === eid))
-    const aRetirer = dejaLa.filter((st) => !entrepotsDuProduit.includes(st.entrepot_id))
+    const aCreer = entrepotsChoisis.filter((eid) => !dejaLa.some((st) => st.entrepot_id === eid))
+    const aRetirer = dejaLa.filter((st) => !entrepotsChoisis.includes(st.entrepot_id))
 
     if (aCreer.length > 0) {
       const { error: errStock } = await supabase.from('stocks').insert(
@@ -343,7 +344,7 @@ export default function ProduitsPage() {
 
     if (pleins.length > 0) {
       annonce(
-        `Produit enregistré. ${pleins.length} entrepôt${pleins.length > 1 ? 's ont' : ' a'} été conservé${pleins.length > 1 ? 's' : ''} : il y reste de la marchandise. Videz le stock avant de les retirer.`,
+        `Produit enregistré. ${pleins.length} entrepôt${pleins.length > 1 ? 's gardés' : ' gardé'} : il y reste de la marchandise. Videz le stock avant de le retirer.`,
         'erreur',
       )
       setModaleOuverte(false)
@@ -421,6 +422,9 @@ export default function ProduitsPage() {
         .pr-input { width:100%; border:1px solid #C9C1B1; border-radius:10px; padding:10px 12px; font-size:14px; outline:none; background:#fff; }
         .pr-input:focus { border-color:#1B2632; box-shadow:0 0 0 2px rgba(27,38,50,.05); }
         .pr-label { display:block; font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:rgba(27,38,50,.7); margin-bottom:6px; }
+        .ch-input { width:100%; border:none; outline:none; background:transparent; font-size:15px; color:#1B2632; padding:4px 0 6px; }
+        .ch-input::placeholder { color:rgba(27,38,50,.3); }
+        select.ch-input { cursor:pointer; }
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
@@ -857,165 +861,118 @@ export default function ProduitsPage() {
           <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center">
             <form
               onSubmit={enregistrer}
-              className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[720px] my-8 pop-in"
+              className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-8 pop-in"
             >
-              <div className="flex justify-between items-center px-6 py-5 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-t-2xl">
-                <h2 className="text-lg font-bold text-[#1B2632]">
+              <div className="flex items-center gap-3 px-8 pt-7 pb-6">
+                <button
+                  type="button" onClick={() => setModaleOuverte(false)} title="Retour"
+                  className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+                </button>
+                <h2 className="text-2xl font-bold text-[#A35139]">
                   {idEnEdition ? 'Modifier le produit' : 'Nouveau produit'}
                 </h2>
-                <button type="button" onClick={() => setModaleOuverte(false)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">✕</button>
               </div>
 
-              <div className="p-6 flex flex-col gap-6">
+              <div className="px-8 pb-2 grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-5">
-                  <div>
-                    <label className="pr-label">Nom *</label>
-                    <input className="pr-input" value={formulaire.product} required
-                      onChange={(e) => setFormulaire({ ...formulaire, product: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="pr-label">Description</label>
-                    <input className="pr-input" value={formulaire.description}
-                      onChange={(e) => setFormulaire({ ...formulaire, description: e.target.value })} />
-                  </div>
+                <Champ label="Nom" requis>
+                  <input className="ch-input" value={formulaire.product} required
+                    onChange={(e) => setFormulaire({ ...formulaire, product: e.target.value })} />
+                </Champ>
 
-                  <div>
-                    <label className="pr-label">Code (SKU)</label>
-                    <input className="pr-input font-mono" placeholder="Ajouter un code" value={formulaire.code}
-                      onChange={(e) => setFormulaire({ ...formulaire, code: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="pr-label">Code variante</label>
-                    <input className="pr-input font-mono" value={formulaire.code_variante}
-                      onChange={(e) => setFormulaire({ ...formulaire, code_variante: e.target.value })} />
-                  </div>
+                <Champ label="Description">
+                  <input className="ch-input" value={formulaire.description}
+                    onChange={(e) => setFormulaire({ ...formulaire, description: e.target.value })} />
+                </Champ>
 
-                  <div>
-                    <label className="pr-label">Lien de vérification *</label>
-                    <input className="pr-input" type="url" required placeholder="https://..."
-                      value={formulaire.product_page}
-                      onChange={(e) => setFormulaire({ ...formulaire, product_page: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="pr-label">Vendeur</label>
-                    <input className="pr-input" value={formulaire.seller}
-                      onChange={(e) => setFormulaire({ ...formulaire, seller: e.target.value })} />
-                  </div>
-                </div>
+                <Champ label="Code">
+                  <input className="ch-input font-mono" placeholder="Ajouter un code" value={formulaire.code}
+                    onChange={(e) => setFormulaire({ ...formulaire, code: e.target.value })} />
+                </Champ>
 
-                <div className="border-t border-[#C9C1B1]/50 pt-5">
-                  <p className="pr-label mb-3">Entrepôts *</p>
-                  {entrepots.length === 0 ? (
-                    <p className="text-sm text-[#A35139]">
-                      Aucun entrepôt configuré. À créer dans Paramètres → Entrepôts.
+                <Champ label="Code variante">
+                  <input className="ch-input font-mono" value={formulaire.code_variante}
+                    onChange={(e) => setFormulaire({ ...formulaire, code_variante: e.target.value })} />
+                </Champ>
+
+                <Champ label="Lien de vérification" requis>
+                  <input className="ch-input" type="url" required placeholder="https://..."
+                    value={formulaire.product_page}
+                    onChange={(e) => setFormulaire({ ...formulaire, product_page: e.target.value })} />
+                </Champ>
+
+                {/* L'image attend son espace de stockage. Garder la place vide
+                    plutôt qu'un bouton qui ne fait rien : un bouton mort, on
+                    l'essaie, et on croit que c'est cassé. */}
+                <Champ label="Image">
+                  <div className="h-[132px] flex items-center justify-center text-center">
+                    <p className="text-sm text-[#1B2632]/40 px-6">
+                      Bientôt. Il reste à créer l&apos;espace de stockage dans Supabase.
                     </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {entrepots.map((en) => {
-                        const coche = entrepotsDuProduit.includes(en.id)
-                        const ligne = stocks.find((st) => st.produit_id === idEnEdition && st.entrepot_id === en.id)
-                        const occupe = ligne && (ligne.quantite_disponible > 0 || ligne.quantite_defectueuse > 0)
-                        return (
+                  </div>
+                </Champ>
+
+                <Champ label="Entrepôts" requis>
+                  <div className="flex flex-wrap items-center gap-1.5 py-0.5">
+                    {entrepotsChoisis.map((eid) => {
+                      const en = entrepots.find((x) => x.id === eid)
+                      const ligne = stocks.find((st) => st.produit_id === idEnEdition && st.entrepot_id === eid)
+                      const occupe = ligne && (ligne.quantite_disponible > 0 || ligne.quantite_defectueuse > 0)
+                      return (
+                        <span key={eid} className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded bg-[#EEE9DF] border border-[#C9C1B1] text-sm text-[#1B2632]">
+                          {en ? en.nom : 'Entrepôt supprimé'}
+                          {occupe && <span className="text-[11px] text-[#1B2632]/50">{ligne.quantite_disponible}</span>}
                           <button
-                            key={en.id} type="button"
-                            onClick={() => setEntrepotsDuProduit((prec) =>
-                              prec.includes(en.id) ? prec.filter((x) => x !== en.id) : [...prec, en.id])}
-                            className={`px-3.5 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                              coche
-                                ? 'bg-[#1B2632] text-white border-[#1B2632]'
-                                : 'bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
-                            }`}
+                            type="button" title="Retirer"
+                            onClick={() => setEntrepotsChoisis((prec) => prec.filter((x) => x !== eid))}
+                            className="text-[#1B2632]/40 hover:text-[#A35139] transition-colors leading-none text-base"
                           >
-                            {en.nom}
-                            {occupe && (
-                              <span className={`ml-2 text-[11px] ${coche ? 'text-white/70' : 'text-[#1B2632]/50'}`}>
-                                {ligne.quantite_disponible} en stock
-                              </span>
-                            )}
+                            ✕
                           </button>
-                        )
-                      })}
-                    </div>
+                        </span>
+                      )
+                    })}
+
+                    <select
+                      className="ch-input flex-1 min-w-[150px]"
+                      value=""
+                      onChange={(e) => {
+                        if (!e.target.value) return
+                        setEntrepotsChoisis((prec) => [...prec, e.target.value])
+                      }}
+                    >
+                      <option value="">
+                        {entrepotsChoisis.length === 0 ? 'Choisir un entrepôt...' : 'Ajouter...'}
+                      </option>
+                      {entrepots
+                        .filter((en) => !entrepotsChoisis.includes(en.id))
+                        .map((en) => (
+                          <option key={en.id} value={en.id}>
+                            {en.nom}{en.pays?.nom ? ` — ${en.pays.nom}` : ''}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {entrepots.length === 0 && (
+                    <p className="text-[11px] text-[#A35139] mt-1">
+                      Aucun entrepôt. À créer dans Paramètres → Entrepôts.
+                    </p>
                   )}
-                  <p className="text-[11px] text-[#1B2632]/50 mt-2">
-                    Un entrepôt décoché n&apos;est retiré que s&apos;il est vide : on n&apos;efface pas un inventaire d&apos;un clic.
-                  </p>
-                </div>
+                </Champ>
 
-                <div className="border-t border-[#C9C1B1]/50 pt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="pr-label">Type</label>
-                    <select className="pr-input" value={formulaire.type}
-                      onChange={(e) => setFormulaire({ ...formulaire, type: e.target.value })}>
-                      {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="pr-label">Prix *</label>
-                    <input type="number" step="0.01" className="pr-input" required value={formulaire.price}
-                      onChange={(e) => setFormulaire({ ...formulaire, price: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="pr-label">Statut</label>
-                    <select className="pr-input" value={formulaire.statut}
-                      onChange={(e) => setFormulaire({ ...formulaire, statut: e.target.value })}>
-                      <option value="actif">Actif</option>
-                      <option value="inactif">Inactif</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="pr-label">Quantité en stock</label>
-                    <input type="number" className="pr-input" value={formulaire.current_quantity}
-                      onChange={(e) => setFormulaire({ ...formulaire, current_quantity: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="pr-label">Quantité totale</label>
-                    <input type="number" className="pr-input" value={formulaire.quantite_totale}
-                      onChange={(e) => setFormulaire({ ...formulaire, quantite_totale: e.target.value })} />
-                    <p className="text-[11px] text-[#1B2632]/50 mt-1">Laissée vide, elle vaut stock + défectueux.</p>
-                  </div>
-                  <div>
-                    <label className="pr-label">Quantité défectueuse</label>
-                    <input type="number" className="pr-input" value={formulaire.defected_quantity}
-                      onChange={(e) => setFormulaire({ ...formulaire, defected_quantity: e.target.value })} />
-                  </div>
-                </div>
-
-                <div className="border-t border-[#C9C1B1]/50 pt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="pr-label">Up-sell</label>
-                    {/* Un produit du catalogue, pas un mot : « coffret » ne disait
-                        pas lequel, et un renommage laissait un texte orphelin. */}
-                    <select className="pr-input" value={formulaire.upsell_produit_id}
-                      onChange={(e) => setFormulaire({ ...formulaire, upsell_produit_id: e.target.value })}>
-                      <option value="">Non utilisé</option>
-                      {produits.filter((x) => x.id !== idEnEdition && (x.statut || 'actif') === 'actif')
-                        .map((x) => <option key={x.id} value={x.id}>{x.product}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="pr-label">Cross-sell</label>
-                    <select className="pr-input" value={formulaire.crosssell_produit_id}
-                      onChange={(e) => setFormulaire({ ...formulaire, crosssell_produit_id: e.target.value })}>
-                      <option value="">Non utilisé</option>
-                      {produits.filter((x) => x.id !== idEnEdition && (x.statut || 'actif') === 'actif')
-                        .map((x) => <option key={x.id} value={x.id}>{x.product}</option>)}
-                    </select>
-                  </div>
-                </div>
-
+                <Champ label="Vendeur">
+                  <input className="ch-input" value={formulaire.seller}
+                    onChange={(e) => setFormulaire({ ...formulaire, seller: e.target.value })} />
+                </Champ>
               </div>
 
-              <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-b-2xl">
-                <button type="button" onClick={() => setModaleOuverte(false)} className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
-                  Annuler
-                </button>
-                <button type="submit" disabled={enregistrement} className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors disabled:opacity-50">
-                  {enregistrement ? 'Enregistrement...' : idEnEdition ? 'Enregistrer' : 'Ajouter le produit'}
+              <div className="px-8 py-8 flex justify-center">
+                <button type="submit" disabled={enregistrement}
+                  className="px-20 py-3.5 rounded-xl text-base font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors disabled:opacity-50 shadow-sm">
+                  {enregistrement ? 'Enregistrement...' : 'Enregistrer'}
                 </button>
               </div>
             </form>
@@ -1023,6 +980,21 @@ export default function ProduitsPage() {
         </>
       )}
     </div>
+  )
+}
+
+// Le libellé posé sur le trait du cadre, comme dans ShipLead. Un <fieldset>
+// et sa <legend> font ça nativement : le navigateur ouvre le trait à la bonne
+// largeur tout seul, sans calcul ni position absolue à ajuster.
+function Champ({ label, requis, aide, children }) {
+  return (
+    <fieldset className="border border-[#C9C1B1] rounded-lg px-3.5 pb-2.5 pt-1 focus-within:border-[#1B2632] transition-colors">
+      <legend className="px-1.5 text-xs font-medium text-[#1B2632]/70">
+        {label}{requis && <span className="text-[#A35139]"> *</span>}
+      </legend>
+      {children}
+      {aide && <p className="text-[11px] text-[#1B2632]/40 mt-1">{aide}</p>}
+    </fieldset>
   )
 }
 
