@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -93,6 +93,24 @@ export default function GestionCommandesPage() {
   const [personnel, setPersonnel] = useState([])
   const [filtreVendeur, setFiltreVendeur] = useState('')
 
+  // Les filtres sont saisis d'un côté et appliqués de l'autre : tant qu'on
+  // n'a pas cliqué « Filtrer », la liste ne bouge pas. Sans ça, chaque
+  // caractère tapé relance une requête sur toute la table.
+  const CHAMPS_RECHERCHE = [
+    { cle: 'tracking_number', nom: 'N° de suivi' },
+    { cle: 'lead_id', nom: 'Lead ID' },
+    { cle: 'client_telephone', nom: 'Téléphone client' },
+    { cle: 'client_nom', nom: 'Nom du client' },
+    { cle: 'ville_zone', nom: 'Ville / Zone' },
+  ]
+  const FILTRES_VIDES = { statut: '', produit: '', agent: '', source: '', du: '', au: '' }
+  const [champRecherche, setChampRecherche] = useState('tracking_number')
+  const [recherche, setRecherche] = useState('')
+  const [filtres, setFiltres] = useState(FILTRES_VIDES)
+  const [filtresActifs, setFiltresActifs] = useState({ ...FILTRES_VIDES, champ: 'tracking_number', texte: '' })
+  const [panneauOuvert, setPanneauOuvert] = useState(false)
+  const [detail, setDetail] = useState(null)
+
   const listeSellers = personnel.filter((p) => p.role === 'seller')
   const nomDuVendeur = (id) => {
     if (!id) return null
@@ -140,6 +158,36 @@ export default function GestionCommandesPage() {
     if (sellersData) setPersonnel(sellersData)
   }, [tenantKey])
 
+  // Les produits et les sources proposés viennent de ce qui existe vraiment
+  // dans la page : une liste fixe finirait par proposer des produits retirés
+  // et par taire les nouveaux.
+  const produitsConnus = useMemo(
+    () => [...new Set(commandes.map((c) => c.produit).filter(Boolean))].sort(),
+    [commandes],
+  )
+  const sourcesConnues = useMemo(
+    () => [...new Set(commandes.map((c) => c.source).filter(Boolean))].sort(),
+    [commandes],
+  )
+  const nombreFiltresActifs = [
+    filtresActifs.statut, filtresActifs.produit, filtresActifs.agent,
+    filtresActifs.source, filtresActifs.du, filtresActifs.au,
+  ].filter(Boolean).length
+
+  function appliquerFiltres() {
+    setFiltresActifs({ ...filtres, champ: champRecherche, texte: recherche })
+    setPageActuelle(0)
+    setPanneauOuvert(false)
+  }
+
+  function reinitialiserFiltres() {
+    setFiltres(FILTRES_VIDES)
+    setRecherche('')
+    setChampRecherche('tracking_number')
+    setFiltresActifs({ ...FILTRES_VIDES, champ: 'tracking_number', texte: '' })
+    setPageActuelle(0)
+  }
+
   // CHARGEMENT DES COMMANDES (Récupère TOUTES les colonnes de la base)
   const chargerCommandes = useCallback(async (page) => {
     if (!tenantKey) return
@@ -158,6 +206,25 @@ export default function GestionCommandesPage() {
     else if (filtreVendeur === 'aucun') requete = requete.is('vendeur_id', null)
     else if (filtreVendeur) requete = requete.eq('vendeur_id', filtreVendeur)
 
+    const f = filtresActifs
+    if (f.texte) {
+      // Les caractères de la syntaxe PostgREST sont retirés : un « , » ou une
+      // parenthèse tapés par erreur casseraient la requête au lieu de ne rien
+      // trouver.
+      const t = f.texte.replace(/[%,()]/g, '').trim()
+      if (t) requete = requete.ilike(f.champ, `%${t}%`)
+    }
+    if (f.statut === 'aucun') requete = requete.is('statut_confirmation', null)
+    else if (f.statut) requete = requete.eq('statut_confirmation', f.statut)
+    if (f.produit) requete = requete.eq('produit', f.produit)
+    if (f.agent === 'aucun') requete = requete.is('agent_id', null)
+    else if (f.agent) requete = requete.eq('agent_id', f.agent)
+    if (f.source) requete = requete.eq('source', f.source)
+    if (f.du) requete = requete.gte('created_at', f.du)
+    // La borne haute couvre la journée entière : sans l'heure, « au 10 » exclut
+    // tout ce qui est arrivé le 10.
+    if (f.au) requete = requete.lte('created_at', `${f.au}T23:59:59`)
+
     const { data, count, error } = await requete
       .order('created_at', { ascending: false })
       .range(debut, fin)
@@ -169,7 +236,7 @@ export default function GestionCommandesPage() {
       setTotalCommandes(count || 0)
     }
     setChargement(false)
-  }, [tenantKey, estSeller, user?.id, filtreVendeur])
+  }, [tenantKey, estSeller, user?.id, filtreVendeur, filtresActifs])
 
   useEffect(() => {
     if (authLoading || permsLoading || !tenantKey) return
@@ -397,6 +464,13 @@ export default function GestionCommandesPage() {
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1600px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
+      <style>{`
+        .cm-label { display:block; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(27,38,50,.55); margin-bottom:6px; }
+        .cm-input { width:100%; border:1px solid #C9C1B1; border-radius:10px; padding:9px 11px; font-size:14px; outline:none; background:#fff; color:#1B2632; }
+        .cm-input:focus { border-color:#1B2632; box-shadow:0 0 0 2px rgba(27,38,50,.05); }
+        @keyframes popInCm { from { opacity:0; transform:translateY(-6px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
+        .pop-in-cm { animation: popInCm .18s ease-out; }
+      `}</style>
       
       {/* En-tête */}
       <header className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 border-b border-[#C9C1B1]/50 pb-4">
@@ -459,6 +533,129 @@ export default function GestionCommandesPage() {
         </div>
       </header>
 
+      {/* Barre de recherche et filtres */}
+      <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm">
+        {/* Téléphone : chaque élément sur sa ligne, en pleine largeur.
+            Ordinateur : une seule barre. Collés en une rangée sur un écran
+            de 360 px, le champ de saisie tombait sous les 80 px. */}
+        <div className="p-3 flex flex-col sm:flex-row sm:items-stretch gap-2 sm:gap-0">
+          <select
+            value={champRecherche}
+            onChange={(e) => setChampRecherche(e.target.value)}
+            className="px-3 py-2.5 bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl sm:rounded-l-xl sm:rounded-r-none sm:border-r-0 text-sm font-semibold text-[#1B2632] outline-none cursor-pointer"
+          >
+            {CHAMPS_RECHERCHE.map((c) => <option key={c.cle} value={c.cle}>{c.nom}</option>)}
+          </select>
+
+          <input
+            type="text"
+            inputMode={champRecherche === 'client_telephone' ? 'tel' : 'text'}
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') appliquerFiltres() }}
+            placeholder={CHAMPS_RECHERCHE.find((c) => c.cle === champRecherche)?.nom}
+            className="flex-1 min-w-0 px-4 py-2.5 border border-[#C9C1B1] sm:border-x-0 rounded-xl sm:rounded-none text-sm text-[#1B2632] outline-none focus:border-[#FFB162] placeholder:text-[#1B2632]/30"
+          />
+
+          <div className="flex gap-2 sm:gap-0">
+            <button
+              onClick={appliquerFiltres}
+              className="flex-1 sm:flex-none px-4 py-2.5 sm:py-0 rounded-xl sm:rounded-none bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors flex items-center justify-center gap-2 font-semibold text-sm"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
+              <span className="sm:hidden">Rechercher</span>
+            </button>
+
+            <button
+              onClick={() => setPanneauOuvert((o) => !o)}
+              className={`flex-1 sm:flex-none px-4 py-2.5 sm:py-0 rounded-xl sm:rounded-l-none sm:rounded-r-xl border transition-colors flex items-center justify-center gap-2 font-semibold text-sm ${
+                panneauOuvert || nombreFiltresActifs > 0
+                  ? 'bg-[#1B2632] text-white border-[#1B2632]'
+                  : 'bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
+              }`}
+            >
+              <span className="sm:hidden">Filtres</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                   style={{ transform: panneauOuvert ? 'rotate(180deg)' : 'none' }}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+              {nombreFiltresActifs > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FFB162] text-[#1B2632] text-[11px] font-bold flex items-center justify-center">
+                  {nombreFiltresActifs}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {panneauOuvert && (
+          <div className="border-t border-[#C9C1B1]/50 px-5 py-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div>
+                <label className="cm-label">Statut</label>
+                <select className="cm-input" value={filtres.statut}
+                  onChange={(e) => setFiltres({ ...filtres, statut: e.target.value })}>
+                  <option value="">Tous</option>
+                  <option value="aucun">Pas encore traité</option>
+                  {listeStatutsDB.map((st) => <option key={st.id} value={st.nom}>{st.nom}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="cm-label">Produit</label>
+                <select className="cm-input" value={filtres.produit}
+                  onChange={(e) => setFiltres({ ...filtres, produit: e.target.value })}>
+                  <option value="">Tous</option>
+                  {produitsConnus.map((pr) => <option key={pr} value={pr}>{pr}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="cm-label">Agent</label>
+                <select className="cm-input" value={filtres.agent}
+                  onChange={(e) => setFiltres({ ...filtres, agent: e.target.value })}>
+                  <option value="">Tous</option>
+                  <option value="aucun">Non affecté</option>
+                  {agents.map((a) => <option key={a.id} value={a.id}>{a.nom}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="cm-label">Source</label>
+                <select className="cm-input" value={filtres.source}
+                  onChange={(e) => setFiltres({ ...filtres, source: e.target.value })}>
+                  <option value="">Toutes</option>
+                  {sourcesConnues.map((so) => <option key={so} value={so}>{so}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="cm-label">Arrivée</label>
+                <div className="flex flex-col sm:flex-row items-stretch gap-1.5">
+                  <input type="date" className="cm-input" value={filtres.du}
+                    onChange={(e) => setFiltres({ ...filtres, du: e.target.value })} />
+                  <input type="date" className="cm-input" value={filtres.au}
+                    onChange={(e) => setFiltres({ ...filtres, au: e.target.value })} />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-center gap-3 mt-5">
+              <button onClick={reinitialiserFiltres}
+                className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 2v6h6" /><path d="M3.5 13a9 9 0 1 0 2.6-5.4L3 8" /></svg>
+                Réinitialiser
+              </button>
+              <button onClick={appliquerFiltres}
+                className="flex items-center justify-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+                Filtrer
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Tableau ultra-enrichi affichant le max de colonnes de la DB */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
         <div className="overflow-auto min-h-[500px] max-h-[72vh]">
@@ -473,13 +670,14 @@ export default function GestionCommandesPage() {
                 <th className="px-4 py-3.5">Produit, Qté & Prix</th>
                 <th className="px-4 py-3.5">Statuts (Conf. / Liv. / Paiement)</th>
                 <th className="px-4 py-3.5">Commentaires & Notes</th>
+                <th className="px-4 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan={estSeller ? 7 : 8} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
+                <tr><td colSpan={estSeller ? 8 : 9} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan={estSeller ? 7 : 8} className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
+                <tr><td colSpan={estSeller ? 8 : 9} className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
               ) : (
                 commandes.map((cmd) => (
                   <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
@@ -554,7 +752,15 @@ export default function GestionCommandesPage() {
                       {cmd.notes && <div className="text-gray-600 italic" title="Notes">📝 {cmd.notes}</div>}
                       {!cmd.commentaire_1 && !cmd.commentaire_2 && !cmd.notes && <span className="text-gray-400">-</span>}
                     </td>
-                    
+
+                    <td className="px-4 py-3 align-top text-right">
+                      <button
+                        onClick={() => setDetail(cmd)} title="Voir le détail"
+                        className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-[#1B2632]/50 hover:text-[#1B2632] hover:bg-[#EEE9DF] transition-colors"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -679,6 +885,131 @@ export default function GestionCommandesPage() {
         </div>
       )}
 
+
+      {detail && (
+        <>
+          <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setDetail(null)} />
+          <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center">
+            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1100px] my-8 pop-in-cm">
+
+              <div className="flex items-center gap-3 px-8 pt-7 pb-6">
+                <button
+                  onClick={() => setDetail(null)} title="Retour"
+                  className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+                </button>
+                <h2 className="text-2xl font-bold text-[#A35139]">Détail de la commande</h2>
+              </div>
+
+              <div className="px-8 pb-8 flex flex-col gap-5">
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                  <CarteDetail titre="Commande">
+                    <LigneDetail label="Lead ID" valeur={detail.lead_id} mono />
+                    <LigneDetail label="N° de suivi" valeur={detail.tracking_number} mono />
+                    <LigneDetail label="Source" valeur={detail.source} />
+                    <LigneDetail label="Pays" valeur={detail.pays?.nom} />
+                    <LigneDetail label="Ville / Zone" valeur={detail.ville_zone} />
+                    <LigneDetail
+                      label="Arrivée"
+                      valeur={detail.created_at ? new Date(detail.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                    />
+                    <LigneDetail
+                      label="Rappel prévu"
+                      valeur={detail.date_rappel ? new Date(detail.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                    />
+                  </CarteDetail>
+
+                  <CarteDetail titre="Client">
+                    <LigneDetail label="Nom" valeur={detail.client_nom} />
+                    {detail.client_telephone ? (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">Téléphone</span>
+                        {/* Cliquable : l'agent appelle depuis le téléphone sans
+                            recopier le numéro, et ne se trompe pas d'un chiffre. */}
+                        <a href={`tel:${detail.client_telephone}`}
+                          className="text-sm font-mono font-semibold text-[#A35139] hover:underline">
+                          {detail.client_telephone}
+                        </a>
+                      </div>
+                    ) : <LigneDetail label="Téléphone" valeur={null} />}
+                    <LigneDetail label="Adresse" valeur={detail.adresse} />
+                  </CarteDetail>
+
+                  <CarteDetail titre="Traitement">
+                    <LigneDetail label="Agent" valeur={detail.agents?.nom} />
+                    <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.vendeur_id)} />
+                    <LigneDetail label="Statut d'appel" valeur={detail.statut_confirmation} />
+                    <LigneDetail label="Livraison" valeur={detail.statut_livraison} />
+                    <LigneDetail label="Paiement" valeur={detail.statut_paiement} />
+                    <LigneDetail
+                      label="Dernière MAJ"
+                      valeur={detail.updated_at ? new Date(detail.updated_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                    />
+                  </CarteDetail>
+                </div>
+
+                <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50">
+                    <h3 className="text-sm font-bold text-[#1B2632]">Produit commandé</h3>
+                  </div>
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
+                        <th className="px-5 py-2.5">Produit</th>
+                        <th className="px-5 py-2.5 text-right">Quantité</th>
+                        <th className="px-5 py-2.5 text-right">Prix</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-[#C9C1B1]/30">
+                        <td className="px-5 py-3 font-semibold text-[#1B2632]">{detail.produit || '—'}</td>
+                        <td className="px-5 py-3 text-right font-mono">{detail.quantite ?? 1}</td>
+                        <td className="px-5 py-3 text-right font-mono font-bold">
+                          {detail.prix ?? '—'} <span className="text-xs font-normal text-[#1B2632]/50">{detail.pays?.devise || ''}</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {(detail.commentaire_1 || detail.commentaire_2 || detail.notes) && (
+                  <div className="border border-[#C9C1B1] rounded-xl p-5">
+                    <h3 className="text-sm font-bold text-[#1B2632] mb-3">Commentaires</h3>
+                    <div className="flex flex-col gap-2 text-sm">
+                      {detail.commentaire_1 && <p className="text-amber-900 italic">{detail.commentaire_1}</p>}
+                      {detail.commentaire_2 && <p className="text-purple-900 italic">{detail.commentaire_2}</p>}
+                      {detail.notes && <p className="text-[#1B2632]/70 italic">{detail.notes}</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+function CarteDetail({ titre, children }) {
+  return (
+    <div className="border border-[#C9C1B1] rounded-xl p-5">
+      <h3 className="text-sm font-bold text-[#1B2632] mb-3.5">{titre}</h3>
+      <div className="flex flex-col gap-2">{children}</div>
+    </div>
+  )
+}
+
+// Une ligne vide est affichée en « — » plutôt que masquée : savoir qu'une
+// adresse manque vaut mieux que ne pas voir la ligne du tout.
+function LigneDetail({ label, valeur, mono }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">{label}</span>
+      <span className={`text-sm text-[#1B2632] ${mono ? 'font-mono font-semibold' : 'font-medium'} ${!valeur ? 'opacity-40' : ''}`}>
+        {valeur || '—'}
+      </span>
     </div>
   )
 }

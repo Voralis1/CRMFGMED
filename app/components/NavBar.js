@@ -44,7 +44,11 @@ export default function NavBar({ isOpen, toggleMenu }) {
 
   // 🚀 FILTRAGE DYNAMIQUE : On ne garde que les liens dont l'utilisateur a la permission
   const liensVisibles = TOUS_LES_LIENS.filter((lien) => 
-    !lien.permission || hasPermission(lien.permission)
+    !lien.permission && !lien.permissions
+      ? true
+      : lien.permissions
+        ? lien.permissions.some((code) => hasPermission(code))
+        : hasPermission(lien.permission)
   )
   
   const liensSuperAdminVisibles = LIENS_SUPER_ADMIN.filter((lien) => 
