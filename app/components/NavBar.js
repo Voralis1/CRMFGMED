@@ -17,7 +17,6 @@ const TOUS_LES_LIENS = [
   { href: '/produits', label: 'Produits', permission: 'menu_produits' },
   { href: '/expeditions', label: 'Expéditions', permission: 'menu_expeditions' },
   { href: '/utilisateurs', label: 'Utilisateurs', permission: 'menu_utilisateurs' },
-  { href: '/sources-import', label: 'Sources d\'import', permission: 'menu_sources_import' },
   { href: '/parametres', label: 'Paramètres', permission: 'menu_parametres' },
   { href: '/profile', label: 'Profil' }, 
   // Pas de permission = accessible à tous ceux connectés

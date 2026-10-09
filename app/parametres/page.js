@@ -8,7 +8,13 @@ import { usePermissions } from "../context/PermissionsContext";
 
 export default function ParametresAdmin() {
   const { user, tenantId, loading: authLoading } = useAuth();
-  const { hasPermission, loading: permsLoading } = usePermissions();
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
+
+  // Qui crée, corrige et supprime un entrepôt. Pas le seller : un entrepôt est
+  // un lieu physique de l'entreprise, pas quelque chose qu'un vendeur externe
+  // doit connaître — il ne voit d'ailleurs que le pays à l'import.
+  const peutGererEntrepots = ['admin', 'manager', 'super_admin']
+    .includes(String(roleNom || '').toLowerCase());
   const router = useRouter();
 
   const [ongletActif, setOngletActif] = useState("produits");
@@ -45,7 +51,7 @@ export default function ParametresAdmin() {
 
   // --- États Entrepôts ---
   const [listeEntrepots, setListeEntrepots] = useState([]);
-  const [nouvelEntrepot, setNouvelEntrepot] = useState({ nom: "", localisation: "" });
+  const [nouvelEntrepot, setNouvelEntrepot] = useState({ ville: "", pays_id: "" });
 
   // --- États Stocks & Mouvements ---
   const [listeStocks, setListeStocks] = useState([]);
@@ -195,10 +201,72 @@ export default function ParametresAdmin() {
   // =====================================================================
   async function ajouterEntrepot(e) {
     e.preventDefault();
-    if (!tenantId || !nouvelEntrepot.nom) return;
-    const { error } = await supabase.from("entrepots").insert([{ nom: nouvelEntrepot.nom.trim(), localisation: nouvelEntrepot.localisation.trim(), tenant_id: tenantId }]);
+    if (!tenantId) return;
+    // Un entrepôt, c'est un pays et une ville. Rien d'autre : le « nom » et la
+    // « localisation » d'avant disaient deux fois la même chose, et personne
+    // ne savait lequel remplir.
+    if (!nouvelEntrepot.pays_id) return afficherMessage("Choisissez le pays de l'entrepôt.", "erreur");
+    if (!nouvelEntrepot.ville.trim()) return afficherMessage("Indiquez la ville de l'entrepôt.", "erreur");
+    const ville = nouvelEntrepot.ville.trim();
+    // Le pays décide, à l'import, quel agent reçoit les leads. Un entrepôt
+    // sans pays bloque l'import sans rien dire.
+    const { error } = await supabase.from("entrepots").insert([{
+      nom: ville, localisation: ville, pays_id: nouvelEntrepot.pays_id, tenant_id: tenantId,
+    }]);
     if (error) afficherMessage("Erreur lors de l'ajout de l'entrepôt : " + error.message, "erreur");
-    else { afficherMessage("Entrepôt ajouté avec succès.", "succes"); setNouvelEntrepot({ nom: "", localisation: "" }); chargerDonnees(); }
+    else { afficherMessage("Entrepôt ajouté avec succès.", "succes"); setNouvelEntrepot({ ville: "", pays_id: "" }); chargerDonnees(); }
+
+  }
+
+  async function supprimerEntrepot(entrepot) {
+    if (!tenantId) return;
+    // On annonce ce qui disparaît AVEC lui. Un entrepôt tient des lignes de
+    // stock et un historique de mouvements : les emporter sans le dire,
+    // c'est faire perdre des quantités sans que personne ne sache où.
+    const [{ count: nbStocks }, { count: nbMouvements }] = await Promise.all([
+      supabase.from("stocks").select("id", { count: "exact", head: true })
+        .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId),
+      supabase.from("mouvements_stock").select("id", { count: "exact", head: true })
+        .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId),
+    ]);
+
+    const emporte = [];
+    if (nbStocks) emporte.push(`${nbStocks} ligne(s) de stock`);
+    if (nbMouvements) emporte.push(`${nbMouvements} mouvement(s)`);
+
+    if (!window.confirm(
+      `Supprimer l'entrepôt « ${entrepot.nom} » ?\n\n` +
+      (emporte.length
+        ? `Seront supprimés avec lui : ${emporte.join(" et ")}. Les quantités qu'il contenait ne seront plus comptées nulle part.\n\n`
+        : "") +
+      "Les commandes et expéditions déjà enregistrées sont conservées ; elles perdront seulement le lien vers lui."
+    )) return;
+
+    // Dans cet ordre : les mouvements, puis les stocks, puis l'entrepôt.
+    // L'inverse échouerait sur une clé étrangère, à mi-chemin.
+    if (nbMouvements) {
+      const { error } = await supabase.from("mouvements_stock").delete()
+        .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId);
+      if (error) return afficherMessage("Suppression des mouvements refusée : " + error.message, "erreur");
+    }
+    if (nbStocks) {
+      const { error } = await supabase.from("stocks").delete()
+        .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId);
+      if (error) return afficherMessage("Suppression du stock refusée : " + error.message, "erreur");
+    }
+    const { error } = await supabase.from("entrepots").delete()
+      .eq("id", entrepot.id).eq("tenant_id", tenantId);
+    if (error) afficherMessage("Suppression refusée : " + error.message, "erreur");
+    else { afficherMessage("Entrepôt supprimé.", "succes"); chargerDonnees(); }
+  }
+
+  // Corriger le pays d'un entrepôt existant, directement dans la liste.
+  // Les entrepôts créés avant que cette colonne existe n'en ont aucun.
+  async function changerPaysEntrepot(id, paysId) {
+    if (!tenantId) return;
+    const { error } = await supabase.from("entrepots").update({ pays_id: paysId || null }).eq("id", id).eq("tenant_id", tenantId);
+    if (error) afficherMessage("Erreur : " + error.message, "erreur");
+    else { afficherMessage("Pays de l'entrepôt enregistré.", "succes"); chargerDonnees(); }
   }
 
   async function ajouterMouvement(e) {
@@ -260,6 +328,14 @@ export default function ParametresAdmin() {
     ),
   };
 
+  // Un onglet masqué ne doit pas rester affiché parce qu'il était ouvert
+  // avant que le rôle soit connu : on ramène sur le premier onglet.
+  useEffect(() => {
+    if (!permsLoading && !peutGererEntrepots && ongletActif === "entrepots") {
+      setOngletActif("pays");
+    }
+  }, [permsLoading, peutGererEntrepots, ongletActif]);
+
   // --- BOUTON ONGLET (style pilule) ---
   const TabButton = ({ id, label }) => (
     <button
@@ -297,7 +373,7 @@ export default function ParametresAdmin() {
           <TabButton id="zones" label="Zones de livraison" />
           <TabButton id="statuts" label="Statuts configurables" />
           <TabButton id="produits" label="Catalogue Produits" />
-          <TabButton id="entrepots" label="Entrepôts" />
+          {peutGererEntrepots && <TabButton id="entrepots" label="Entrepôts" />}
           <TabButton id="stocks" label="Mouvements de Stock" />
         </div>
       </header>
@@ -650,40 +726,67 @@ export default function ParametresAdmin() {
         )}
 
         {/* --- ONGLET ENTREPÔTS --- */}
-        {ongletActif === "entrepots" && (
+        {ongletActif === "entrepots" && peutGererEntrepots && (
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">Gestion des Entrepôts</h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Déclarez vos lieux de stockage physiques.</p>
+                <p className="text-sm text-[#1B2632]/60 mt-1">
+                  Un entrepôt, c&apos;est un <b>pays</b> et une <b>ville</b>. Le pays est utilisé à
+                  l&apos;import des commandes : c&apos;est lui qui décide quel agent reçoit les leads.
+                  Les vendeurs ne voient jamais les villes — seulement les pays où vous avez un entrepôt.
+                </p>
               </div>
 
+              {peutGererEntrepots && (
               <form onSubmit={ajouterEntrepot} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom de l'entrepôt</label>
-                  <input type="text" placeholder="ex: Dépôt Principal Casa" value={nouvelEntrepot.nom} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, nom: e.target.value})} className="fg-input" required />
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                  <select value={nouvelEntrepot.pays_id} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
+                    <option value="">Choisir...</option>
+                    {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
+                  </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Localisation / Ville</label>
-                  <input type="text" placeholder="ex: Casablanca" value={nouvelEntrepot.localisation} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, localisation: e.target.value})} className="fg-input" />
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Ville</label>
+                  <input type="text" placeholder="ex: Casablanca" value={nouvelEntrepot.ville} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, ville: e.target.value})} className="fg-input" required />
                 </div>
                 <div>
                   <button type="submit" className="fg-btn-primary w-full">Ajouter l'entrepôt</button>
                 </div>
               </form>
+              )}
 
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
-                    <tr><th>Nom de l'entrepôt</th><th>Localisation</th><th className="text-center">Statut</th></tr>
+                    <tr><th>Ville</th><th>Pays</th><th className="text-center">Statut</th>{peutGererEntrepots && <th className="text-right">Actions</th>}</tr>
                   </thead>
                   <tbody>
-                    {listeEntrepots.length === 0 && <tr><td colSpan="3" className="text-center py-6 text-gray-400">Aucun entrepôt.</td></tr>}
+                    {listeEntrepots.length === 0 && <tr><td colSpan={peutGererEntrepots ? 4 : 3} className="text-center py-6 text-gray-400">Aucun entrepôt.</td></tr>}
                     {listeEntrepots.map((e) => (
                       <tr key={e.id} className="hover:bg-[#EEE9DF]/20">
                         <td className="font-bold text-[#1B2632]">{e.nom}</td>
-                        <td className="text-gray-600">{e.localisation || '-'}</td>
+                        <td>
+                          {peutGererEntrepots ? (
+                            <select value={e.pays_id || ""} onChange={(ev) => changerPaysEntrepot(e.id, ev.target.value)}
+                              className={`fg-input cursor-pointer !py-1.5 !text-sm ${e.pays_id ? '' : 'border-[#A35139] text-[#A35139]'}`}>
+                              <option value="">Non renseigné</option>
+                              {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
+                            </select>
+                          ) : (
+                            <span className="text-gray-600">{listePays.find((p) => p.id === e.pays_id)?.nom || '-'}</span>
+                          )}
+                        </td>
                         <td className="text-center"><span className="fg-badge dark">Actif</span></td>
+                        {peutGererEntrepots && (
+                          <td className="text-right">
+                            <button onClick={() => supprimerEntrepot(e)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#A35139]/40 bg-white text-[#A35139] hover:bg-[#A35139]/10 transition-colors cursor-pointer">
+                              Supprimer
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -68,6 +68,70 @@ function IconPlus(props) {
   )
 }
 
+// Les colonnes qu'on sait lire dans un fichier d'import, et sous quels noms.
+// Une seule liste : elle sert à lire le fichier ET à montrer à l'écran quelle
+// en-tête a été reconnue. Deux listes auraient fini par diverger, et l'aperçu
+// aurait menti.
+//
+// `exacts` : le nom normalisé complet. `mots` : un repli, pour les en-têtes
+// qu'on n'a pas prévues — « Unit Price (USD) » contient « price ».
+const CHAMPS_IMPORT = [
+  { cle: 'order_id',  nom: 'Order ID',     exacts: ['order_id', 'lead_id', 'leadid', 'id', 'numero_commande', 'reference'], mots: ['order_id', 'lead_id'] },
+  { cle: 'produit',   nom: 'Product',      exacts: ['produit', 'product_name', 'product_id', 'product', 'produit_nom', 'article'], mots: ['produit', 'product', 'article'] },
+  { cle: 'client',    nom: 'Customer',     exacts: ['client_nom', 'customer', 'customer_name', 'consumer_name', 'nom', 'client'], mots: ['customer', 'client', 'nom', 'name'] },
+  { cle: 'telephone', nom: 'Phone number', exacts: ['client_telephone', 'telephone', 'tel', 'phone', 'phone_number', 'numero', 'gsm', 'mobile'], mots: ['phone', 'telephone', 'tel', 'numero'], requis: true },
+  { cle: 'ville',     nom: 'City',         exacts: ['city', 'ville_zone', 'ville', 'zone'], mots: ['city', 'ville'] },
+  { cle: 'adresse',   nom: 'Address',      exacts: ['address', 'adresse', 'addresse'], mots: ['address', 'adresse'] },
+  { cle: 'quantite',  nom: 'Quantities',   exacts: ['quantite', 'quantities', 'quantity', 'qty', 'qte'], mots: ['quantit', 'qty', 'qte', 'nombre'] },
+  { cle: 'prix',      nom: 'Unit price',   exacts: ['unit_price', 'prix_unitaire', 'prix', 'price', 'montant', 'total_price'], mots: ['price', 'prix', 'montant'] },
+  { cle: 'store',     nom: 'Store',        exacts: ['store', 'store_name', 'boutique'], mots: ['store', 'boutique'] },
+  { cle: 'notes',     nom: 'Notes',        exacts: ['notes', 'note', 'remarque'], mots: ['note', 'remarque'] },
+]
+
+// Accents retirés, minuscules, et tout ce qui n'est ni lettre ni chiffre
+// devient « _ ». L'ancienne version ne remplaçait que les espaces et les
+// tirets : une parenthèse ou un accent suffisait à ce que la colonne ne soit
+// pas trouvée, et le prix arrivait à 0 sans que rien ne le dise.
+function normaliserCle(cle) {
+  return String(cle)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+// Quelle en-tête du fichier correspond à ce champ — ou null.
+function enteteDe(entetes, cle) {
+  const champ = CHAMPS_IMPORT.find((c) => c.cle === cle)
+  if (!champ) return null
+  for (const nom of champ.exacts) {
+    const trouve = entetes.find((e) => normaliserCle(e) === nom)
+    if (trouve) return trouve
+  }
+  for (const mot of champ.mots) {
+    const trouve = entetes.find((e) => normaliserCle(e).includes(mot))
+    if (trouve) return trouve
+  }
+  return null
+}
+
+function lireChamp(L, cle) {
+  const champ = CHAMPS_IMPORT.find((c) => c.cle === cle)
+  if (!champ) return ''
+  for (const nom of champ.exacts) {
+    const v = L[nom]
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v
+  }
+  for (const mot of champ.mots) {
+    for (const k of Object.keys(L)) {
+      if (!k.includes(mot)) continue
+      const v = L[k]
+      if (v !== undefined && v !== null && String(v).trim() !== '') return v
+    }
+  }
+  return ''
+}
+
 export default function GestionCommandesPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
@@ -110,6 +174,30 @@ export default function GestionCommandesPage() {
   const [filtresActifs, setFiltresActifs] = useState({ ...FILTRES_VIDES, champ: 'tracking_number', texte: '' })
   const [panneauOuvert, setPanneauOuvert] = useState(false)
   const [detail, setDetail] = useState(null)
+  const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
+
+  // Import : on choisit D'ABORD d'où part la marchandise. Tant que ce n'est
+  // pas fait, rien d'autre ne s'affiche.
+  //
+  // Le responsable choisit un ENTREPÔT (Casablanca, Rabat...). Le vendeur,
+  // lui, ne choisit qu'un PAYS : les entrepôts sont l'organisation interne de
+  // FGMED, un vendeur externe n'a pas à savoir combien il y en a ni où.
+  //
+  // C'est son pays qui est appliqué à toutes les lignes — et le pays décide
+  // quel agent recevra les leads. Une colonne « pays » mal orthographiée dans
+  // le fichier était la première cause de refus ; il n'y en a plus.
+  const [listeEntrepots, setListeEntrepots] = useState([])
+  // Pour un vendeur : les pays où il y a VRAIMENT un entrepôt. Pas tous les
+  // pays — il déposerait des commandes là où rien ne peut partir — et aucun
+  // nom d'entrepôt, qui ne le regarde pas.
+  const [paysLivrables, setPaysLivrables] = useState([])
+  const [modaleImport, setModaleImport] = useState(false)
+  const [importCibleId, setImportCibleId] = useState('')
+  const [importAide, setImportAide] = useState(true)
+  const [importFichier, setImportFichier] = useState(null)
+  const [importEnCours, setImportEnCours] = useState(false)
+  const [importResultat, setImportResultat] = useState(null)
+  const [apercu, setApercu] = useState(null)
 
   const listeSellers = personnel.filter((p) => p.role === 'seller')
   const nomDuVendeur = (id) => {
@@ -143,20 +231,35 @@ export default function GestionCommandesPage() {
   // CHARGEMENT DES RÉFÉRENTIELS
   const chargerReferentiels = useCallback(async () => {
     if (!tenantKey) return
-    const [{ data: agentsData }, { data: paysData }, { data: statutsData }, { data: sellersData }] = await Promise.all([
+    const [{ data: agentsData }, { data: paysData }, { data: statutsData }, { data: sellersData },
+           { data: entrepotsData }, { data: paysLivrablesData }] = await Promise.all([
       supabase.from('agents').select('id, nom').eq('tenant_id', tenantKey).eq('actif', true),
       supabase.from('pays').select('id, nom, code').eq('tenant_id', tenantKey),
       supabase.from('statuts').select('*').eq('tenant_id', tenantKey),
       // sert à nommer le vendeur d'un lead et à retrouver celui nommé dans un
       // fichier importé. La RLS fait le tri : un responsable reçoit l'équipe,
       // un seller ne reçoit que sa propre ligne.
-      supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey)
+      supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey),
+      // Les entrepôts servent à l'import, côté responsable seulement. On ne
+      // les demande même pas pour un vendeur : ce qu'on ne charge pas ne peut
+      // pas fuiter dans la réponse réseau.
+      estSeller
+        ? Promise.resolve({ data: [] })
+        : supabase.from('entrepots').select('id, nom, pays_id, pays(nom)')
+            .eq('tenant_id', tenantKey).order('nom'),
+      // La vue ne rend que des noms de pays, jamais d'entrepôt.
+      estSeller
+        ? supabase.from('v_pays_livrables').select('pays_id, nom')
+            .eq('tenant_id', tenantKey).order('nom')
+        : Promise.resolve({ data: [] }),
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
     if (statutsData) setListeStatutsDB(statutsData)
     if (sellersData) setPersonnel(sellersData)
-  }, [tenantKey])
+    if (entrepotsData) setListeEntrepots(entrepotsData)
+    if (paysLivrablesData) setPaysLivrables(paysLivrablesData)
+  }, [tenantKey, estSeller])
 
   // Les produits et les sources proposés viennent de ce qui existe vraiment
   // dans la page : une liste fixe finirait par proposer des produits retirés
@@ -173,6 +276,30 @@ export default function GestionCommandesPage() {
     filtresActifs.statut, filtresActifs.produit, filtresActifs.agent,
     filtresActifs.source, filtresActifs.du, filtresActifs.au,
   ].filter(Boolean).length
+
+  // Ce que le choix du haut désigne, selon qui regarde.
+  const cibleImport = useMemo(() => {
+    if (!importCibleId) return null
+    if (estSeller) {
+      const p = paysLivrables.find((x) => x.pays_id === importCibleId)
+      // Le vendeur n'a pas choisi d'entrepôt : on n'en invente pas un. Le
+      // responsable le renseignera s'il y en a plusieurs dans ce pays.
+      return p ? { pays_id: p.pays_id, entrepot_id: null, nom: p.nom, pretE: true } : null
+    }
+    const e = listeEntrepots.find((x) => x.id === importCibleId)
+    return e ? { pays_id: e.pays_id, entrepot_id: e.id, nom: e.nom, pretE: !!e.pays_id } : null
+  }, [importCibleId, estSeller, paysLivrables, listeEntrepots])
+
+  // Le détail d'une commande tient sous sa ligne : on vérifie un produit ou
+  // un entrepôt sans quitter la liste ni ouvrir la fiche complète.
+  function basculerLigne(id) {
+    setLignesOuvertes((prev) => {
+      const suivant = new Set(prev)
+      if (suivant.has(id)) suivant.delete(id)
+      else suivant.add(id)
+      return suivant
+    })
+  }
 
   function appliquerFiltres() {
     setFiltresActifs({ ...filtres, champ: champRecherche, texte: recherche })
@@ -198,7 +325,7 @@ export default function GestionCommandesPage() {
 
     let requete = supabase
       .from('commandes')
-      .select('*, pays(nom), agents(nom)', { count: 'exact' })
+      .select('*, pays(nom, devise), agents(nom), entrepots(nom)', { count: 'exact' })
       .eq('tenant_id', tenantKey)
     // un seller ne demande que ses propres leads
     if (estSeller && user?.id) requete = requete.eq('vendeur_id', user.id)
@@ -349,111 +476,231 @@ export default function GestionCommandesPage() {
   }
 
   // IMPORT EXCEL / CSV
-  // Le fichier peut nommer le seller (colonne « vendeur », « seller » ou
-  // « vendeur_email ») : on retrouve son compte par email ou par nom, dans cette
-  // entreprise uniquement. Un seller qui importe lui-même ne peut poser que son
-  // propre nom. Sans colonne et importé par un manager, le lead n'appartient à
-  // aucun seller : personne d'autre que les responsables ne le verra.
-  function vendeurDeLaLigne(ligne) {
-    if (estSeller) return user?.id || null
-    const brut = String(
-      ligne['vendeur'] || ligne['seller'] || ligne['vendeur_email'] ||
-      ligne['seller_email'] || ligne['email_vendeur'] || ''
-    ).trim().toLowerCase()
-    if (!brut) return null
-    const trouve = listeSellers.find(
-      (v) => (v.email || '').toLowerCase() === brut || (v.nom || '').toLowerCase() === brut
-    )
-    return trouve ? trouve.user_id : null
+  //
+  // À qui appartiennent les commandes importées : à la personne qui importe.
+  // Pas de colonne « vendeur » dans le fichier — on sait déjà qui est connecté,
+  // et une colonne de plus serait une colonne de plus à se tromper.
+  //
+  // Un responsable n'est pas un vendeur : quand c'est lui qui importe, les
+  // commandes n'appartiennent à personne en particulier et seuls les
+  // responsables les verront.
+  function vendeurDeLImport() {
+    return estSeller ? (user?.id || null) : null
   }
 
-  async function importerFichier(event) {
-    const fichier = event.target.files[0]
-    if (!fichier || !tenantKey) return
+  function ouvrirImport() {
+    const choix = estSeller
+      ? paysLivrables.map((p) => p.pays_id)
+      : listeEntrepots.map((e) => e.id)
+    setImportCibleId(choix.length === 1 ? choix[0] : '')
+    setImportFichier(null)
+    setApercu(null)
+    setImportResultat(null)
+    setModaleImport(true)
+  }
 
-    setChargement(true)
-    const lecteur = new FileReader()
-    lecteur.onload = async function (e) {
-      try {
-        const data = new Uint8Array(e.target.result)
-        const classeur = XLSX.read(data, { type: 'array' })
-        const nomFeuille = classeur.SheetNames[0]
-        const lignes = XLSX.utils.sheet_to_json(classeur.Sheets[nomFeuille], { defval: "" })
+  // « 0708852502|0708852501 » : le premier numéro est celui qu'on appelle,
+  // les autres sont notés pour que l'agent les ait sous les yeux s'il ne
+  // répond pas. Les perdre reviendrait à perdre une chance de joindre le client.
+  function separerNumeros(brut) {
+    const parts = String(brut || '').split('|').map((x) => x.trim()).filter(Boolean)
+    return { principal: parts[0] || '', autres: parts.slice(1) }
+  }
 
-        if (lignes.length === 0) {
-          alert("Le fichier est vide.")
-          setChargement(false)
-          return
-        }
-
-        const nouvellesCommandes = lignes.map(ligne => {
-          const ligneNormalisee = {}
-          
-          // 🚀 1. Normalisation : Transforme "Lead ID", "Lead-ID" ou "ID" en "lead_id"
-          for (let cle in ligne) {
-            const clePropre = cle.toLowerCase().trim().replace(/[\s-]/g, '_')
-            ligneNormalisee[clePropre] = ligne[cle]
-          }
-
-          const nomPaysFichier = ligneNormalisee['pays'] || ligneNormalisee['country'] || '';
-          let paysIdTrouve = null;
-          if (nomPaysFichier && listePays.length > 0) {
-            const paysMatch = listePays.find(p => p.nom.toLowerCase() === String(nomPaysFichier).toLowerCase().trim() || (p.code && p.code.toLowerCase() === String(nomPaysFichier).toLowerCase().trim()));
-            if (paysMatch) paysIdTrouve = paysMatch.id;
-          }
-
-          const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
-          
-          // 🚀 2. Recherche large de l'ID dans le fichier
-          const leadIdFichier = ligneNormalisee['lead_id'] || 
-                                ligneNormalisee['leadid'] || 
-                                ligneNormalisee['id'] || 
-                                ligneNormalisee['numero_commande'] || 
-                                ligneNormalisee['numero'] || 
-                                ligneNormalisee['reference'] || 
-                                '';
-          
-          // 🚀 3. Règle absolue : Si l'ID est dans le fichier, on le prend. Sinon, on génère.
-          const finalLeadId = leadIdFichier ? String(leadIdFichier).trim() : `LEAD-${Date.now().toString(36).toUpperCase()}-${randomSuffix}`;
-
-          return {
-            client_nom: ligneNormalisee['client_nom'] || ligneNormalisee['nom'] || ligneNormalisee['client'] || 'Inconnu',
-            client_telephone: String(ligneNormalisee['client_telephone'] || ligneNormalisee['telephone'] || ligneNormalisee['tel'] || ''),
-            ville_zone: ligneNormalisee['ville_zone'] || ligneNormalisee['ville'] || ligneNormalisee['zone'] || '',
-            produit: ligneNormalisee['produit'] || 'Produit standard',
-            quantite: parseInt(ligneNormalisee['quantite']) || 1,
-            prix: parseFloat(ligneNormalisee['prix']) || 0,
-            source: 'csv', 
-            notes: ligneNormalisee['notes'] || ligneNormalisee['note'] || '',
-            commentaire_1: ligneNormalisee['commentaire_1'] || '',
-            lead_id: finalLeadId,
-            tenant_id: tenantKey,
-            pays_id: paysIdTrouve,
-            vendeur_id: vendeurDeLaLigne(ligneNormalisee)
-          }
-        }).filter(cmd => cmd.client_telephone !== '')
-
-        if (nouvellesCommandes.length === 0) {
-          alert("Aucune donnée valide trouvée.")
-          setChargement(false)
-          return
-        }
-
-        const { error } = await supabase.from('commandes').insert(nouvellesCommandes)
-        if (error) alert("Erreur d'import : " + error.message)
-        else {
-          alert(`Succès : ${nouvellesCommandes.length} commandes importées.`)
-          chargerCommandes(0)
-          setPageActuelle(0)
-        }
-      } catch (erreur) {
-        console.error(erreur)
-        alert("Erreur de lecture du fichier.")
-      }
-      setChargement(false)
+  // « PRODUIT A|PRODUIT B » avec « 2|1 » et « 900|500 ».
+  //
+  // LE PRIX N'EST JAMAIS RECALCULÉ. Ce qui est écrit dans le fichier est ce
+  // qui est enregistré, et c'est ce que le livreur verra. Multiplier par la
+  // quantité « pour bien faire » reviendrait à décider à la place du vendeur
+  // du montant qu'on encaisse chez son client.
+  //
+  // Une commande ne porte qu'un produit et un montant : c'est un colis, et
+  // c'est une somme à encaisser. Quand le fichier met plusieurs articles sur
+  // la même ligne, on les réunit en une seule commande — sinon un client qui
+  // prend deux articles compterait pour deux livraisons et deux encaissements.
+  // Les prix sont alors additionnés, rien de plus.
+  function fusionnerProduits(nom, quantite, prix) {
+    const nombre = (x) => {
+      const n = parseFloat(String(x).replace(/[^\d.,-]/g, '').replace(',', '.'))
+      return Number.isFinite(n) ? n : null
     }
-    lecteur.readAsArrayBuffer(fichier)
-    event.target.value = null
+    const noms = String(nom || '').split('|').map((x) => x.trim()).filter(Boolean)
+    const qtes = String(quantite || '').split('|').map((x) => parseInt(x) || 0).filter((x) => x > 0)
+    const prixs = String(prix || '').split('|').map(nombre).filter((x) => x !== null)
+
+    return {
+      produit: noms.length ? noms.join(' + ') : 'Produit standard',
+      quantite: qtes.length ? qtes.reduce((a, b) => a + b, 0) : 1,
+      prix: Math.max(0, prixs.reduce((a, b) => a + b, 0)),
+    }
+  }
+
+  // Dès que le fichier est choisi, on lit SEULEMENT sa première ligne et on
+  // montre quelle en-tête a été reconnue pour quoi. C'est ce qui manquait
+  // quand le prix arrivait à 0 : rien ne disait que la colonne n'avait pas
+  // été trouvée.
+  async function analyserFichier(fichier) {
+    setImportFichier(fichier)
+    setImportResultat(null)
+    setApercu(null)
+    if (!fichier) return
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const l = new FileReader()
+        l.onload = (e) => resolve(new Uint8Array(e.target.result))
+        l.onerror = () => reject(new Error('Fichier illisible'))
+        l.readAsArrayBuffer(fichier)
+      })
+      const classeur = XLSX.read(data, { type: 'array' })
+      const feuille = classeur.Sheets[classeur.SheetNames[0]]
+      const lignes = XLSX.utils.sheet_to_json(feuille, { header: 1, defval: '' })
+      const entetes = (lignes[0] || []).map((x) => String(x).trim()).filter(Boolean)
+      setApercu({
+        nbLignes: Math.max(0, lignes.length - 1),
+        entetes,
+        correspondances: CHAMPS_IMPORT.map((c) => ({
+          nom: c.nom, requis: !!c.requis, entete: enteteDe(entetes, c.cle),
+        })),
+      })
+    } catch (e) {
+      setApercu({ erreur: e?.message || 'Fichier illisible' })
+    }
+  }
+
+  async function lancerImport() {
+    if (!importFichier || !tenantKey) return
+    const cible = cibleImport
+    if (!cible) { alert(estSeller ? 'Choisissez le pays.' : 'Choisissez l\'entrepôt.'); return }
+    // Sans pays, impossible de savoir quel agent doit recevoir les leads :
+    // mieux vaut refuser tout de suite que les faire entrer orphelins.
+    if (!cible.pretE) {
+      setImportResultat({
+        erreur: `L'entrepôt « ${cible.nom} » n'a pas de pays. Un responsable doit le renseigner dans Paramètres avant d'importer.`,
+      })
+      return
+    }
+
+    setImportEnCours(true)
+    setImportResultat(null)
+
+    const lire = () => new Promise((resolve, reject) => {
+      const lecteur = new FileReader()
+      lecteur.onload = (e) => resolve(new Uint8Array(e.target.result))
+      lecteur.onerror = () => reject(new Error('Fichier illisible'))
+      lecteur.readAsArrayBuffer(importFichier)
+    })
+
+    try {
+      const classeur = XLSX.read(await lire(), { type: 'array' })
+      const lignes = XLSX.utils.sheet_to_json(classeur.Sheets[classeur.SheetNames[0]], { defval: '' })
+
+      if (lignes.length === 0) {
+        setImportResultat({ erreur: 'Le fichier est vide.' })
+        setImportEnCours(false)
+        return
+      }
+
+      const refusees = []
+
+      const candidates = lignes.map((ligne, i) => {
+        const L = {}
+        for (const cle in ligne) L[normaliserCle(cle)] = ligne[cle]
+
+        const tel = separerNumeros(lireChamp(L, 'telephone'))
+        if (!tel.principal) {
+          refusees.push(`Ligne ${i + 2} : téléphone manquant`)
+          return null
+        }
+
+        const art = fusionnerProduits(
+          lireChamp(L, 'produit'), lireChamp(L, 'quantite'), lireChamp(L, 'prix'),
+        )
+
+        const idFichier = String(lireChamp(L, 'order_id')).trim()
+        const suffixe = idFichier ||
+          `LEAD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+
+        const notes = [
+          lireChamp(L, 'notes'),
+          tel.autres.length ? `Autres numéros : ${tel.autres.join(', ')}` : '',
+        ].filter(Boolean).join(' · ')
+
+        return {
+          lead_id: suffixe,
+          client_nom: lireChamp(L, 'client') || 'Inconnu',
+          client_telephone: tel.principal,
+          // La ville sert à trouver la zone, donc le livreur. L'adresse, elle,
+          // est ce que le livreur lit devant la porte : les deux sont gardées.
+          ville_zone: lireChamp(L, 'ville'),
+          adresse: lireChamp(L, 'adresse'),
+          produit: art.produit,
+          quantite: art.quantite,
+          prix: art.prix,
+          source: 'csv',
+          // « Store » : la boutique du vendeur d'où vient la commande.
+          source_sheet: lireChamp(L, 'store') || null,
+          notes,
+          commentaire_1: L['commentaire_1'] || '',
+          // Le pays vient de l'entrepôt choisi, pas du fichier : un seul
+          // endroit où se tromper au lieu d'une colonne par ligne.
+          pays_id: cible.pays_id,
+          // D'où la marchandise doit sortir. Le pays en vient, mais il ne
+          // suffit pas : deux entrepôts peuvent être dans le même pays.
+          // Vide quand c'est un vendeur qui importe : il n'a choisi qu'un pays.
+          entrepot_id: cible.entrepot_id,
+          tenant_id: tenantKey,
+          vendeur_id: vendeurDeLImport(),
+        }
+      }).filter(Boolean)
+
+      if (candidates.length === 0) {
+        setImportResultat({ erreur: 'Aucune ligne utilisable.', refusees })
+        setImportEnCours(false)
+        return
+      }
+
+      // Importer deux fois le même fichier ne doit rien dupliquer. On demande
+      // à la base quels numéros elle connaît déjà, par paquets : une liste de
+      // 2 000 numéros dans une URL serait refusée.
+      //
+      // Le numéro vient du vendeur, et deux vendeurs peuvent très bien avoir
+      // chacun une commande « 1234 ». On compare donc le numéro ET le vendeur :
+      // sinon la commande du second serait prise pour un doublon de celle du
+      // premier, et jetée en silence.
+      const vendeur = vendeurDeLImport()
+      const deja = new Set()
+      const ids = candidates.map((c) => c.lead_id)
+      for (let i = 0; i < ids.length; i += 200) {
+        let r = supabase.from('commandes')
+          .select('lead_id').eq('tenant_id', tenantKey).in('lead_id', ids.slice(i, i + 200))
+        r = vendeur ? r.eq('vendeur_id', vendeur) : r.is('vendeur_id', null)
+        const { data } = await r
+        for (const x of data || []) deja.add(x.lead_id)
+      }
+
+      const aInserer = candidates.filter((c) => !deja.has(c.lead_id))
+      let inserees = 0
+      let erreur = null
+
+      for (let i = 0; i < aInserer.length; i += 500) {
+        const { error } = await supabase.from('commandes').insert(aInserer.slice(i, i + 500))
+        if (error) { erreur = error.message; break }
+        inserees += aInserer.slice(i, i + 500).length
+      }
+
+      setImportResultat({
+        erreur,
+        total: lignes.length,
+        inserees,
+        doublons: candidates.length - aInserer.length,
+        refusees,
+      })
+
+      if (inserees > 0) { chargerCommandes(0); setPageActuelle(0) }
+    } catch (e) {
+      setImportResultat({ erreur: e?.message || 'Erreur de lecture du fichier.' })
+    }
+    setImportEnCours(false)
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
@@ -511,14 +758,14 @@ export default function GestionCommandesPage() {
           )}
 
           {hasPermission('importer_csv') && (
-            <label
+            <button
+              onClick={ouvrirImport}
               title="Importer des commandes depuis un fichier CSV ou Excel"
               className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
             >
               <IconImporter />
               Importer CSV
-              <input type="file" accept=".csv, .xlsx, .xls" onChange={importerFichier} className="hidden" />
-            </label>
+            </button>
           )}
           
           {hasPermission('creer_commande') && (
@@ -659,110 +906,152 @@ export default function GestionCommandesPage() {
       {/* Tableau ultra-enrichi affichant le max de colonnes de la DB */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
         <div className="overflow-auto min-h-[500px] max-h-[72vh]">
-          <table className="w-full min-w-[1650px] text-left border-collapse text-xs">
-            <thead className="sticky top-0 z-10 bg-[#F4F0E6] shadow-[0_1px_0_#C9C1B1]">
-              <tr className="border-b border-[#C9C1B1]/50 uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                <th className="px-4 py-3.5">Lead ID / Source</th>
+          <table className="w-full min-w-[1250px] text-left border-collapse text-xs">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#C9D3DD] text-[11px] uppercase tracking-wider text-[#1B2632]/70 font-bold">
+                <th className="px-4 py-3.5">ID</th>
                 {!estSeller && <th className="px-4 py-3.5">Vendeur</th>}
-                <th className="px-4 py-3.5">Dates (Création / MAJ / Rappel)</th>
-                <th className="px-4 py-3.5">Client & Tél</th>
-                <th className="px-4 py-3.5">Localisation (Pays / Ville)</th>
-                <th className="px-4 py-3.5">Produit, Qté & Prix</th>
-                <th className="px-4 py-3.5">Statuts (Conf. / Liv. / Paiement)</th>
-                <th className="px-4 py-3.5">Commentaires & Notes</th>
-                <th className="px-4 py-3.5 text-right">Actions</th>
+                <th className="px-4 py-3.5">Client</th>
+                <th className="px-4 py-3.5">Détails</th>
+                <th className="px-4 py-3.5">Adresse de livraison</th>
+                <th className="px-4 py-3.5">Prix total</th>
+                <th className="px-4 py-3.5">Date</th>
+                <th className="px-4 py-3.5">Statut</th>
+                <th className="px-4 py-3.5 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#C9C1B1]/30">
+            <tbody>
               {chargement ? (
                 <tr><td colSpan={estSeller ? 8 : 9} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
               ) : commandes.length === 0 ? (
                 <tr><td colSpan={estSeller ? 8 : 9} className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
               ) : (
-                commandes.map((cmd) => (
-                  <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
-                    
-                    {/* LEAD ID & SOURCE */}
-                    <td className="px-4 py-3 align-top font-mono">
-                      <div className="text-[#A35139] font-bold">#{cmd.lead_id || 'N/A'}</div>
+                commandes.map((cmd, i) => {
+                  const ouverte = lignesOuvertes.has(cmd.id)
+                  const fond = i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'
+                  return (
+                  <React.Fragment key={cmd.id}>
+                  <tr className={`${fond} hover:bg-[#EEE9DF]/30 transition-colors border-b border-[#C9C1B1]/25`}>
+
+                    <td className="px-4 py-3.5 align-top">
+                      <div className="font-mono font-bold text-[#1B2632] text-sm">{cmd.lead_id || '—'}</div>
                       <div className="text-[10px] text-[#5c5648] uppercase bg-[#EEE9DF] px-1.5 py-0.5 rounded w-fit mt-1">
-                        {cmd.source || 'direct'} {cmd.source_sheet ? `(${cmd.source_sheet})` : ''}
+                        {cmd.source || 'direct'}{cmd.source_sheet ? ` · ${cmd.source_sheet}` : ''}
                       </div>
                     </td>
-                    
-                    {/* VENDEUR — qui a apporté ce lead */}
+
                     {!estSeller && (
-                      <td className="px-4 py-3 align-top">
-                        {nomDuVendeur(cmd.vendeur_id)
-                          ? <span className="font-semibold text-[#1B2632]">{nomDuVendeur(cmd.vendeur_id)}</span>
-                          : <span className="text-[#1B2632]/40">—</span>}
+                      <td className="px-4 py-3.5 align-top text-sm text-[#1B2632]/80">
+                        {nomDuVendeur(cmd.vendeur_id) || <span className="text-[#1B2632]/35">—</span>}
                       </td>
                     )}
 
-                    {/* DATES */}
-                    <td className="px-4 py-3 align-top">
-                      <div className="text-[#1B2632]"><b>Créé:</b> {cmd.created_at ? new Date(cmd.created_at).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'}) : '-'}</div>
-                      {cmd.updated_at && <div className="text-[#A35139]"><b>MAJ:</b> {new Date(cmd.updated_at).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'})}</div>}
-                      {cmd.date_rappel && <div className="text-amber-700"><b>Rappel:</b> {new Date(cmd.date_rappel).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'})}</div>}
+                    <td className="px-4 py-3.5 align-top">
+                      <div className="font-bold text-[#1B2632] text-sm">{cmd.client_nom || '—'}</div>
+                      {cmd.client_telephone
+                        ? <a href={`tel:${cmd.client_telephone}`} className="font-mono text-[#A35139] hover:underline">{cmd.client_telephone}</a>
+                        : <span className="text-[#1B2632]/35">—</span>}
+                      {cmd.is_doublon && <span className="block mt-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold w-fit">Doublon</span>}
                     </td>
 
-                    {/* CLIENT */}
-                    <td className="px-4 py-3 align-top">
-                      <div className="font-bold text-[#1B2632]">{cmd.client_nom}</div>
-                      <div className="font-mono text-[#A35139] mt-0.5">{cmd.client_telephone}</div>
-                      {cmd.is_doublon && <span className="text-[10px] bg-red-100 text-red-700 px-1 rounded font-bold">Doublon</span>}
+                    {/* Le chevron ouvre la ligne de détail juste en dessous. */}
+                    <td className="px-4 py-3.5 align-top">
+                      <button onClick={() => basculerLigne(cmd.id)} className="flex items-start gap-2 text-left cursor-pointer group">
+                        <span className="leading-tight">
+                          <span className="font-bold text-[#A35139]">1</span>{' '}
+                          <span className="text-[#1B2632]/80">produit</span>
+                          <span className="block text-[11px] text-[#1B2632]/50">
+                            {cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-CA') : '—'}
+                          </span>
+                        </span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="2.5" strokeLinecap="round"
+                             className="mt-0.5 shrink-0 group-hover:opacity-70"
+                             style={{ transform: ouverte ? 'rotate(180deg)' : 'none' }}>
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
                     </td>
 
-                    {/* LOCALISATION */}
-                    <td className="px-4 py-3 align-top">
-                      <div className="font-medium text-[#1B2632]">{cmd.pays?.nom || 'Pays non spécifié'}</div>
-                      <div className="text-[#1B2632]/60 mt-0.5">{cmd.ville_zone || '-'}</div>
+                    {/* L'adresse telle qu'elle est arrivée. Le pays de l'entrepôt
+                        ne vient jamais s'y substituer : il vit à part, dans la
+                        ligne de détail. */}
+                    <td className="px-4 py-3.5 align-top max-w-[260px]">
+                      <div className="text-sm text-[#1B2632]">{cmd.adresse || <span className="text-[#1B2632]/35">—</span>}</div>
+                      {cmd.ville_zone && <div className="text-[11px] text-[#1B2632]/55 mt-0.5">{cmd.ville_zone}</div>}
                     </td>
 
-                    {/* PRODUIT, QTE, PRIX */}
-                    <td className="px-4 py-3 align-top">
-                      <div className="font-bold text-[#1B2632]">{cmd.produit}</div>
-                      <div className="text-[#1B2632]/70 mt-0.5">
-                        Qté: <b>{cmd.quantite || 1}</b> · Prix: <span className="font-bold text-[#A35139]">{cmd.prix || 0}</span>
-                      </div>
+                    <td className="px-4 py-3.5 align-top whitespace-nowrap">
+                      <span className="font-mono font-bold text-sm text-[#1B2632]">{cmd.prix ?? 0}</span>
+                      {cmd.pays?.devise && <span className="text-[10px] text-[#1B2632]/50 ml-1 align-super">{cmd.pays.devise}</span>}
                     </td>
 
-                    {/* STATUTS MULTIPLES (Confirmation, Livraison, Paiement) */}
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex flex-col gap-1 items-start">
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-gray-400">Conf:</span>
-                          <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-gray-400">Liv:</span>
-                          <StatutPill statut={cmd.statut_livraison} listeStatutsDB={listeStatutsDB} />
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-gray-400">Pai:</span>
-                          <StatutPill statut={cmd.statut_paiement} listeStatutsDB={listeStatutsDB} />
-                        </div>
-                      </div>
+                    <td className="px-4 py-3.5 align-top text-sm text-[#1B2632]/75 whitespace-nowrap">
+                      {cmd.created_at ? new Date(cmd.created_at).toLocaleString('fr-CA', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                     </td>
 
-                    {/* COMMENTAIRES & NOTES — déplacée en dernière colonne */}
-                    <td className="px-4 py-3 align-top max-w-[220px]">
-                      {cmd.commentaire_1 && <div className="text-amber-900 italic mb-0.5" title="Commentaire 1">💬 {cmd.commentaire_1}</div>}
-                      {cmd.commentaire_2 && <div className="text-purple-900 italic mb-0.5" title="Commentaire 2">💬 {cmd.commentaire_2}</div>}
-                      {cmd.notes && <div className="text-gray-600 italic" title="Notes">📝 {cmd.notes}</div>}
-                      {!cmd.commentaire_1 && !cmd.commentaire_2 && !cmd.notes && <span className="text-gray-400">-</span>}
+                    <td className="px-4 py-3.5 align-top">
+                      <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                      {cmd.date_rappel && (
+                        <span className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-1 w-fit">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
+                          À rappeler · {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                        </span>
+                      )}
+                      {(cmd.statut_livraison || cmd.statut_paiement) && (
+                        <span className="block mt-1 text-[10px] text-[#1B2632]/55">
+                          {cmd.statut_livraison ? `Livraison : ${cmd.statut_livraison}` : ''}
+                          {cmd.statut_livraison && cmd.statut_paiement ? ' · ' : ''}
+                          {cmd.statut_paiement ? `Paiement : ${cmd.statut_paiement}` : ''}
+                        </span>
+                      )}
                     </td>
 
-                    <td className="px-4 py-3 align-top text-right">
-                      <button
-                        onClick={() => setDetail(cmd)} title="Voir le détail"
-                        className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-[#1B2632]/50 hover:text-[#1B2632] hover:bg-[#EEE9DF] transition-colors"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                    <td className="px-4 py-3.5 align-top text-center">
+                      <button onClick={() => setDetail(cmd)} title="Voir le détail"
+                        className="w-9 h-9 rounded-lg inline-flex items-center justify-center text-[#1B2632]/60 hover:text-[#A35139] hover:bg-[#EEE9DF] transition-colors cursor-pointer">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
                       </button>
                     </td>
                   </tr>
-                ))
+
+                  {ouverte && (
+                    <tr className="bg-[#E3EFF8] border-b border-[#C9C1B1]/25">
+                      <td colSpan={estSeller ? 8 : 9} className="px-4 py-0">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="text-[10px] uppercase tracking-wider text-[#1B2632]/55 font-bold">
+                              <th className="px-3 py-2.5 w-[22%]">Entrepôt</th>
+                              <th className="px-3 py-2.5">Produit</th>
+                              <th className="px-3 py-2.5 w-[14%]">Prix</th>
+                              <th className="px-3 py-2.5 w-[12%]">Quantité</th>
+                              <th className="px-3 py-2.5 w-[18%]">Pays</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td className="px-3 py-2.5 text-[#1B2632]">
+                                {cmd.entrepots?.nom || <span className="text-[#1B2632]/40">Non renseigné</span>}
+                              </td>
+                              <td className="px-3 py-2.5 font-semibold text-[#A35139]">{cmd.produit || '—'}</td>
+                              <td className="px-3 py-2.5 font-mono text-[#1B2632]">{cmd.prix ?? 0}</td>
+                              <td className="px-3 py-2.5 font-mono text-[#1B2632]">{cmd.quantite ?? 1}</td>
+                              <td className="px-3 py-2.5 text-[#1B2632]">{cmd.pays?.nom || <span className="text-[#1B2632]/40">—</span>}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        {(cmd.commentaire_1 || cmd.commentaire_2 || cmd.notes) && (
+                          <div className="px-3 pb-3 -mt-1 flex flex-col gap-0.5 text-[11px]">
+                            {cmd.commentaire_1 && <span className="text-amber-900 italic">{cmd.commentaire_1}</span>}
+                            {cmd.commentaire_2 && <span className="text-purple-900 italic">{cmd.commentaire_2}</span>}
+                            {cmd.notes && <span className="text-[#1B2632]/65 italic">{cmd.notes}</span>}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -885,6 +1174,227 @@ export default function GestionCommandesPage() {
         </div>
       )}
 
+
+      {/* Import — le pays d'abord, le reste ensuite */}
+      {modaleImport && (
+        <>
+          <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setModaleImport(false)} />
+          <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center">
+            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[900px] my-8 pop-in-cm">
+
+              <div className="flex items-center gap-3 px-8 pt-7 pb-6">
+                <button onClick={() => setModaleImport(false)} title="Retour"
+                  className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0 cursor-pointer">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+                </button>
+                <h2 className="text-2xl font-bold text-[#A35139]">Importer des commandes</h2>
+              </div>
+
+              <div className="px-8 pb-8 flex flex-col gap-5">
+
+                {/* 1. Le pays. Tant qu'il n'est pas choisi, le reste n'a pas
+                    de sens : c'est lui qui décide quel agent prendra les leads. */}
+                <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
+                  <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
+                    {estSeller ? 'Pays' : 'Entrepôt'} <span className="text-[#A35139]">*</span>
+                  </legend>
+                  <select className="cm-input" value={importCibleId}
+                    onChange={(e) => { setImportCibleId(e.target.value); setImportResultat(null) }}>
+                    <option value="">{estSeller ? 'Choisissez un pays...' : 'Choisissez un entrepôt...'}</option>
+                    {estSeller
+                      ? paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)
+                      : listeEntrepots.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.nom}{e.pays?.nom ? ` — ${e.pays.nom}` : ' — pays non renseigné'}
+                          </option>
+                        ))}
+                  </select>
+                  {!estSeller && listeEntrepots.length === 0 && (
+                    <p className="text-[11px] text-[#A35139] mt-2 font-medium">
+                      Aucun entrepôt. Créez-en un dans Paramètres avant d&apos;importer.
+                    </p>
+                  )}
+                  {estSeller && paysLivrables.length === 0 && (
+                    <p className="text-[11px] text-[#A35139] mt-2 font-medium">
+                      Aucun pays livrable pour l&apos;instant. Prévenez un responsable :
+                      aucun entrepôt n&apos;est rattaché à un pays.
+                    </p>
+                  )}
+                </fieldset>
+
+                {importCibleId && (
+                  <>
+                    <div className="flex justify-end -mb-2">
+                      <button onClick={() => setImportAide((v) => !v)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold border border-[#C9C1B1] bg-white text-[#1B2632] hover:bg-[#EEE9DF]/60 transition-colors cursor-pointer">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                             style={{ transform: importAide ? 'rotate(180deg)' : 'none' }}>
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                        {importAide ? 'Masquer les colonnes attendues' : 'Voir les colonnes attendues'}
+                      </button>
+                    </div>
+
+                    {importAide && (
+                      <div className="flex flex-col gap-3">
+                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
+                          <b>Order ID</b> est le numéro du vendeur, gardé tel quel : c&apos;est celui
+                          qu&apos;il cite au téléphone. Deux vendeurs peuvent utiliser le même sans
+                          se gêner. Sans cette colonne, un numéro est généré.
+                        </div>
+
+                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
+                          <b>Note</b> : pour plusieurs numéros, séparez-les par <code className="font-mono">|</code>.
+                          Exemple : <code className="font-mono">0708852502|0708852501</code> — le premier est appelé,
+                          les autres sont notés sur la commande.
+                        </div>
+
+                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
+                          <b>Note</b> : pour plusieurs produits dans une commande, séparez nom,
+                          quantité et prix par <code className="font-mono">|</code>. Ils sont réunis
+                          en <b>une seule commande</b> — un colis, un encaissement.
+                        </div>
+
+                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
+                          <b>Le prix est enregistré tel quel.</b> Il n&apos;est ni multiplié par la
+                          quantité, ni recalculé : ce qui est écrit dans le fichier est ce que le
+                          livreur encaissera. Plusieurs prix séparés par <code className="font-mono">|</code>
+                          sont simplement additionnés.
+                        </div>
+
+                        <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[760px] text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-[#1B2632] text-white uppercase tracking-wider">
+                                  <th className="px-3 py-2.5">Order ID</th>
+                                  <th className="px-3 py-2.5">Product</th>
+                                  <th className="px-3 py-2.5">Customer</th>
+                                  <th className="px-3 py-2.5">Phone number</th>
+                                  <th className="px-3 py-2.5">City</th>
+                                  <th className="px-3 py-2.5">Address</th>
+                                  <th className="px-3 py-2.5">Quantities</th>
+                                  <th className="px-3 py-2.5">Unit price</th>
+                                  <th className="px-3 py-2.5">Store</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr className="bg-white">
+                                  <td className="px-3 py-3 font-mono">1234</td>
+                                  <td className="px-3 py-3 font-mono">PRODUIT_A|PRODUIT_B</td>
+                                  <td className="px-3 py-3">Hassan</td>
+                                  <td className="px-3 py-3 font-mono">06 XX XX XX XX</td>
+                                  <td className="px-3 py-3">Casablanca</td>
+                                  <td className="px-3 py-3">12 rue des Écoles</td>
+                                  <td className="px-3 py-3 font-mono">2|1</td>
+                                  <td className="px-3 py-3 font-mono">900|500</td>
+                                  <td className="px-3 py-3">Storeino</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          <p className="px-4 py-2.5 text-[11px] text-[#1B2632]/55 border-t border-[#C9C1B1]/50">
+                            Les en-têtes françaises sont acceptées aussi (<code className="font-mono">nom</code>,
+                            <code className="font-mono"> téléphone</code>, <code className="font-mono">ville</code>,
+                            <code className="font-mono"> adresse</code>, <code className="font-mono">quantité</code>,
+                            <code className="font-mono"> prix</code>…). Les colonnes <b>pays</b> et
+                            <b> vendeur</b> du fichier sont ignorées : le pays vient de l&apos;entrepôt
+                            choisi en haut, et {estSeller
+                              ? 'les commandes vous sont attribuées puisque c\u2019est vous qui importez'
+                              : 'les commandes n\u2019iront à aucun vendeur, puisque vous importez en tant que responsable'}.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
+                      <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
+                        Fichier <span className="text-[#A35139]">*</span>
+                      </legend>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <label className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
+                          Choisir un fichier
+                          <input type="file" accept=".csv, .xlsx, .xls" className="hidden"
+                            onChange={(e) => analyserFichier(e.target.files[0] || null)} />
+                        </label>
+                        <span className="text-sm text-[#1B2632]/60">
+                          {importFichier ? importFichier.name : 'Aucun fichier choisi'}
+                        </span>
+                      </div>
+                    </fieldset>
+
+                    {apercu && !apercu.erreur && (
+                      <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
+                        <div className="px-4 py-2.5 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-[#1B2632]">Colonnes reconnues</span>
+                          <span className="text-xs text-[#1B2632]/55">{apercu.nbLignes} ligne{apercu.nbLignes > 1 ? 's' : ''} dans le fichier</span>
+                        </div>
+                        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                          {apercu.correspondances.map((c) => (
+                            <div key={c.nom} className="flex items-baseline justify-between gap-3 text-xs">
+                              <span className="text-[#1B2632]/55 shrink-0">{c.nom}</span>
+                              {c.entete ? (
+                                <span className="font-mono font-semibold text-[#2E7D53] text-right truncate">{c.entete}</span>
+                              ) : (
+                                <span className={`text-right ${c.requis ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/35'}`}>
+                                  {c.requis ? 'manquante — obligatoire' : 'non trouvée'}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <p className="px-4 pb-3 text-[11px] text-[#1B2632]/50">
+                          En-têtes du fichier : <span className="font-mono">{apercu.entetes.join(' · ') || 'aucune'}</span>
+                        </p>
+                      </div>
+                    )}
+                    {apercu?.erreur && (
+                      <div className="px-4 py-3 rounded-xl bg-[#A35139]/10 border border-[#A35139]/30 text-sm text-[#A35139] font-medium">
+                        {apercu.erreur}
+                      </div>
+                    )}
+
+                    {importResultat && (
+                      <div className={`px-4 py-3 rounded-xl text-sm border ${
+                        importResultat.erreur
+                          ? 'bg-[#A35139]/10 border-[#A35139]/30 text-[#A35139]'
+                          : 'bg-[#2E7D53]/10 border-[#2E7D53]/30 text-[#2E7D53]'
+                      }`}>
+                        {importResultat.erreur ? (
+                          <span className="font-medium">{importResultat.erreur}</span>
+                        ) : (
+                          <span className="font-medium">
+                            {importResultat.inserees} commande{importResultat.inserees > 1 ? 's' : ''} importée{importResultat.inserees > 1 ? 's' : ''}
+                            {importResultat.doublons > 0 && ` · ${importResultat.doublons} déjà en base, ignorée${importResultat.doublons > 1 ? 's' : ''}`}
+                            {importResultat.refusees?.length > 0 && ` · ${importResultat.refusees.length} ligne(s) refusée(s)`}
+                          </span>
+                        )}
+                        {importResultat.refusees?.length > 0 && (
+                          <ul className="mt-2 text-xs text-[#A35139] list-disc list-inside">
+                            {importResultat.refusees.slice(0, 10).map((r, i) => <li key={i}>{r}</li>)}
+                            {importResultat.refusees.length > 10 && <li>…et {importResultat.refusees.length - 10} autres</li>}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-3">
+                      <button onClick={() => setModaleImport(false)}
+                        className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
+                        Fermer
+                      </button>
+                      <button onClick={lancerImport} disabled={!importFichier || importEnCours}
+                        className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer">
+                        {importEnCours ? 'Import en cours...' : 'Importer'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {detail && (
         <>

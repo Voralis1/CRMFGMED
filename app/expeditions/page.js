@@ -24,7 +24,7 @@ const STATUTS = {
 const VIDE = {
   poids_kg: '', mode_transport: 'Maritime', details: '',
   transporteur: '', transporteur_telephone: '',
-  pays: '', pays_code: '', entrepot_destination_id: '',
+  pays: '', pays_code: '', entrepot_destination_id: '', pays_destination_id: '',
   date_expedition: '', date_reception: '',
 }
 
@@ -53,7 +53,7 @@ function pourInput(v) {
 
 export default function ExpeditionsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
-  const { hasPermission, loading: permsLoading } = usePermissions()
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
@@ -62,7 +62,13 @@ export default function ExpeditionsPage() {
 
   const [expeditions, setExpeditions] = useState([])
   const [vendeurs, setVendeurs] = useState([])
+  // Un vendeur ne voit pas les entrepôts : Casablanca, Rabat et leur nombre
+  // sont l'organisation interne de FGMED. Il choisit un PAYS de destination,
+  // et c'est un responsable qui dira plus tard dans quel dépôt la
+  // marchandise atterrit.
+  const estSeller = String(roleNom || '').toLowerCase() === 'seller'
   const [entrepots, setEntrepots] = useState([])
+  const [paysLivrables, setPaysLivrables] = useState([])
   const [catalogue, setCatalogue] = useState([])
   // Les produits transportés, pendant la saisie. Ils ne partent en base
   // qu'une fois l'expédition créée : avant, il n'y a pas d'identifiant
@@ -130,9 +136,18 @@ export default function ExpeditionsPage() {
 
     // L'entrepôt qui reçoit, avec son pays pour le distinguer : deux dépôts
     // peuvent s'appeler « Central ».
-    const { data: entrepotsDB } = await supabase
-      .from('entrepots').select('id, nom, pays(nom)').eq('tenant_id', tenantKey).order('nom')
-    setEntrepots(entrepotsDB || [])
+    if (estSeller) {
+      // La vue ne rend que des noms de pays, jamais d'entrepôt : ce qu'on ne
+      // charge pas ne peut pas fuiter dans la réponse réseau.
+      const { data: paysDB } = await supabase
+        .from('v_pays_livrables').select('pays_id, nom').eq('tenant_id', tenantKey).order('nom')
+      setPaysLivrables(paysDB || [])
+      setEntrepots([])
+    } else {
+      const { data: entrepotsDB } = await supabase
+        .from('entrepots').select('id, nom, pays(nom)').eq('tenant_id', tenantKey).order('nom')
+      setEntrepots(entrepotsDB || [])
+    }
 
     // Seuls les produits encore en vente sont proposés : en expédier un retiré
     // du catalogue est presque toujours une erreur de saisie.
@@ -230,6 +245,7 @@ export default function ExpeditionsPage() {
       pays: e.pays || '',
       pays_code: e.pays_code || paysParNom(e.pays)?.code || '',
       entrepot_destination_id: e.entrepot_destination_id || '',
+      pays_destination_id: e.pays_destination_id || '',
       date_expedition: pourInput(e.date_expedition),
       date_reception: pourInput(e.date_reception),
     })
@@ -273,7 +289,10 @@ export default function ExpeditionsPage() {
       transporteur_telephone: formulaire.transporteur_telephone.trim() || null,
       pays: formulaire.pays.trim(),
       pays_code: formulaire.pays_code || null,
-      entrepot_destination_id: formulaire.entrepot_destination_id || null,
+      entrepot_destination_id: estSeller ? null : (formulaire.entrepot_destination_id || null),
+      // Le vendeur n'a choisi qu'un pays : on n'invente pas d'entrepôt pour
+      // lui. Le responsable le renseignera à la confirmation.
+      pays_destination_id: estSeller ? (formulaire.pays_destination_id || null) : null,
       date_expedition: formulaire.date_expedition || null,
     }
     // La date de réception appartient au responsable : c'est lui qui constate
@@ -383,13 +402,22 @@ export default function ExpeditionsPage() {
     charger()
   }
 
+  // Où va la marchandise, dit avec les mots de celui qui regarde : le nom de
+  // l'entrepôt pour un responsable, le seul nom du pays pour un vendeur.
+  function destinationNom(e) {
+    if (estSeller) {
+      return paysLivrables.find((p) => p.pays_id === e.pays_destination_id)?.nom || ''
+    }
+    return entrepots.find((x) => x.id === e.entrepot_destination_id)?.nom || ''
+  }
+
   function exporter() {
     const entetes = ['Référence', 'Poids (Kg)', 'Mode', 'Détails', 'Produits', 'Transporteur', 'Téléphone', 'Depuis', 'Vers', 'Date expédition', 'Date réception', 'Statut', 'Déclarée par', 'Motif du refus']
     const lignesCsv = affichees.map((e) => [
       e.reference, e.poids_kg ?? '', e.mode_transport || '', e.details || '',
       nbProduits[e.id] ? `${nbProduits[e.id].articles} produits / ${nbProduits[e.id].pieces} pieces` : '',
       e.transporteur || '', e.transporteur_telephone || '', e.pays || '',
-      entrepots.find((x) => x.id === e.entrepot_destination_id)?.nom || '',
+      destinationNom(e),
       e.date_expedition ? dateCourte(e.date_expedition) : '',
       e.date_reception ? dateCourte(e.date_reception) : '',
       STATUTS[e.statut]?.label || e.statut, nomVendeur(e.vendeur_id), e.motif_refus || '',
@@ -663,9 +691,9 @@ export default function ExpeditionsPage() {
                           {e.pays_code && <span className="text-base leading-none">{drapeau(e.pays_code)}</span>}
                           {e.pays || '—'}
                         </div>
-                        {e.entrepot_destination_id && (
+                        {destinationNom(e) && (
                           <div className="text-xs text-[#1B2632]/50 mt-0.5">
-                            → {entrepots.find((x) => x.id === e.entrepot_destination_id)?.nom || '—'}
+                            → {destinationNom(e)}
                           </div>
                         )}
                       </td>
@@ -983,17 +1011,30 @@ export default function ExpeditionsPage() {
                   </Bloc>
 
                   <div className="flex flex-col gap-5">
-                    <Bloc titre="Entrepôt">
+                    <Bloc titre={estSeller ? 'Destination' : 'Entrepôt'}>
                       <div>
-                        <label className="ex-label">Vers (entrepôt) *</label>
-                        <select className="ex-input" required value={formulaire.entrepot_destination_id}
-                          onChange={(ev) => setFormulaire({ ...formulaire, entrepot_destination_id: ev.target.value })}>
-                          <option value="">Choisir...</option>
-                          {entrepots.map((en) => <option key={en.id} value={en.id}>{en.nom}{en.pays?.nom ? ` — ${en.pays.nom}` : ''}</option>)}
-                        </select>
-                        {entrepots.length === 0 && (
+                        <label className="ex-label">{estSeller ? 'Vers (pays) *' : 'Vers (entrepôt) *'}</label>
+                        {estSeller ? (
+                          <select className="ex-input" required value={formulaire.pays_destination_id}
+                            onChange={(ev) => setFormulaire({ ...formulaire, pays_destination_id: ev.target.value })}>
+                            <option value="">Choisir...</option>
+                            {paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)}
+                          </select>
+                        ) : (
+                          <select className="ex-input" required value={formulaire.entrepot_destination_id}
+                            onChange={(ev) => setFormulaire({ ...formulaire, entrepot_destination_id: ev.target.value })}>
+                            <option value="">Choisir...</option>
+                            {entrepots.map((en) => <option key={en.id} value={en.id}>{en.nom}{en.pays?.nom ? ` — ${en.pays.nom}` : ''}</option>)}
+                          </select>
+                        )}
+                        {!estSeller && entrepots.length === 0 && (
                           <p className="text-[11px] text-[#A35139] mt-1">
                             Aucun entrepôt. À créer dans Paramètres → Entrepôts.
+                          </p>
+                        )}
+                        {estSeller && paysLivrables.length === 0 && (
+                          <p className="text-[11px] text-[#A35139] mt-1">
+                            Aucun pays de destination. Prévenez un responsable.
                           </p>
                         )}
                       </div>
