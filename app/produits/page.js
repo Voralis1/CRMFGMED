@@ -963,6 +963,16 @@ export default function ProduitsPage() {
                   )}
                 </Champ>
 
+                {/* Le prix. L'enregistrement le refuse s'il est vide — et la
+                    case avait disparu du formulaire lors de la refonte : plus
+                    aucun produit ne pouvait être créé, le message disant
+                    « Le prix est obligatoire » sans qu'il y ait où l'écrire. */}
+                <Champ label="Prix" requis>
+                  <input className="ch-input font-mono" type="number" step="0.01" min="0" required
+                    placeholder="0.00" value={formulaire.price}
+                    onChange={(e) => setFormulaire({ ...formulaire, price: e.target.value })} />
+                </Champ>
+
                 <Champ label="Vendeur">
                   <input className="ch-input" value={formulaire.seller}
                     onChange={(e) => setFormulaire({ ...formulaire, seller: e.target.value })} />
