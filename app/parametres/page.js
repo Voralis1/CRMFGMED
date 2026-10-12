@@ -10,11 +10,18 @@ export default function ParametresAdmin() {
   const { user, tenantId, loading: authLoading } = useAuth();
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
 
-  // Qui crée, corrige et supprime un entrepôt. Pas le seller : un entrepôt est
-  // un lieu physique de l'entreprise, pas quelque chose qu'un vendeur externe
-  // doit connaître — il ne voit d'ailleurs que le pays à l'import.
-  const peutGererEntrepots = ['admin', 'manager', 'super_admin']
-    .includes(String(roleNom || '').toLowerCase());
+  // Qui configure l'entreprise : pays, zones, statuts, entrepôts, stock. Rien
+  // de tout cela n'appartient à un vendeur externe — ce sont les réglages de
+  // FGMED, pas les siens. Un seller qui pouvait créer un pays pouvait aussi en
+  // créer un deuxième mal écrit, et casser l'affectation des agents.
+  //
+  // Un seul mot pour toute la page : le découper par onglet finissait toujours
+  // par laisser un onglet dehors.
+  const ROLES_CONFIG = ['admin', 'manager', 'super_admin'];
+  const peutConfigurer = ROLES_CONFIG.includes(String(roleNom || '').toLowerCase());
+  // Les entrepôts suivent la même règle ; le nom reste, il est utilisé partout
+  // plus bas dans la page.
+  const peutGererEntrepots = peutConfigurer;
   const router = useRouter();
 
   const [ongletActif, setOngletActif] = useState("produits");
@@ -66,14 +73,14 @@ export default function ParametresAdmin() {
         router.replace("/");
       } else if (!hasPermission("menu_parametres")) {
         router.replace("/dashboard");
-      } else if (tenantId) {
+      } else if (tenantId && peutConfigurer) {
         chargerDonnees();
       }
     }
-  }, [user, authLoading, permsLoading, hasPermission, tenantId, router]);
+  }, [user, authLoading, permsLoading, hasPermission, tenantId, router, peutConfigurer]);
 
   async function chargerDonnees() {
-    if (!tenantId) return;
+    if (!tenantId || !peutConfigurer) return;
     setChargement(true);
 
     const { data: paysData } = await supabase.from("pays").select("*").eq("tenant_id", tenantId).order("nom");
@@ -385,6 +392,27 @@ export default function ParametresAdmin() {
   // --- ÉCRAN DE CHARGEMENT ---
   if (authLoading || permsLoading || !hasPermission("menu_parametres")) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>;
+  }
+
+  // Page vide pour qui ne configure pas. Vide pour de vrai : aucun onglet, et
+  // `chargerDonnees()` n'est même pas appelé — on ne charge pas une liste de
+  // pays ou d'entrepôts pour la masquer ensuite côté navigateur.
+  if (!peutConfigurer) {
+    return (
+      <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
+        <header className="border-b border-[#C9C1B1]/50 pb-4">
+          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">Administration</p>
+          <h1 className="text-3xl font-bold text-[#1B2632]">Paramètres</h1>
+        </header>
+        <div className="bg-white border border-[#C9C1B1] rounded-2xl px-8 py-16 text-center">
+          <p className="text-sm font-semibold text-[#1B2632]">Rien à régler ici pour le moment.</p>
+          <p className="text-sm text-[#1B2632]/60 mt-2 max-w-md mx-auto">
+            Les pays, zones, statuts et entrepôts sont les réglages de l&apos;entreprise.
+            Ils sont tenus par le manager et l&apos;administrateur.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

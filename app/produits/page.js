@@ -73,11 +73,21 @@ function QuantiteCellule({ total, parPays }) {
 
 export default function ProduitsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
-  const { hasPermission, loading: permsLoading } = usePermissions()
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
   const peutGerer = hasPermission('gerer_produits')
+
+  // Le vendeur ne voit pas les entrepôts, et ne voit donc pas le stock : où la
+  // marchandise est posée est l'organisation interne de FGMED. La base le
+  // refuse déjà (rls_parametres.sql) ; l'écran doit s'accorder avec elle,
+  // sinon il affiche des cases vides et « 0 en stock », ce qui est un mensonge
+  // plus trompeur qu'une absence.
+  //
+  // Ce qu'il garde : créer et corriger un produit. Le stock arrive par
+  // l'expédition qu'un responsable confirme.
+  const estSeller = String(roleNom || '').toLowerCase() === 'seller'
 
   const [produits, setProduits] = useState([])
   const [stocksParProduit, setStocksParProduit] = useState({})
@@ -94,6 +104,9 @@ export default function ProduitsPage() {
 
   const [entrepots, setEntrepots] = useState([])
   const [entrepotsChoisis, setEntrepotsChoisis] = useState([])
+  // Le pendant pour le vendeur : des pays, pas des entrepôts.
+  const [paysLivrables, setPaysLivrables] = useState([])
+  const [paysChoisis, setPaysChoisis] = useState([])
   const [stocks, setStocks] = useState([])
   const [mouvements, setMouvements] = useState([])
   const [ficheOuverte, setFicheOuverte] = useState(null)
@@ -130,6 +143,21 @@ export default function ProduitsPage() {
     }
     setProduits(data || [])
 
+    // Le vendeur ne lit ni `entrepots` ni `stocks`. Il choisit un PAYS, comme
+    // à l'import, et la base traduit en entrepôts (rattacher_produit_pays).
+    if (estSeller) {
+      setStocks([])
+      setEntrepots([])
+      setStocksParProduit({})
+
+      const { data: paysDB } = await supabase
+        .from('v_pays_livrables').select('pays_id, nom').eq('tenant_id', tenantKey).order('nom')
+      setPaysLivrables(paysDB || [])
+
+      setChargement(false)
+      return
+    }
+
     // Détail par pays : stocks -> entrepôt -> pays. Facultatif, et on ne
     // bloque pas l'écran si ces tables ne répondent pas.
     const { data: stocks } = await supabase
@@ -154,7 +182,7 @@ export default function ProduitsPage() {
     setStocksParProduit(regroupe)
 
     setChargement(false)
-  }, [tenantKey])
+  }, [tenantKey, estSeller])
 
   useEffect(() => { if (tenantKey && !permsLoading) charger() }, [tenantKey, permsLoading, charger])
 
@@ -212,6 +240,10 @@ export default function ProduitsPage() {
     setFicheOuverte(p)
     setMouvements([])
 
+    // Pas d'historique pour un vendeur : la fiche ne l'affiche pas, et la
+    // base refuserait la lecture.
+    if (estSeller) return
+
     const { data, error } = await supabase
       .from('mouvements_stock')
       .select('id, entrepot_id, type_mouvement, quantite, notes, created_at, entrepots(nom)')
@@ -240,11 +272,12 @@ export default function ProduitsPage() {
   function ouvrirCreation() {
     setFormulaire(VIDE)
     setEntrepotsChoisis([])
+    setPaysChoisis([])
     setIdEnEdition(null)
     setModaleOuverte(true)
   }
 
-  function ouvrirEdition(p) {
+  async function ouvrirEdition(p) {
     setFormulaire({
       product: p.product || '', code: p.code || '', code_variante: p.code_variante || '',
       seller: p.seller || '', type: p.type || 'Standard', price: p.price ?? '',
@@ -255,6 +288,16 @@ export default function ProduitsPage() {
       product_page: p.product_page || '', statut: p.statut || 'actif',
     })
     setEntrepotsChoisis(stocks.filter((st) => st.produit_id === p.id).map((st) => st.entrepot_id))
+
+    // Le vendeur ne peut pas déduire ses pays depuis `stocks`, qu'il ne lit
+    // pas : c'est la base qui les lui donne, sans nommer un seul entrepôt.
+    // Sans ça, il rouvrirait un produit déjà rattaché avec un champ vide, et
+    // l'enregistrer le détacherait de tout.
+    if (estSeller) {
+      const { data } = await supabase.rpc('pays_du_produit', { p_produit: p.id })
+      setPaysChoisis(Array.isArray(data) ? data.filter(Boolean) : [])
+    }
+
     setIdEnEdition(p.id)
     setModaleOuverte(true)
   }
@@ -310,6 +353,39 @@ export default function ProduitsPage() {
     if (!data || data.length === 0) {
       setEnregistrement(false)
       return annonce("Aucune modification enregistrée : votre rôle ne permet pas de gérer les produits.", 'erreur')
+    }
+
+    // Le vendeur a choisi des PAYS. La base les traduit en entrepôts et écrit
+    // les lignes de stock à sa place : lui n'a le droit ni de lire les
+    // entrepôts, ni d'écrire dans `stocks`.
+    if (estSeller) {
+      const { data: bilan, error: errPays } = await supabase.rpc('rattacher_produit_pays', {
+        p_produit: data[0].id,
+        p_pays: paysChoisis,
+      })
+      setEnregistrement(false)
+
+      if (errPays) {
+        return annonce('Produit enregistré, mais les pays ont été refusés : ' + errPays.message, 'erreur')
+      }
+
+      // La base dit ce qu'elle a vraiment fait. Un pays décoché dont
+      // l'entrepôt contient encore de la marchandise n'est pas retiré, et le
+      // taire ferait croire à un détachement qui n'a pas eu lieu.
+      const r = Array.isArray(bilan) ? bilan[0] : bilan
+      if (r?.gardes_pleins > 0) {
+        annonce(
+          `Produit enregistré. ${r.gardes_pleins} entrepôt${r.gardes_pleins > 1 ? 's gardés' : ' gardé'} :`
+          + ' il y reste de la marchandise. Le dépôt doit la sortir avant de retirer le pays.',
+          'erreur',
+        )
+      } else {
+        annonce(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.', 'succes')
+      }
+
+      setModaleOuverte(false)
+      charger()
+      return
     }
 
     // Les entrepôts choisis deviennent des lignes de stock à zéro. On ne
@@ -759,6 +835,11 @@ export default function ProduitsPage() {
                   )}
                 </div>
 
+                {/* Stock par entrepôt et historique : masqués au vendeur. Une
+                    section vide lui ferait croire que le produit n'est nulle
+                    part, alors qu'il n'a simplement pas à le savoir. */}
+                {!estSeller && (
+                <>
                 <div className="border-t border-[#C9C1B1]/50 pt-5">
                   <p className="pr-label mb-3">Stock par entrepôt</p>
                   {stocks.filter((st) => st.produit_id === ficheOuverte.id).length === 0 ? (
@@ -836,6 +917,8 @@ export default function ProduitsPage() {
                     correspond donc toujours au stock réel d&apos;aujourd&apos;hui.
                   </p>
                 </div>
+                </>
+                )}
 
               </div>
 
@@ -914,6 +997,55 @@ export default function ProduitsPage() {
                   </div>
                 </Champ>
 
+                {estSeller ? (
+                  /* Le vendeur choisit des PAYS, comme à l'import. La base crée
+                     ensuite une ligne de stock à zéro dans chaque entrepôt du
+                     pays : le dépôt sait où poser la marchandise, et le nom
+                     des entrepôts ne sort jamais d'ici. */
+                  <Champ label="Pays" requis>
+                    <div className="flex flex-wrap items-center gap-1.5 py-0.5">
+                      {paysChoisis.map((pid) => {
+                        const p = paysLivrables.find((x) => x.pays_id === pid)
+                        return (
+                          <span key={pid} className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded bg-[#EEE9DF] border border-[#C9C1B1] text-sm text-[#1B2632]">
+                            {p ? p.nom : 'Pays retiré'}
+                            <button
+                              type="button" title="Retirer"
+                              onClick={() => setPaysChoisis((prec) => prec.filter((x) => x !== pid))}
+                              className="text-[#1B2632]/40 hover:text-[#A35139] transition-colors leading-none text-base"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        )
+                      })}
+
+                      <select
+                        className="ch-input flex-1 min-w-[150px]"
+                        value=""
+                        onChange={(e) => {
+                          if (!e.target.value) return
+                          setPaysChoisis((prec) => [...prec, e.target.value])
+                        }}
+                      >
+                        <option value="">
+                          {paysChoisis.length === 0 ? 'Choisir un pays...' : 'Ajouter...'}
+                        </option>
+                        {paysLivrables
+                          .filter((p) => !paysChoisis.includes(p.pays_id))
+                          .map((p) => (
+                            <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <p className="text-[11px] text-[#1B2632]/50 mt-1">
+                      {paysLivrables.length === 0
+                        ? 'Aucun pays livrable. Un responsable doit d\'abord y créer un entrepôt.'
+                        : 'Le dépôt exact est choisi en interne, à l\'arrivée de la marchandise.'}
+                    </p>
+                  </Champ>
+                ) : (
                 <Champ label="Entrepôts" requis>
                   <div className="flex flex-wrap items-center gap-1.5 py-0.5">
                     {entrepotsChoisis.map((eid) => {
@@ -962,6 +1094,7 @@ export default function ProduitsPage() {
                     </p>
                   )}
                 </Champ>
+                )}
 
                 {/* Le prix. L'enregistrement le refuse s'il est vide — et la
                     case avait disparu du formulaire lors de la refonte : plus
