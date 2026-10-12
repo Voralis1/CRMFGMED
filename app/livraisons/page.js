@@ -662,11 +662,20 @@ export default function LivraisonsPage() {
           <table className="w-full min-w-[1050px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#C9D3DD] text-[11px] uppercase tracking-wider text-[#1B2632]/70 font-bold">
-                <th className="px-5 py-3.5">Lead ID</th>
-                <th className="px-5 py-3.5">Date</th>
+                {/* Le livreur ne lit pas le même tableau que le bureau. Lui est
+                    devant une porte : il lui faut qui appeler, où aller et
+                    combien encaisser. Le Lead ID et la date sont des repères de
+                    bureau — ils lui prenaient trois colonnes pour rien. */}
+                {estLivreur
+                  ? <th className="px-5 py-3.5">Client</th>
+                  : <th className="px-5 py-3.5">Lead ID</th>}
+                {!estLivreur && <th className="px-5 py-3.5">Date</th>}
                 <th className="px-5 py-3.5">N° de suivi</th>
                 <th className="px-5 py-3.5">Commande</th>
-                <th className="px-5 py-3.5">Zone</th>
+                {estLivreur
+                  ? <th className="px-5 py-3.5">Adresse</th>
+                  : <th className="px-5 py-3.5">Zone</th>}
+                {estLivreur && <th className="px-5 py-3.5 text-right">À encaisser</th>}
                 {estResponsable && <th className="px-5 py-3.5">Livreur</th>}
                 {estResponsable && <th className="px-5 py-3.5">Vendeur</th>}
                 <th className="px-5 py-3.5">Statut</th>
@@ -684,12 +693,28 @@ export default function LivraisonsPage() {
                   const ouverte = lignesOuvertes.has(liv.id)
                   return (
                     <tr key={liv.id} className={i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
-                      <td className="px-5 py-4 align-top font-mono text-sm font-semibold text-[#1B2632] whitespace-nowrap">
-                        {c.lead_id || '—'}
-                      </td>
-                      <td className="px-5 py-4 align-top text-sm text-[#1B2632]/75 whitespace-nowrap">
-                        {liv.created_at ? new Date(liv.created_at).toLocaleDateString('fr-CA') : '—'}
-                      </td>
+                      {estLivreur ? (
+                        <td className="px-5 py-4 align-top">
+                          <span className="block text-sm font-bold text-[#1B2632]">{c.client_nom || '—'}</span>
+                          {/* Le numéro est cliquable : sur un téléphone, c'est
+                              un appel, pas un numéro à recopier. */}
+                          {c.client_telephone && (
+                            <a href={`tel:${c.client_telephone}`}
+                               className="block mt-0.5 font-mono text-xs font-semibold text-[#A35139] hover:underline">
+                              {c.client_telephone}
+                            </a>
+                          )}
+                        </td>
+                      ) : (
+                        <td className="px-5 py-4 align-top font-mono text-sm font-semibold text-[#1B2632] whitespace-nowrap">
+                          {c.lead_id || '—'}
+                        </td>
+                      )}
+                      {!estLivreur && (
+                        <td className="px-5 py-4 align-top text-sm text-[#1B2632]/75 whitespace-nowrap">
+                          {liv.created_at ? new Date(liv.created_at).toLocaleDateString('fr-CA') : '—'}
+                        </td>
+                      )}
                       <td className="px-5 py-4 align-top font-mono text-sm text-[#1B2632] whitespace-nowrap">
                         {c.tracking_number || '—'}
                       </td>
@@ -737,9 +762,24 @@ export default function LivraisonsPage() {
                         )}
                       </td>
 
-                      <td className="px-5 py-4 align-top text-sm text-[#1B2632]/80">
-                        {c.zones?.nom_zone || c.ville_zone || '—'}
-                      </td>
+                      {estLivreur ? (
+                        <>
+                          <td className="px-5 py-4 align-top text-sm text-[#1B2632]/80 max-w-[260px]">
+                            {c.adresse || <span className="text-[#1B2632]/35">Adresse non renseignée</span>}
+                            <span className="block text-xs text-[#1B2632]/50 mt-0.5">
+                              {c.zones?.nom_zone || c.ville_zone || '—'}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 align-top text-right whitespace-nowrap">
+                            <span className="font-mono text-sm font-bold text-[#1B2632]">{c.prix ?? '—'}</span>{' '}
+                            <span className="text-xs text-[#1B2632]/50">{c.pays?.devise || ''}</span>
+                          </td>
+                        </>
+                      ) : (
+                        <td className="px-5 py-4 align-top text-sm text-[#1B2632]/80">
+                          {c.zones?.nom_zone || c.ville_zone || '—'}
+                        </td>
+                      )}
 
                       {estResponsable && (
                         <td className="px-5 py-4 align-top text-sm text-[#1B2632]/80">
@@ -760,7 +800,19 @@ export default function LivraisonsPage() {
                         )}
                       </td>
 
-                      <td className="px-5 py-4 align-top text-center">
+                      <td className="px-5 py-4 align-top text-center whitespace-nowrap">
+                        {/* L'action du livreur était cachée derrière l'œil : il
+                            fallait deviner qu'une fiche s'ouvrait pour pouvoir
+                            marquer une livraison. Elle est maintenant sur la
+                            ligne, et seulement là où elle sert. */}
+                        {peutTraiter && liv.statut === 'en_attente' && (
+                          <button
+                            onClick={() => ouvrirDetail(liv)}
+                            className="mr-2 px-4 py-2 rounded-lg text-xs font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors cursor-pointer"
+                          >
+                            Traiter
+                          </button>
+                        )}
                         <button
                           onClick={() => ouvrirDetail(liv)}
                           title="Voir la fiche"

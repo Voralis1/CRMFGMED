@@ -154,7 +154,53 @@ export default function ParametresAdmin() {
 
   function preparerModificationPays(pays) { setNouveauPays({ id: pays.id, nom: pays.nom || "", code: pays.code || "", devise: pays.devise || "" }); setIsEditingPays(true); }
   function annulerEditionPays() { setNouveauPays({ id: null, nom: "", code: "", devise: "" }); setIsEditingPays(false); }
-  async function supprimerPays(id, nom) { if (!tenantId || !window.confirm(`Supprimer ${nom} ?`)) return; await supabase.from("pays").delete().eq("id", id).eq("tenant_id", tenantId); chargerDonnees(); }
+  // Un pays tient des zones, des statuts, un entrepôt, des commandes, des
+  // agents, des livreurs. La base refuse de le supprimer tant qu'une seule de
+  // ces lignes le cite — et l'ancienne version jetait ce refus à la poubelle :
+  // on cliquait, rien ne se passait, et rien ne disait pourquoi.
+  //
+  // On compte d'abord, et on nomme ce qui bloque. Un message qui dit « 12
+  // commandes » se règle ; un écran muet, non.
+  const LIENS_PAYS = [
+    { table: "zones",      colonne: "pays_id",             mot: "zone" },
+    { table: "statuts",    colonne: "pays_id",             mot: "statut" },
+    { table: "entrepots",  colonne: "pays_id",             mot: "entrepôt" },
+    { table: "commandes",  colonne: "pays_id",             mot: "commande" },
+    { table: "agents",     colonne: "pays_id",             mot: "agent" },
+    { table: "livreurs",   colonne: "pays_id",             mot: "livreur" },
+    { table: "expeditions", colonne: "pays_destination_id", mot: "expédition" },
+  ];
+
+  async function supprimerPays(id, nom) {
+    if (!tenantId) return;
+
+    const comptes = await Promise.all(
+      LIENS_PAYS.map(async (l) => {
+        const { count, error } = await supabase
+          .from(l.table).select("id", { count: "exact", head: true }).eq(l.colonne, id);
+        // Une table absente ou illisible ne doit pas bloquer la suppression :
+        // on la compte comme vide plutôt que d'inventer un obstacle.
+        return { ...l, n: error ? 0 : (count || 0) };
+      }),
+    );
+
+    const bloquants = comptes.filter((c) => c.n > 0);
+    if (bloquants.length > 0) {
+      return afficherMessage(
+        `« ${nom} » ne peut pas être supprimé : il reste `
+        + bloquants.map((b) => `${b.n} ${b.mot}${b.n > 1 ? "s" : ""}`).join(", ")
+        + ". Retirez-les d'abord.",
+        "erreur",
+      );
+    }
+
+    if (!window.confirm(`Supprimer « ${nom} » ?`)) return;
+
+    const { error } = await supabase.from("pays").delete().eq("id", id).eq("tenant_id", tenantId);
+    if (error) return afficherMessage("Suppression refusée : " + error.message, "erreur");
+    afficherMessage(`« ${nom} » supprimé.`, "succes");
+    chargerDonnees();
+  }
 
   // =====================================================================
   // ACTIONS ZONES
@@ -238,20 +284,35 @@ export default function ParametresAdmin() {
   async function ajouterEntrepot(e) {
     e.preventDefault();
     if (!tenantId) return;
-    // Un entrepôt, c'est un pays et une ville. Rien d'autre : le « nom » et la
-    // « localisation » d'avant disaient deux fois la même chose, et personne
-    // ne savait lequel remplir.
+    // Un entrepôt EST un pays. Un seul par pays, nommé comme lui.
+    //
+    // Avant, on demandait aussi une ville : deux dépôts au Maroc, et le
+    // vendeur qui n'en choisit qu'un (le pays) laissait la question « lequel a
+    // reçu ? » sans réponse — à l'import comme à la réception d'une
+    // expédition. Un pays, un dépôt : la question ne se pose plus.
     if (!nouvelEntrepot.pays_id) return afficherMessage("Choisissez le pays de l'entrepôt.", "erreur");
-    if (!nouvelEntrepot.ville.trim()) return afficherMessage("Indiquez la ville de l'entrepôt.", "erreur");
-    const ville = nouvelEntrepot.ville.trim();
-    // Le pays décide, à l'import, quel agent reçoit les leads. Un entrepôt
-    // sans pays bloque l'import sans rien dire.
-    const { error } = await supabase.from("entrepots").insert([{
-      nom: ville, localisation: ville, pays_id: nouvelEntrepot.pays_id, tenant_id: tenantId,
-    }]);
-    if (error) afficherMessage("Erreur lors de l'ajout de l'entrepôt : " + error.message, "erreur");
-    else { afficherMessage("Entrepôt ajouté avec succès.", "succes"); setNouvelEntrepot({ ville: "", pays_id: "" }); chargerDonnees(); }
 
+    const pays = listePays.find((p) => p.id === nouvelEntrepot.pays_id);
+    const { error } = await supabase.from("entrepots").insert([{
+      // `nom` et `localisation` portent le nom du pays : des écrans lisent
+      // encore l'un ou l'autre, et les laisser différents ferait apparaître
+      // deux noms pour le même dépôt.
+      nom: pays?.nom || "", localisation: pays?.nom || "",
+      pays_id: nouvelEntrepot.pays_id, tenant_id: tenantId,
+    }]);
+    if (error) {
+      // 23505 = l'index unique (tenant_id, pays_id). C'est lui qui parle.
+      afficherMessage(
+        error.code === "23505"
+          ? `Il y a déjà un entrepôt pour ${pays?.nom || "ce pays"}.`
+          : "Erreur lors de l'ajout de l'entrepôt : " + error.message,
+        "erreur",
+      );
+    } else {
+      afficherMessage("Entrepôt ajouté avec succès.", "succes");
+      setNouvelEntrepot({ ville: "", pays_id: "" });
+      chargerDonnees();
+    }
   }
 
   async function supprimerEntrepot(entrepot) {
@@ -300,9 +361,22 @@ export default function ParametresAdmin() {
   // Les entrepôts créés avant que cette colonne existe n'en ont aucun.
   async function changerPaysEntrepot(id, paysId) {
     if (!tenantId) return;
-    const { error } = await supabase.from("entrepots").update({ pays_id: paysId || null }).eq("id", id).eq("tenant_id", tenantId);
-    if (error) afficherMessage("Erreur : " + error.message, "erreur");
-    else { afficherMessage("Pays de l'entrepôt enregistré.", "succes"); chargerDonnees(); }
+    const pays = listePays.find((p) => p.id === paysId);
+    // Le nom suit le pays : un dépôt « Maroc » rattaché à l'Angola porterait
+    // un nom qui mentirait sur tous les autres écrans.
+    const champs = paysId
+      ? { pays_id: paysId, nom: pays?.nom || "", localisation: pays?.nom || "" }
+      : { pays_id: null };
+
+    const { error } = await supabase.from("entrepots").update(champs).eq("id", id).eq("tenant_id", tenantId);
+    if (error) {
+      afficherMessage(
+        error.code === "23505"
+          ? `Il y a déjà un entrepôt pour ${pays?.nom || "ce pays"}.`
+          : "Erreur : " + error.message,
+        "erreur",
+      );
+    } else { afficherMessage("Pays de l'entrepôt enregistré.", "succes"); chargerDonnees(); }
   }
 
   async function ajouterMouvement(e) {
@@ -789,35 +863,43 @@ export default function ParametresAdmin() {
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">Gestion des Entrepôts</h2>
                 <p className="text-sm text-[#1B2632]/60 mt-1">
-                  Un entrepôt, c&apos;est un <b>pays</b> et une <b>ville</b>. Le pays est utilisé à
-                  l&apos;import des commandes : c&apos;est lui qui décide quel agent reçoit les leads.
-                  Les vendeurs ne voient jamais les villes — seulement les pays où vous avez un entrepôt.
+                  Un entrepôt <b>est</b> un pays : un seul par pays. C&apos;est lui qui décide quel
+                  agent reçoit les leads à l&apos;import, et c&apos;est là qu&apos;entre la
+                  marchandise quand une expédition est réceptionnée.
                 </p>
               </div>
 
               {peutGererEntrepots && (
-              <form onSubmit={ajouterEntrepot} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+              <>
+              <form onSubmit={ajouterEntrepot} className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                  {/* Les pays qui ont déjà un dépôt ne sont pas proposés : la base
+                      les refuserait, autant ne pas les offrir. */}
                   <select value={nouvelEntrepot.pays_id} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
                     <option value="">Choisir...</option>
-                    {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
+                    {listePays
+                      .filter((p) => !listeEntrepots.some((en) => en.pays_id === p.id))
+                      .map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                   </select>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Ville</label>
-                  <input type="text" placeholder="ex: Casablanca" value={nouvelEntrepot.ville} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, ville: e.target.value})} className="fg-input" required />
-                </div>
                 <div>
-                  <button type="submit" className="fg-btn-primary w-full">Ajouter l'entrepôt</button>
+                  <button type="submit" className="fg-btn-primary w-full">Ajouter l&apos;entrepôt</button>
                 </div>
               </form>
+              {listePays.length > 0 && listePays.every((p) => listeEntrepots.some((en) => en.pays_id === p.id)) && (
+                <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">
+                  Tous vos pays ont déjà leur entrepôt. Ajoutez un pays dans l&apos;onglet
+                  « Pays &amp; Devises » pour en créer un autre.
+                </p>
+              )}
+              </>
               )}
 
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
-                    <tr><th>Ville</th><th>Pays</th><th className="text-center">Statut</th>{peutGererEntrepots && <th className="text-right">Actions</th>}</tr>
+                    <tr><th>Entrepôt</th><th>Pays</th><th className="text-center">Statut</th>{peutGererEntrepots && <th className="text-right">Actions</th>}</tr>
                   </thead>
                   <tbody>
                     {listeEntrepots.length === 0 && <tr><td colSpan={peutGererEntrepots ? 4 : 3} className="text-center py-6 text-gray-400">Aucun entrepôt.</td></tr>}
