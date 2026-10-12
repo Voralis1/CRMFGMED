@@ -154,51 +154,28 @@ export default function ParametresAdmin() {
 
   function preparerModificationPays(pays) { setNouveauPays({ id: pays.id, nom: pays.nom || "", code: pays.code || "", devise: pays.devise || "" }); setIsEditingPays(true); }
   function annulerEditionPays() { setNouveauPays({ id: null, nom: "", code: "", devise: "" }); setIsEditingPays(false); }
-  // Un pays tient des zones, des statuts, un entrepôt, des commandes, des
-  // agents, des livreurs. La base refuse de le supprimer tant qu'une seule de
-  // ces lignes le cite — et l'ancienne version jetait ce refus à la poubelle :
-  // on cliquait, rien ne se passait, et rien ne disait pourquoi.
+  // La suppression est faite par la base (`supprimer_pays`), pas ici.
   //
-  // On compte d'abord, et on nomme ce qui bloque. Un message qui dit « 12
-  // commandes » se règle ; un écran muet, non.
-  const LIENS_PAYS = [
-    { table: "zones",      colonne: "pays_id",             mot: "zone" },
-    { table: "statuts",    colonne: "pays_id",             mot: "statut" },
-    { table: "entrepots",  colonne: "pays_id",             mot: "entrepôt" },
-    { table: "commandes",  colonne: "pays_id",             mot: "commande" },
-    { table: "agents",     colonne: "pays_id",             mot: "agent" },
-    { table: "livreurs",   colonne: "pays_id",             mot: "livreur" },
-    { table: "expeditions", colonne: "pays_destination_id", mot: "expédition" },
-  ];
-
+  // Un `delete` depuis l'écran échouait sur la première ligne qui citait le
+  // pays, et l'ancienne version jetait ce refus à la poubelle : on cliquait,
+  // rien ne se passait, et rien ne disait pourquoi. Le cas qui l'a révélé :
+  // un livreur supprimé depuis l'application garde sa fiche (sans compte,
+  // inactive) pour que l'historique des livraisons tienne — et cette fiche
+  // fantôme retenait le pays indéfiniment.
+  //
+  // La fonction tranche : ce qui est du travail réel bloque et elle le nomme ;
+  // ce qui n'existe que par le pays (ses zones, ses statuts, son entrepôt
+  // vide, ses fiches archivées que personne ne cite) part avec lui.
   async function supprimerPays(id, nom) {
     if (!tenantId) return;
+    if (!window.confirm(
+      `Supprimer « ${nom} » ?\n\n`
+      + "Ses zones, ses statuts et son entrepôt (s'il est vide) seront supprimés avec lui.",
+    )) return;
 
-    const comptes = await Promise.all(
-      LIENS_PAYS.map(async (l) => {
-        const { count, error } = await supabase
-          .from(l.table).select("id", { count: "exact", head: true }).eq(l.colonne, id);
-        // Une table absente ou illisible ne doit pas bloquer la suppression :
-        // on la compte comme vide plutôt que d'inventer un obstacle.
-        return { ...l, n: error ? 0 : (count || 0) };
-      }),
-    );
-
-    const bloquants = comptes.filter((c) => c.n > 0);
-    if (bloquants.length > 0) {
-      return afficherMessage(
-        `« ${nom} » ne peut pas être supprimé : il reste `
-        + bloquants.map((b) => `${b.n} ${b.mot}${b.n > 1 ? "s" : ""}`).join(", ")
-        + ". Retirez-les d'abord.",
-        "erreur",
-      );
-    }
-
-    if (!window.confirm(`Supprimer « ${nom} » ?`)) return;
-
-    const { error } = await supabase.from("pays").delete().eq("id", id).eq("tenant_id", tenantId);
-    if (error) return afficherMessage("Suppression refusée : " + error.message, "erreur");
-    afficherMessage(`« ${nom} » supprimé.`, "succes");
+    const { data, error } = await supabase.rpc("supprimer_pays", { p_pays: id });
+    if (error) return afficherMessage(error.message, "erreur");
+    afficherMessage(data || `« ${nom} » supprimé.`, "succes");
     chargerDonnees();
   }
 
