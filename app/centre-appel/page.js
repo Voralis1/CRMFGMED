@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
-
+import * as XLSX from 'xlsx'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -499,7 +499,10 @@ export default function CentreAppelAgent() {
       produit: commande.produit || '',
       quantite: qte,
       prix: commande.prix || 0,
-      notes: commande.notes || '',
+      // La note part VIDE à chaque appel : elle est enregistrée dans `appels`,
+      // pas sur la commande. La pré-remplir avec la note du lead recopierait
+      // la même phrase sur chaque appel, et on ne saurait plus qui a dit quoi.
+      notes: '',
       date_rappel: '',
       prixUnitaire: prixUnit
     })
@@ -951,6 +954,12 @@ export default function CentreAppelAgent() {
                     <a href={`tel:${formData.client_telephone}`} title="Appeler" className="px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-semibold transition-colors">Appeler</a>
                     <a href={`https://wa.me/${formData.client_telephone.replace(/[+\s]/g, '')}?text=${whatsappTexte}`} target="_blank" rel="noreferrer" title="WhatsApp" className="px-3 py-1.5 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 rounded-lg text-xs font-semibold transition-colors">WhatsApp</a>
                   </div>
+                  {/* Ce que le vendeur a déposé avec le lead : surtout les numéros
+                      en trop. En lecture seule — c'est l'agent qui appelle, il doit
+                      les voir, mais il n'a pas à réécrire ce que le vendeur a donné. */}
+                  {commandeSelectionnee?.notes && (
+                    <p className="mt-2 text-[11px] text-[#1B2632]/60 italic">{commandeSelectionnee.notes}</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1064,6 +1073,19 @@ export default function CentreAppelAgent() {
                     />
                   </div>
                 )}
+
+                {/* La note de l'appel. Elle part dans `appels`, avec l'agent, le
+                    statut et l'heure : on garde ce qui a été dit à ce moment-là,
+                    au lieu d'écraser une note unique sur la commande. */}
+                <div className="mt-3">
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Note de l&apos;appel</label>
+                  <textarea
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Ce que le client a dit..."
+                    className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-h-[64px]"
+                  />
+                </div>
               </div>
             </div>
 

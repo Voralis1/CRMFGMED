@@ -100,18 +100,47 @@ export default function ParametresAdmin() {
   // =====================================================================
   // ACTIONS PAYS
   // =====================================================================
+
+  // « maroc », « MAROC » et « Maroc  » sont le même pays. Pour la base, non :
+  // trois lignes, trois identifiants. Un agent rattaché à l'une ne reçoit
+  // jamais les leads de l'autre, et rien ne lève d'erreur.
+  //
+  // On met donc le nom en forme ici, et un index unique sur
+  // (tenant_id, lower(btrim(nom))) refuse la seconde graphie en base
+  // (`pays_doublons.sql`). L'écran évite la faute, la base l'interdit : sans
+  // les deux, un import ou un autre écran la referait.
+  function nomPaysPropre(brut) {
+    const n = String(brut || "").trim().replace(/\s+/g, " ");
+    // Seule la première lettre est touchée : « RDC » doit rester « RDC », et
+    // « Côte d'Ivoire » ne doit pas devenir « Côte D'ivoire ».
+    return n ? n.charAt(0).toUpperCase() + n.slice(1) : n;
+  }
+
+  // 23505 = violation d'unicité. C'est l'index ci-dessus qui parle : le pays
+  // existe déjà sous une autre graphie. Le dire, au lieu d'« Erreur ».
+  function messagePays(error, action) {
+    if (error.code === "23505") return "Ce pays existe déjà (la casse et les espaces ne comptent pas).";
+    return `Erreur lors de ${action} : ${error.message}`;
+  }
+
   async function ajouterPays(e) {
     e.preventDefault();
     if (!tenantId) return;
     if (!nouveauPays.nom || !nouveauPays.code || !nouveauPays.devise) return afficherMessage("Tous les champs du pays sont obligatoires.", "erreur");
 
+    const champs = {
+      nom: nomPaysPropre(nouveauPays.nom),
+      code: nouveauPays.code.trim().toUpperCase(),
+      devise: nouveauPays.devise.trim().toUpperCase(),
+    };
+
     if (isEditingPays) {
-      const { error } = await supabase.from("pays").update({ nom: nouveauPays.nom.trim(), code: nouveauPays.code.trim().toUpperCase(), devise: nouveauPays.devise.trim().toUpperCase() }).eq("id", nouveauPays.id).eq("tenant_id", tenantId);
-      if (error) afficherMessage("Erreur lors de la modification.", "erreur");
+      const { error } = await supabase.from("pays").update(champs).eq("id", nouveauPays.id).eq("tenant_id", tenantId);
+      if (error) afficherMessage(messagePays(error, "la modification"), "erreur");
       else { afficherMessage("Pays modifié.", "succes"); annulerEditionPays(); chargerDonnees(); }
     } else {
-      const { error } = await supabase.from("pays").insert([{ nom: nouveauPays.nom.trim(), code: nouveauPays.code.trim().toUpperCase(), devise: nouveauPays.devise.trim().toUpperCase(), tenant_id: tenantId }]);
-      if (error) afficherMessage("Erreur lors de l'ajout.", "erreur");
+      const { error } = await supabase.from("pays").insert([{ ...champs, tenant_id: tenantId }]);
+      if (error) afficherMessage(messagePays(error, "l'ajout"), "erreur");
       else { afficherMessage("Pays ajouté.", "succes"); setNouveauPays({ id: null, nom: "", code: "", devise: "" }); chargerDonnees(); }
     }
   }

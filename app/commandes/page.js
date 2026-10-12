@@ -85,7 +85,8 @@ const CHAMPS_IMPORT = [
   { cle: 'quantite',  nom: 'Quantities',   exacts: ['quantite', 'quantities', 'quantity', 'qty', 'qte'], mots: ['quantit', 'qty', 'qte', 'nombre'] },
   { cle: 'prix',      nom: 'Unit price',   exacts: ['unit_price', 'prix_unitaire', 'prix', 'price', 'montant', 'total_price'], mots: ['price', 'prix', 'montant'] },
   { cle: 'store',     nom: 'Store',        exacts: ['store', 'store_name', 'boutique'], mots: ['store', 'boutique'] },
-  { cle: 'notes',     nom: 'Notes',        exacts: ['notes', 'note', 'remarque'], mots: ['note', 'remarque'] },
+  // Pas de colonne « Notes » : un texte libre que personne ne relit n'aide ni
+  // l'agent ni le livreur. Les consignes réelles passent par l'appel.
 ]
 
 // Accents retirés, minuscules, et tout ce qui n'est ni lettre ni chiffre
@@ -215,7 +216,7 @@ export default function GestionCommandesPage() {
   const [creationLoading, setCreationLoading] = useState(false)
   const [newCmd, setNewCmd] = useState({
     client_nom: '', client_telephone: '', pays_id: '', ville_zone: '',
-    produit: '', quantite: 1, prix: 0, notes: '', agent_id: '', commentaire_1: ''
+    produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: ''
   })
 
   // REDIRECTION SÉCURISÉE
@@ -405,7 +406,6 @@ export default function GestionCommandesPage() {
       produit: newCmd.produit,
       quantite: parseInt(newCmd.quantite) || 1,
       prix: parseFloat(newCmd.prix) || 0,
-      notes: newCmd.notes,
       commentaire_1: newCmd.commentaire_1,
       source: 'manuel',
       agent_id: newCmd.agent_id || null,
@@ -419,7 +419,7 @@ export default function GestionCommandesPage() {
       alert("Erreur lors de la création : " + error.message)
     } else {
       setIsCreateModalOpen(false)
-      setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', produit: '', quantite: 1, prix: 0, notes: '', agent_id: '', commentaire_1: '' })
+      setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '' })
       chargerCommandes(0)
       setPageActuelle(0)
     }
@@ -535,6 +535,32 @@ export default function GestionCommandesPage() {
     }
   }
 
+  // Le fichier d'exemple, fabriqué à partir de la MÊME liste que celle qui
+  // sert à lire les imports. Un modèle écrit à la main finirait par ne plus
+  // correspondre à ce que l'application sait lire, et le vendeur suivrait un
+  // modèle devenu faux.
+  function telechargerModele() {
+    const entetes = CHAMPS_IMPORT.map((c) => c.nom)
+    const exemple = {
+      'Order ID': '',
+      'Product': '',
+      'Customer': '',
+      'Phone number': '',
+      'City': '',
+      'Address': '',
+      'Quantities': '',
+      'Unit price': '',
+      'Store': '',
+    }
+    const feuille = XLSX.utils.json_to_sheet([exemple], { header: entetes })
+    // Des colonnes à la bonne largeur : sans ça, tout est tronqué à
+    // l'ouverture et le vendeur ne lit pas ses propres en-têtes.
+    feuille['!cols'] = entetes.map((e) => ({ wch: Math.max(14, e.length + 4) }))
+    const classeur = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(classeur, feuille, 'Commandes')
+    XLSX.writeFile(classeur, 'modele_import_commandes.xlsx')
+  }
+
   // Dès que le fichier est choisi, on lit SEULEMENT sa première ligne et on
   // montre quelle en-tête a été reconnue pour quoi. C'est ce qui manquait
   // quand le prix arrivait à 0 : rien ne disait que la colonne n'avait pas
@@ -620,10 +646,10 @@ export default function GestionCommandesPage() {
         const suffixe = idFichier ||
           `LEAD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 
-        const notes = [
-          lireChamp(L, 'notes'),
-          tel.autres.length ? `Autres numéros : ${tel.autres.join(', ')}` : '',
-        ].filter(Boolean).join(' · ')
+        // Plus de note libre à l'import. Il reste une seule chose à écrire ici :
+        // les numéros en trop. Ce ne sont pas des commentaires, c'est de quoi
+        // joindre le client quand le premier numéro ne répond pas.
+        const notes = tel.autres.length ? `Autres numéros : ${tel.autres.join(', ')}` : ''
 
         return {
           lead_id: suffixe,
@@ -1154,10 +1180,6 @@ export default function GestionCommandesPage() {
                     <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Commentaire 1</label>
                     <input type="text" value={newCmd.commentaire_1} onChange={(e) => setNewCmd({...newCmd, commentaire_1: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Commentaire initial..." />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Notes internes</label>
-                    <textarea value={newCmd.notes} onChange={(e) => setNewCmd({...newCmd, notes: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] min-h-[60px]" placeholder="Informations complémentaires..."></textarea>
-                  </div>
                 </div>
 
               </form>
@@ -1320,7 +1342,18 @@ export default function GestionCommandesPage() {
                         <span className="text-sm text-[#1B2632]/60">
                           {importFichier ? importFichier.name : 'Aucun fichier choisi'}
                         </span>
+                        <button type="button" onClick={telechargerModele}
+                          className="ml-auto flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#A35139] border border-[#A35139]/40 hover:bg-[#A35139]/10 transition-colors cursor-pointer">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                          Télécharger le modèle
+                        </button>
                       </div>
+                      <p className="text-[11px] text-[#1B2632]/50 mt-2">
+                        Le modèle contient les en-têtes attendues et une ligne d&apos;exemple.
+                        Effacez l&apos;exemple, collez vos commandes, enregistrez, importez.
+                      </p>
                     </fieldset>
 
                     {apercu && !apercu.erreur && (
