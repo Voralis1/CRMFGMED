@@ -17,11 +17,23 @@ export default function ParametresAdmin() {
   //
   // Un seul mot pour toute la page : le découper par onglet finissait toujours
   // par laisser un onglet dehors.
-  const ROLES_CONFIG = ['admin', 'manager', 'super_admin'];
-  const peutConfigurer = ROLES_CONFIG.includes(String(roleNom || '').toLowerCase());
-  // Les entrepôts suivent la même règle ; le nom reste, il est utilisé partout
-  // plus bas dans la page.
-  const peutGererEntrepots = peutConfigurer;
+  // Deux questions, deux réponses — les confondre, c'était fermer la page au
+  // ceo alors qu'il doit voir les chiffres de l'entreprise (fiche §8).
+  //
+  //   voir     : admin, manager, ceo, super_admin
+  //   modifier : admin, manager, super_admin — le ceo est en lecture seule
+  //
+  // La base dit déjà la même chose (`rls_parametres.sql` : `est_responsable()`
+  // lit, `gere_la_config()` écrit). L'écran s'accorde avec elle, au lieu
+  // d'inventer sa propre règle.
+  const ROLES_VOIR_CONFIG = ['admin', 'manager', 'ceo', 'super_admin'];
+  const ROLES_MODIFIER_CONFIG = ['admin', 'manager', 'super_admin'];
+  const monRole = String(roleNom || '').toLowerCase();
+  const peutConfigurer = ROLES_VOIR_CONFIG.includes(monRole);
+  const peutModifier = ROLES_MODIFIER_CONFIG.includes(monRole);
+  // Les entrepôts suivent la règle d'écriture ; le nom reste, il est utilisé
+  // partout plus bas dans la page.
+  const peutGererEntrepots = peutModifier;
   const router = useRouter();
 
   const [ongletActif, setOngletActif] = useState("produits");
@@ -40,7 +52,7 @@ export default function ParametresAdmin() {
 
   // --- États Statuts ---
   const [listeStatuts, setListeStatuts] = useState([]);
-  const [nouveauStatut, setNouveauStatut] = useState({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false });
+  const [nouveauStatut, setNouveauStatut] = useState({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false });
   const [isEditingStatut, setIsEditingStatut] = useState(false);
 
   // --- États Produits ---
@@ -211,19 +223,19 @@ export default function ParametresAdmin() {
     if (!nouveauStatut.nom || !nouveauStatut.pays_id) return afficherMessage("Nom et pays obligatoires.", "erreur");
 
     if (isEditingStatut) {
-      const { error } = await supabase.from("statuts").update({ nom: nouveauStatut.nom.trim(), couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation }).eq("id", nouveauStatut.id).eq("tenant_id", tenantId);
+      const { error } = await supabase.from("statuts").update({ nom: nouveauStatut.nom.trim(), couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation, ferme_le_lead: nouveauStatut.ferme_le_lead }).eq("id", nouveauStatut.id).eq("tenant_id", tenantId);
       if (error) afficherMessage("Erreur lors de la modification.", "erreur");
       else { afficherMessage("Statut modifié.", "succes"); annulerEditionStatut(); chargerDonnees(); }
     } else {
       const codeGenere = nouveauStatut.nom.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s_]/g, "").replace(/\s+/g, "_");
-      const { error } = await supabase.from("statuts").insert([{ nom: nouveauStatut.nom.trim(), code: codeGenere, couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, tenant_id: tenantId, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation }]);
+      const { error } = await supabase.from("statuts").insert([{ nom: nouveauStatut.nom.trim(), code: codeGenere, couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, tenant_id: tenantId, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation, ferme_le_lead: nouveauStatut.ferme_le_lead }]);
       if (error) afficherMessage("Erreur : " + error.message, "erreur");
-      else { afficherMessage("Statut ajouté.", "succes"); setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false }); chargerDonnees(); }
+      else { afficherMessage("Statut ajouté.", "succes"); setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); chargerDonnees(); }
     }
   }
 
-  function preparerModificationStatut(statut) { setNouveauStatut({ id: statut.id, nom: statut.nom || "", couleur: statut.couleur || "#2C3B4D", pays_id: statut.pays_id || "", necessite_rappel: statut.necessite_rappel || false, declenche_assignation: statut.declenche_assignation || false }); setIsEditingStatut(true); }
-  function annulerEditionStatut() { setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false }); setIsEditingStatut(false); }
+  function preparerModificationStatut(statut) { setNouveauStatut({ id: statut.id, nom: statut.nom || "", couleur: statut.couleur || "#2C3B4D", pays_id: statut.pays_id || "", necessite_rappel: statut.necessite_rappel || false, declenche_assignation: statut.declenche_assignation || false, ferme_le_lead: statut.ferme_le_lead || false }); setIsEditingStatut(true); }
+  function annulerEditionStatut() { setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); setIsEditingStatut(false); }
   async function supprimerStatut(id) { if (!tenantId || !window.confirm("Supprimer ce statut ?")) return; await supabase.from("statuts").delete().eq("id", id).eq("tenant_id", tenantId); chargerDonnees(); }
 
   // =====================================================================
@@ -492,7 +504,21 @@ export default function ParametresAdmin() {
         </div>
       )}
 
+      {!peutModifier && (
+        <div className="px-5 py-3 rounded-xl bg-[#FFB162]/10 border border-[#FFB162]/40 text-sm text-[#8a5a1f] font-medium">
+          Lecture seule : vous voyez la configuration de l&apos;entreprise, vous ne la modifiez pas.
+        </div>
+      )}
+
       <main className="w-full">
+        {/* `disabled` sur un fieldset désactive TOUT ce qu'il contient, champs
+            et boutons. Une seule ligne, et aucun formulaire ne peut être
+            oublié — les ajouter un par un, c'en laisser un ouvert au prochain
+            onglet ajouté. `display: contents` pour que la mise en page ne
+            bouge pas d'un pixel.
+            La base refuse déjà ces écritures au ceo ; ici on évite surtout de
+            lui faire remplir un formulaire pour rien. */}
+        <fieldset disabled={!peutModifier} className="contents">
 
         {/* --- ONGLET PAYS --- */}
         {ongletActif === "pays" && (
@@ -696,6 +722,17 @@ export default function ParametresAdmin() {
                     <span>
                       <span className="block text-sm font-bold text-[#1B2632]">Déclenche l'assignation livreur</span>
                       <span className="block text-xs text-[#1B2632]/60">La commande ira en assignation logistique.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2.5 cursor-pointer max-w-sm">
+                    <input type="checkbox" checked={nouveauStatut.ferme_le_lead} onChange={(e) => setNouveauStatut({...nouveauStatut, ferme_le_lead: e.target.checked})} className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer" />
+                    <span>
+                      <span className="block text-sm font-bold text-[#1B2632]">Termine le travail de l&apos;agent</span>
+                      <span className="block text-xs text-[#1B2632]/60">
+                        Confirmé, annulé, refusé. Décoché (« ne répond pas », « hors ligne »,
+                        « à rappeler »), le lead RESTE dans « À traiter » chez son agent jusqu&apos;à
+                        ce qu&apos;il conclue.
+                      </span>
                     </span>
                   </label>
                 </div>
@@ -990,6 +1027,7 @@ export default function ParametresAdmin() {
           </div>
         )}
 
+        </fieldset>
       </main>
     </div>
   );

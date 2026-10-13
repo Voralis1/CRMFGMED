@@ -13,7 +13,7 @@ Deno.serve(handle(async (req) => {
   // deno-lint-ignore no-explicit-any
   const payload = await readJson(req) as Record<string, any>
   const {
-    commande_id, statut, notes, date_rappel, source,
+    commande_id, statut, notes, date_rappel, source, duree_secondes,
     client_nom, client_telephone, ville_zone, zone_id, pays_id, produit, quantite, prix,
   } = payload
 
@@ -23,7 +23,7 @@ Deno.serve(handle(async (req) => {
 
   const { data: commande } = await sb
     .from('commandes')
-    .select('id, tenant_id, agent_id')
+    .select('id, tenant_id, agent_id, statut_confirmation')
     .eq('id', commande_id)
     .maybeSingle()
   if (!commande) throw new HttpError(404, 'Commande introuvable')
@@ -47,8 +47,20 @@ Deno.serve(handle(async (req) => {
       commande_id,
       agent_id: agentId,
       statut,
+      // D'où venait la commande, lu AVANT la mise à jour. « Injoignable » ne
+      // dit rien ; « En attente → Injoignable » dit qu'on a essayé.
+      statut_precedent: commande.statut_confirmation ?? null,
       tenant_id: commande.tenant_id,
       notes: notes || null,
+      // Mesurée par l'écran, bornée ici : une valeur absurde (négative, ou un
+      // onglet laissé ouvert toute la nuit) fausserait la durée moyenne sans
+      // que personne ne s'en aperçoive. Au-delà d'une heure, on ne garde rien
+      // plutôt que d'inventer un chiffre.
+      duree_secondes: Number.isFinite(Number(duree_secondes))
+        && Number(duree_secondes) >= 0
+        && Number(duree_secondes) <= 3600
+          ? Math.round(Number(duree_secondes))
+          : null,
       date_rappel: estRappel ? (date_rappel || null) : null,
     })
     .select()

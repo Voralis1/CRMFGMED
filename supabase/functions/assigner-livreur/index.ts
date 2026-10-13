@@ -44,7 +44,7 @@ Deno.serve(handle(async (req) => {
     .maybeSingle()
 
   if (livraisonExistante) {
-    if (livraisonExistante.statut !== 'en_attente') {
+    if (livraisonExistante.statut !== 'a_preparer') {
       throw new HttpError(
         400,
         'Cette livraison a déjà été traitée par le livreur : le livreur ne peut plus être changé.',
@@ -58,7 +58,7 @@ Deno.serve(handle(async (req) => {
       .from('livraisons')
       .update({ livreur_id })
       .eq('id', livraisonExistante.id)
-      .eq('statut', 'en_attente') // garde-fou : rien ne change si le livreur vient d'agir
+      .eq('statut', 'a_preparer') // garde-fou : rien ne change si le livreur vient d'agir
       .select()
       .single()
     if (erreurMaj) throw new HttpError(400, erreurMaj.message)
@@ -72,7 +72,7 @@ Deno.serve(handle(async (req) => {
       commande_id,
       livreur_id,
       tenant_id: commande.tenant_id,
-      statut: 'en_attente',
+      statut: 'a_preparer',
     })
     .select()
     .single()

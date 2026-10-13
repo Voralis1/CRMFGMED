@@ -1,4 +1,4 @@
-// Driver updates a delivery (livré / injoignable / retour) and declares the cash amount.
+// Driver updates a delivery (expédiée / livrée / retour / annulée) and declares the cash amount.
 // Allowed: permission `gerer_livraison` (livreur, manager, admin) + super_admin.
 // A livreur can only update HIS OWN deliveries, and a delivered order cannot be re-confirmed
 // (so the declared amount cannot be changed afterwards).
@@ -6,7 +6,10 @@ import {
   adminClient, assertTenant, getCaller, handle, HttpError, json, myLivreurId, readJson, requireAny,
 } from '../_shared/auth.ts'
 
-const STATUTS_VALIDES = ['expedie', 'livre', 'injoignable', 'retour']
+// Les cinq de la table, moins `a_preparer` : celui-là est l'état de départ,
+// posé à l'assignation. On ne « repasse » pas une livraison à préparer — la
+// marchandise est déjà partie.
+const STATUTS_VALIDES = ['expedie', 'livre', 'retour', 'annule']
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -34,8 +37,10 @@ Deno.serve(handle(async (req) => {
     }
   }
 
-  if (livraison.statut === 'livre') {
-    throw new HttpError(400, 'Cette livraison est déjà marquée livrée')
+  // Une livraison close ne se rejoue pas : le montant declare irait une
+  // seconde fois dans la caisse du livreur.
+  if (['livre', 'retour', 'annule'].includes(livraison.statut)) {
+    throw new HttpError(400, `Cette livraison est déjà close (${livraison.statut})`)
   }
 
   let montant = 0
@@ -48,7 +53,9 @@ Deno.serve(handle(async (req) => {
     .from('livraisons')
     .update({
       statut,
-      motif_retour: statut === 'retour' ? (motif_retour || null) : null,
+      // Le motif vaut pour un retour comme pour une annulation : dans les
+      // deux cas, quelqu'un voudra savoir pourquoi.
+      motif_retour: ['retour', 'annule'].includes(statut) ? (motif_retour || null) : null,
       date_livraison: statut === 'livre' ? new Date().toISOString() : null,
     })
     .eq('id', livraison_id)

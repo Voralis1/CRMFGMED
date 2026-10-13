@@ -79,12 +79,14 @@ export default function AssignationLivreurPage() {
         setTotalCommandes(count || 0)
       }
     } else {
-      // Livraisons encore en attente : on peut encore changer le livreur
+      // Livraisons pas encore parties : on peut encore changer le livreur.
+      // Une fois « Expédiée », la marchandise est chez lui — changer de nom
+      // sur l'écran ne la déplacerait pas.
       const { data, error, count } = await supabase
         .from('livraisons')
         .select('id, livreur_id, livreurs(nom), commandes(*, pays(nom))', { count: 'exact' })
         .eq('tenant_id', tenantKey)
-        .eq('statut', 'en_attente')
+        .eq('statut', 'a_preparer')
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(debut, fin)

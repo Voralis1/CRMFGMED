@@ -163,7 +163,14 @@ export default function CentreAppelAgent() {
   const [commandeSelectionnee, setCommandeSelectionnee] = useState(null)
   const [statutChoisi, setStatutChoisi] = useState('') 
 
-  const [tempsRestant, setTempsRestant] = useState(300)
+  // Le temps MONTE, il ne descend pas. Un compte à rebours de 5 minutes
+  // pressait l'agent sans rien mesurer ; ce qu'on veut savoir, c'est combien
+  // l'appel a réellement duré — et ça se garde sur l'appel.
+  const [tempsEcoule, setTempsEcoule] = useState(0)
+  // Les appels déjà passés sur cette commande : combien, et comment ils se
+  // sont terminés. Un client rappelé quatre fois ne se traite pas comme un
+  // premier contact.
+  const [appelsPrecedents, setAppelsPrecedents] = useState([])
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
 
   const [formData, setFormData] = useState({
@@ -186,10 +193,8 @@ export default function CentreAppelAgent() {
   useEffect(() => {
     let interval = null
     if (commandeSelectionnee) {
-      setTempsRestant(300)
-      interval = setInterval(() => {
-        setTempsRestant((prev) => (prev > 0 ? prev - 1 : 0))
-      }, 1000)
+      setTempsEcoule(0)
+      interval = setInterval(() => setTempsEcoule((prec) => prec + 1), 1000)
     }
     return () => clearInterval(interval)
   }, [commandeSelectionnee?.id])
@@ -296,7 +301,12 @@ export default function CentreAppelAgent() {
 
     verifierAgentEtCharger()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom])
+  // `listeStatutsDB` est dans les dépendances : la file « À traiter » se
+  // construit à partir des statuts qui ne ferment pas le dossier. Sans elle,
+  // le premier chargement part avec une liste vide — donc sans les leads à
+  // rappeler — et rien ne le relancerait quand les statuts arrivent.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
   // La requête des commandes ne ramène que `agent_id` ; le nom vient de la liste
@@ -378,8 +388,28 @@ export default function CentreAppelAgent() {
     }
 
     if (onglet === 'a_traiter') {
-      requeteBase = requeteBase.is('statut_confirmation', null)
-      requeteData = requeteData.is('statut_confirmation', null)
+      // « À traiter », ce n'est pas « jamais touché ».
+      //
+      // Un lead marqué « Ne répond pas » ou « Hors ligne » n'est PAS fini : il
+      // doit revenir chez son agent jusqu'à ce qu'il soit confirmé ou annulé.
+      // Avant, le moindre statut le faisait disparaître de la file — et
+      // personne ne rappelait jamais ce client.
+      //
+      // Ce qui ferme le dossier est un réglage (`statuts.ferme_le_lead`), pas
+      // une liste de noms écrite ici : les statuts changent d'un pays à
+      // l'autre.
+      const ouverts = listeStatutsDB
+        .filter((s) => !s.ferme_le_lead)
+        .map((s) => `"${String(s.nom).replace(/"/g, '')}"`)
+
+      // Les guillemets sont obligatoires : un nom contenant une virgule ou un
+      // espace casserait la liste `in.()` de PostgREST.
+      const filtre = ouverts.length > 0
+        ? `statut_confirmation.is.null,statut_confirmation.in.(${ouverts.join(',')})`
+        : 'statut_confirmation.is.null'
+
+      requeteBase = requeteBase.or(filtre)
+      requeteData = requeteData.or(filtre)
     } else {
       if (filtreStatut) {
         requeteBase = requeteBase.eq('statut_confirmation', filtreStatut)
@@ -458,6 +488,16 @@ export default function CentreAppelAgent() {
 
   async function ouvrirPanneau(commande) {
     setCommandeSelectionnee(commande)
+    setAppelsPrecedents([])
+
+    // L'historique des appels de CETTE commande. Il arrive après l'ouverture :
+    // le panneau doit s'afficher tout de suite, l'agent a le client en ligne.
+    supabase
+      .from('appels')
+      .select('id, statut, notes, duree_secondes, created_at')
+      .eq('commande_id', commande.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setAppelsPrecedents(data || []))
 
     if (commande.statut_confirmation) {
       setStatutChoisi(commande.statut_confirmation)
@@ -532,8 +572,11 @@ export default function CentreAppelAgent() {
         },
         body: JSON.stringify({
           commande_id: commandeSelectionnee.id,
-          statut: statutChoisi, 
-          tenant_id: tenantKey, 
+          statut: statutChoisi,
+          tenant_id: tenantKey,
+          // Mesurée, pas saisie : l'agent a autre chose à faire que de
+          // chronométrer son propre appel.
+          duree_secondes: tempsEcoule,
           ...formData
         }),
       }
@@ -547,12 +590,11 @@ export default function CentreAppelAgent() {
       return
     }
 
-    const indexActuel = commandes.findIndex(c => c.id === commandeSelectionnee.id)
-    if (indexActuel !== -1 && indexActuel < commandes.length - 1) {
-      ouvrirPanneau(commandes[indexActuel + 1])
-    } else {
-      setCommandeSelectionnee(null)
-    }
+    // On ferme, on n'enchaîne pas. Sauter au lead suivant ouvrait un dossier
+    // que personne n'avait demandé : l'agent se retrouvait en train de lire
+    // les coordonnées d'un client qu'il n'appelle pas encore, et le temps
+    // mesuré pour cet appel commençait pendant qu'il soufflait.
+    setCommandeSelectionnee(null)
 
     await chargerCommandes(page, ongletActif, agentActuel?.id)
   }
@@ -912,9 +954,14 @@ export default function CentreAppelAgent() {
               </div>
 
               <div className="flex items-center gap-3">
-                <span className={`font-mono font-bold text-sm ${tempsRestant < 60 ? 'text-red-600 animate-pulse' : 'text-[#1B2632]/60'}`}>
-                  {formatTemps(tempsRestant)}
-                </span>
+                <div className="text-right">
+                  <span className="block font-mono font-bold text-sm text-[#1B2632]/70">
+                    {formatTemps(tempsEcoule)}
+                  </span>
+                  <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">
+                    Appel n° {appelsPrecedents.length + 1}
+                  </span>
+                </div>
                 <button onClick={() => setCommandeSelectionnee(null)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">
                   ✕
                 </button>
@@ -1047,6 +1094,33 @@ export default function CentreAppelAgent() {
                   />
                 </div>
               </div>
+
+              {/* Les appels déjà passés. Ce qui compte avant de composer le
+                  numéro : combien de fois on a déjà essayé, et ce que le
+                  client avait dit. */}
+              {appelsPrecedents.length > 0 && (
+                <div className="p-4 rounded-xl border border-[#C9C1B1]/50 bg-white">
+                  <p className="text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2.5">
+                    {appelsPrecedents.length} appel{appelsPrecedents.length > 1 ? 's' : ''} déjà passé{appelsPrecedents.length > 1 ? 's' : ''}
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    {appelsPrecedents.map((a) => (
+                      <div key={a.id} className="text-xs border-l-2 border-[#C9C1B1] pl-2.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-[#1B2632]">{a.statut || '—'}</span>
+                          <span className="text-[#1B2632]/45">
+                            {a.created_at ? new Date(a.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : ''}
+                          </span>
+                          {a.duree_secondes != null && (
+                            <span className="font-mono text-[#1B2632]/55">{formatTemps(a.duree_secondes)}</span>
+                          )}
+                        </div>
+                        {a.notes && <p className="text-[#1B2632]/65 italic mt-0.5">{a.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="p-4 bg-[#EEE9DF]/30 rounded-xl border border-[#C9C1B1]/50">
                 <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">Résultat de l'appel</label>

@@ -14,14 +14,22 @@ const TAILLES_PAGE = [10, 25, 50, 100]
 // qu'ils ne le sont pas, on affiche ce qui existe vraiment plutôt que des
 // libellés que la base ne saurait pas enregistrer.
 const STATUTS = {
-  en_attente:  { label: 'En attente',  couleur: '#C98A2B' },
-  livre:       { label: 'Livré',       couleur: '#2E7D53' },
-  injoignable: { label: 'Injoignable', couleur: '#6B7A8C' },
-  retour:      { label: 'Retour',      couleur: '#A35139' },
+  a_preparer: { label: 'À préparer', couleur: '#C98A2B' },
+  expedie:    { label: 'Expédiée',   couleur: '#2C3B4D' },
+  livre:      { label: 'Livrée',     couleur: '#2E7D53' },
+  retour:     { label: 'Retour',     couleur: '#A35139' },
+  annule:     { label: 'Annulée',    couleur: '#6B7A8C' },
 }
 
-const STATUTS_SAISISSABLES = ['livre', 'injoignable', 'retour']
-const STATUTS_TERMINES = ['livre', 'injoignable', 'retour']
+// `a_preparer` n'est pas saisissable : c'est l'état de départ, posé à
+// l'assignation. On ne repasse pas une livraison « à préparer » — la
+// marchandise est déjà partie.
+const STATUTS_SAISISSABLES = ['expedie', 'livre', 'retour', 'annule']
+
+// Ce qui est terminé, donc ce que montre « Historique ». Une expédition en
+// route n'y est pas : elle est encore à faire.
+const STATUTS_TERMINES = ['livre', 'retour', 'annule']
+const STATUTS_EN_COURS = ['a_preparer', 'expedie']
 
 // La recherche porte sur la commande, pas sur la livraison : c'est le numéro
 // de suivi ou le téléphone du client qu'on a sous les yeux quand on cherche.
@@ -243,7 +251,7 @@ export default function LivraisonsPage() {
 
     // La vue pose le cadre, le filtre Statut affine à l'intérieur.
     if (filtresActifs.statut) r = r.eq('statut', filtresActifs.statut)
-    else if (vue === 'a_faire') r = r.eq('statut', 'en_attente')
+    else if (vue === 'a_faire') r = r.in('statut', STATUTS_EN_COURS)
     else if (vue === 'historique') r = r.in('statut', STATUTS_TERMINES)
 
     if (filtresActifs.zone) r = r.eq('commandes.zone_id', filtresActifs.zone)
@@ -383,7 +391,9 @@ export default function LivraisonsPage() {
   // ------------------------------------------------------------------
   function ouvrirDetail(liv) {
     setDetail(liv)
-    setStatutChoisi('livre')
+    // Le pas suivant le plus probable : une livraison à préparer part, une
+    // livraison expédiée arrive.
+    setStatutChoisi(liv.statut === 'a_preparer' ? 'expedie' : 'livre')
     setMotifTexte('')
     setMontant(liv.commandes?.prix ?? '')
   }
@@ -401,7 +411,7 @@ export default function LivraisonsPage() {
         body: JSON.stringify({
           livraison_id: detail.id,
           statut: statutChoisi,
-          motif_retour: statutChoisi === 'retour' ? motifTexte.trim() : null,
+          motif_retour: ['retour', 'annule'].includes(statutChoisi) ? motifTexte.trim() : null,
           montant_a_encaisser: statutChoisi === 'livre' ? Number(montant) || 0 : 0,
         }),
       },
@@ -805,7 +815,7 @@ export default function LivraisonsPage() {
                             fallait deviner qu'une fiche s'ouvrait pour pouvoir
                             marquer une livraison. Elle est maintenant sur la
                             ligne, et seulement là où elle sert. */}
-                        {peutTraiter && liv.statut === 'en_attente' && (
+                        {peutTraiter && STATUTS_EN_COURS.includes(liv.statut) && (
                           <button
                             onClick={() => ouvrirDetail(liv)}
                             className="mr-2 px-4 py-2 rounded-lg text-xs font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors cursor-pointer"
@@ -950,7 +960,7 @@ export default function LivraisonsPage() {
                 {/* Le formulaire ne s'affiche que là où il a un sens : une
                     livraison déjà close ne se re-traite pas, et un rôle en
                     lecture seule n'a rien à enregistrer. */}
-                {detail.statut === 'en_attente' && (
+                {STATUTS_EN_COURS.includes(detail.statut) && (
                   <div className="border border-[#C9C1B1] rounded-xl p-5 flex flex-col gap-4">
                     <h3 className="text-sm font-bold text-[#1B2632]">Traiter la livraison</h3>
 
@@ -961,7 +971,9 @@ export default function LivraisonsPage() {
                             <label className="lv-label">Résultat</label>
                             <select className="lv-input" value={statutChoisi}
                               onChange={(e) => setStatutChoisi(e.target.value)}>
-                              {STATUTS_SAISISSABLES.map((s) => (
+                              {/* On ne propose pas le statut actuel : « Expédiée »
+                                  sur une livraison déjà expédiée ne veut rien dire. */}
+                              {STATUTS_SAISISSABLES.filter((s) => s !== detail.statut).map((s) => (
                                 <option key={s} value={s}>{STATUTS[s].label}</option>
                               ))}
                             </select>
@@ -975,9 +987,9 @@ export default function LivraisonsPage() {
                             </div>
                           )}
 
-                          {statutChoisi === 'retour' && (
+                          {['retour', 'annule'].includes(statutChoisi) && (
                             <div>
-                              <label className="lv-label">Motif du retour</label>
+                              <label className="lv-label">{statutChoisi === 'annule' ? "Motif de l'annulation" : 'Motif du retour'}</label>
                               <input type="text" className="lv-input" value={motifTexte}
                                 onChange={(e) => setMotifTexte(e.target.value)}
                                 placeholder="Ex : client absent, refus..." />

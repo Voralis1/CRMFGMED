@@ -147,6 +147,10 @@ export default function GestionCommandesPage() {
   // imports faits par le manager. La base applique la même règle (RLS), l'écran
   // ne fait que demander ce qu'il a le droit de lire.
   const estSeller = String(roleNom || '').toLowerCase() === 'seller'
+  // Qui peut remettre une commande dans un autre statut. Le ceo lit, il ne
+  // corrige pas — c'est une écriture sur le travail d'un agent.
+  const peutChangerStatut = ['manager', 'admin', 'super_admin']
+    .includes(String(roleNom || '').toLowerCase())
   // Un responsable voit tous les leads de l'entreprise ; le filtre lui permet
   // de ne regarder qu'un seller à la fois.
   const peutFiltrerParVendeur = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
@@ -175,6 +179,11 @@ export default function GestionCommandesPage() {
   const [filtresActifs, setFiltresActifs] = useState({ ...FILTRES_VIDES, champ: 'tracking_number', texte: '' })
   const [panneauOuvert, setPanneauOuvert] = useState(false)
   const [detail, setDetail] = useState(null)
+  // L'historique des statuts de la commande ouverte : qui a appelé, quand,
+  // d'où venait la commande, combien de temps ça a duré, ce qui a été dit.
+  const [historique, setHistorique] = useState([])
+  const [nouveauStatut, setNouveauStatut] = useState('')
+  const [changementEnCours, setChangementEnCours] = useState(false)
   const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
 
   // Import : on choisit D'ABORD d'où part la marchandise. Tant que ce n'est
@@ -373,6 +382,63 @@ export default function GestionCommandesPage() {
   }, [authLoading, permsLoading, tenantKey, pageActuelle, chargerReferentiels, chargerCommandes])
 
   // ASSIGNATION D'UN AGENT
+  // Ouvrir le détail charge aussi l'historique. Il arrive après : la fiche
+  // s'affiche tout de suite, l'historique se remplit une seconde plus tard.
+  async function ouvrirDetail(cmd) {
+    setDetail(cmd)
+    setHistorique([])
+    setNouveauStatut(cmd.statut_confirmation || '')
+
+    const { data } = await supabase
+      .from('appels')
+      .select('id, statut, statut_precedent, notes, duree_secondes, created_at, agent_id')
+      .eq('commande_id', cmd.id)
+      .order('created_at', { ascending: false })
+
+    setHistorique(data || [])
+  }
+
+  // Remettre une commande dans un autre statut.
+  //
+  // Ça passe par `confirmer-appel`, la même porte que l'agent, et pas par un
+  // `update` direct : la fonction écrit une ligne d'historique, garde le
+  // statut précédent et laisse les déclencheurs (assignation livreur) faire
+  // leur travail. Un `update` muet aurait changé l'affichage sans que
+  // personne ne sache qui, quand, ni d'où ça venait.
+  async function changerStatut() {
+    if (!detail || !nouveauStatut || nouveauStatut === detail.statut_confirmation) return
+
+    setChangementEnCours(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) { setChangementEnCours(false); return }
+
+    const reponse = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-appel`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({
+          commande_id: detail.id,
+          statut: nouveauStatut,
+          tenant_id: tenantKey,
+          // Une correction de bureau n'est pas un appel : pas de durée, et une
+          // note qui dit ce que c'est. Sans elle, l'historique laisserait
+          // croire que quelqu'un a eu le client au téléphone.
+          notes: 'Statut corrigé depuis Commandes',
+        }),
+      },
+    )
+
+    const resultat = await reponse.json()
+    setChangementEnCours(false)
+    if (resultat.error) { alert('Erreur : ' + resultat.error); return }
+
+    const maj = { ...detail, statut_confirmation: nouveauStatut }
+    setDetail(maj)
+    await ouvrirDetail(maj)
+    chargerCommandes(pageActuelle)
+  }
+
   async function assignerAgent(commandeId, agentId) {
     const valueToSet = agentId === "" ? null : agentId;
     
@@ -542,15 +608,15 @@ export default function GestionCommandesPage() {
   function telechargerModele() {
     const entetes = CHAMPS_IMPORT.map((c) => c.nom)
     const exemple = {
-      'Order ID': '',
-      'Product': '',
-      'Customer': '',
-      'Phone number': '',
-      'City': '',
-      'Address': '',
-      'Quantities': '',
-      'Unit price': '',
-      'Store': '',
+      'Order ID': '1234',
+      'Product': 'PRODUIT_A|PRODUIT_B',
+      'Customer': 'Hassan Benali',
+      'Phone number': '0612345678|0699887766',
+      'City': 'Luanda',
+      'Address': 'Rua 17 de Setembro, nº 42',
+      'Quantities': '2|1',
+      'Unit price': '900|500',
+      'Store': 'Ma boutique',
     }
     const feuille = XLSX.utils.json_to_sheet([exemple], { header: entetes })
     // Des colonnes à la bonne largeur : sans ça, tout est tronqué à
@@ -1033,7 +1099,7 @@ export default function GestionCommandesPage() {
                     </td>
 
                     <td className="px-4 py-3.5 align-top text-center">
-                      <button onClick={() => setDetail(cmd)} title="Voir le détail"
+                      <button onClick={() => ouvrirDetail(cmd)} title="Voir le détail"
                         className="w-9 h-9 rounded-lg inline-flex items-center justify-center text-[#1B2632]/60 hover:text-[#A35139] hover:bg-[#EEE9DF] transition-colors cursor-pointer">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
                       </button>
@@ -1515,6 +1581,94 @@ export default function GestionCommandesPage() {
                       </tr>
                     </tbody>
                   </table>
+                </div>
+
+                {/* Historique des statuts. Chaque ligne est un appel, avec
+                    d'où la commande venait, où elle est allée, qui l'a fait et
+                    combien de temps ça a pris. C'est ce qui permet de dire
+                    « on a essayé quatre fois » autrement que de mémoire. */}
+                <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-bold text-[#1B2632]">Historique des statuts</h3>
+                    {historique.length > 0 && (
+                      <span className="text-xs text-[#1B2632]/55">
+                        {historique.length} action{historique.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  {historique.length === 0 ? (
+                    <p className="px-5 py-6 text-sm text-[#1B2632]/50 text-center">
+                      Aucun appel enregistré pour cette commande.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[720px] text-left text-sm">
+                        <thead>
+                          <tr className="text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold border-b border-[#C9C1B1]/40">
+                            <th className="px-4 py-2.5">Date</th>
+                            <th className="px-4 py-2.5">Statut précédent</th>
+                            <th className="px-4 py-2.5">Statut</th>
+                            <th className="px-4 py-2.5">Agent</th>
+                            <th className="px-4 py-2.5 text-right">Durée</th>
+                            <th className="px-4 py-2.5">Commentaire</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#C9C1B1]/25">
+                          {historique.map((h) => (
+                            <tr key={h.id} className="hover:bg-[#EEE9DF]/25">
+                              <td className="px-4 py-2.5 whitespace-nowrap text-[#1B2632]/75">
+                                {h.created_at ? new Date(h.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                              </td>
+                              <td className="px-4 py-2.5 text-[#1B2632]/55">
+                                {h.statut_precedent || <span className="text-[#1B2632]/30">Nouveau lead</span>}
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <StatutPill statut={h.statut} listeStatutsDB={listeStatutsDB} />
+                              </td>
+                              <td className="px-4 py-2.5 text-[#1B2632]/75">
+                                {agents.find((a) => a.id === h.agent_id)?.nom
+                                  || <span className="text-[#1B2632]/30">—</span>}
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
+                                {h.duree_secondes == null
+                                  ? '—'
+                                  : `${String(Math.floor(h.duree_secondes / 60)).padStart(2, '0')}:${String(h.duree_secondes % 60).padStart(2, '0')}`}
+                              </td>
+                              <td className="px-4 py-2.5 text-[#1B2632]/70 italic max-w-[240px]">{h.notes || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Corriger le statut. Passe par la même porte que l'agent,
+                      pour que la correction laisse elle aussi une trace. */}
+                  {peutChangerStatut && (
+                    <div className="px-5 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20 flex flex-wrap items-end gap-3">
+                      <div className="flex-1 min-w-[180px]">
+                        <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Changer le statut</label>
+                        <select
+                          className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
+                          value={nouveauStatut}
+                          onChange={(e) => setNouveauStatut(e.target.value)}
+                        >
+                          <option value="">Choisir...</option>
+                          {listeStatutsDB
+                            .filter((s) => !s.pays_id || !detail.pays_id || s.pays_id === detail.pays_id)
+                            .map((s) => <option key={s.id} value={s.nom}>{s.nom}</option>)}
+                        </select>
+                      </div>
+                      <button
+                        onClick={changerStatut}
+                        disabled={changementEnCours || !nouveauStatut || nouveauStatut === detail.statut_confirmation}
+                        className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40 transition-colors cursor-pointer"
+                      >
+                        {changementEnCours ? 'Enregistrement...' : 'Appliquer'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {(detail.commentaire_1 || detail.commentaire_2 || detail.notes) && (
