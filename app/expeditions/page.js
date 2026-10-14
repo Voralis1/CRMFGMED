@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -145,7 +145,9 @@ export default function ExpeditionsPage() {
       setEntrepots([])
     } else {
       const { data: entrepotsDB } = await supabase
-        .from('entrepots').select('id, nom, pays(nom)').eq('tenant_id', tenantKey).order('nom')
+        // `pays_id` est indispensable : une expédition déclarée par un vendeur
+        // ne porte qu'un pays, et c'est par lui qu'on retrouve l'entrepôt.
+        .from('entrepots').select('id, nom, pays_id, pays(nom)').eq('tenant_id', tenantKey).order('nom')
       setEntrepots(entrepotsDB || [])
     }
 
@@ -156,16 +158,29 @@ export default function ExpeditionsPage() {
       .eq('tenant_id', tenantKey).order('product')
     setCatalogue((prodDB || []).filter((p) => (p.statut || 'actif') === 'actif'))
 
-    // Combien de produits par expédition, pour la liste. La RLS ne renvoie
-    // que les lignes des expéditions déjà visibles, le compte est donc juste.
+    // Ce que contient chaque expédition, pour la liste. On ramène aussi le NOM
+    // du produit : « 1 produit · 23 pièces » ne disait pas de QUOI il s'agit, et
+    // c'est la première chose qu'on cherche en regardant la ligne.
+    //
+    // La RLS ne renvoie que les lignes des expéditions déjà visibles, le compte
+    // est donc juste.
     const { data: toutesLignes } = await supabase
-      .from('expeditions_produits').select('expedition_id, quantite')
+      .from('expeditions_produits').select('expedition_id, produit_id, quantite, quantite_recue')
       .eq('tenant_id', tenantKey)
+
+    const nomDuProduit = new Map((prodDB || []).map((p) => [p.id, p.product]))
     const compte = {}
     for (const l of toutesLignes || []) {
-      compte[l.expedition_id] = compte[l.expedition_id] || { articles: 0, pieces: 0 }
+      compte[l.expedition_id] = compte[l.expedition_id] || { articles: 0, pieces: 0, lignes: [] }
       compte[l.expedition_id].articles += 1
       compte[l.expedition_id].pieces += l.quantite || 0
+      compte[l.expedition_id].lignes.push({
+        // `prodDB` et non `catalogue` : un produit passé inactif reste le nom
+        // de ce qui a été expédié. Le filtrer ici effacerait l'historique.
+        nom: nomDuProduit.get(l.produit_id) || 'Produit supprimé',
+        quantite: l.quantite || 0,
+        recue: l.quantite_recue,
+      })
     }
     setNbProduits(compte)
 
@@ -422,18 +437,34 @@ export default function ExpeditionsPage() {
 
   // Où va la marchandise, dit avec les mots de celui qui regarde : le nom de
   // l'entrepôt pour un responsable, le seul nom du pays pour un vendeur.
+  //
+  // Côté responsable, on cherche dans TROIS directions, dans cet ordre :
+  //   1. l'entrepôt qui a reçu — c'est un fait, pas une intention
+  //   2. l'entrepôt de destination, quand c'est lui qui a déclaré
+  //   3. l'entrepôt DU PAYS visé, quand c'est un vendeur qui a déclaré
+  //
+  // Le troisième est le cas courant et il manquait : un vendeur ne choisit
+  // qu'un pays, donc `entrepot_destination_id` reste vide et la colonne
+  // affichait un tiret. Depuis le 13/10 il n'y a qu'un entrepôt par pays, la
+  // traduction est donc sans ambiguïté.
   function destinationNom(e) {
     if (estSeller) {
       return paysLivrables.find((p) => p.pays_id === e.pays_destination_id)?.nom || ''
     }
-    return entrepots.find((x) => x.id === e.entrepot_destination_id)?.nom || ''
+    const parId = entrepots.find((x) => x.id === (e.entrepot_reception_id || e.entrepot_destination_id))
+    if (parId) return parId.nom
+
+    const parPays = entrepots.find((x) => x.pays_id && x.pays_id === e.pays_destination_id)
+    return parPays?.nom || ''
   }
 
   function exporter() {
     const entetes = ['Référence', 'Poids (Kg)', 'Mode', 'Détails', 'Produits', 'Transporteur', 'Téléphone', 'Depuis', 'Vers', 'Date expédition', 'Date réception', 'Statut', 'Déclarée par', 'Motif du refus']
     const lignesCsv = affichees.map((e) => [
       e.reference, e.poids_kg ?? '', e.mode_transport || '', e.details || '',
-      nbProduits[e.id] ? `${nbProduits[e.id].articles} produits / ${nbProduits[e.id].pieces} pieces` : '',
+      nbProduits[e.id]
+        ? nbProduits[e.id].lignes.map((l) => `${l.nom} x${l.quantite}`).join(' + ')
+        : '',
       e.transporteur || '', e.transporteur_telephone || '', e.pays || '',
       destinationNom(e),
       e.date_expedition ? dateCourte(e.date_expedition) : '',
@@ -669,8 +700,11 @@ export default function ExpeditionsPage() {
               ) : (
                 affichees.map((e) => {
                   const enAttente = e.statut === 'en_attente'
+                  const ouvert = detailOuvert === e.id
+                  const contenu = nbProduits[e.id]
                   return (
-                    <tr key={e.id} className="hover:bg-[#EEE9DF]/40 transition-colors align-top">
+                    <React.Fragment key={e.id}>
+                    <tr className="hover:bg-[#EEE9DF]/40 transition-colors align-top">
                       <td className="px-5 py-4 font-mono text-xs text-[#A35139] font-semibold whitespace-nowrap">
                         {e.reference}
                         <div className="text-[11px] text-[#1B2632]/40 font-sans mt-1">{nomVendeur(e.vendeur_id)}</div>
@@ -692,11 +726,25 @@ export default function ExpeditionsPage() {
                             <span className={detailOuvert === e.id ? '' : 'line-clamp-2'}>{e.details}</span>
                           </button>
                         ) : <span className="text-[#1B2632]/30">—</span>}
-                        {nbProduits[e.id] && (
-                          <div className="text-xs text-[#1B2632]/60 mt-1 whitespace-nowrap">
-                            {nbProduits[e.id].articles} produit{nbProduits[e.id].articles > 1 ? 's' : ''}
-                            <span className="text-[#1B2632]/40"> · {nbProduits[e.id].pieces} pièce{nbProduits[e.id].pieces > 1 ? 's' : ''}</span>
-                          </div>
+                        {/* Le détail tient SOUS la ligne, pas dedans : une
+                            expédition de vingt références écraserait la colonne.
+                            On annonce combien, et la flèche ouvre le reste. */}
+                        {contenu && (
+                          <button
+                            onClick={() => setDetailOuvert(ouvert ? null : e.id)}
+                            className="mt-1 flex items-center gap-1.5 text-xs cursor-pointer group"
+                          >
+                            <span className="font-bold text-[#A35139]">{contenu.articles}</span>
+                            <span className="text-[#1B2632]/70">
+                              produit{contenu.articles > 1 ? 's' : ''}
+                            </span>
+                            <span className="text-[#1B2632]/40">· {contenu.pieces} pièce{contenu.pieces > 1 ? 's' : ''}</span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="2.5"
+                                 strokeLinecap="round" className="shrink-0 transition-transform group-hover:opacity-70"
+                                 style={{ transform: ouvert ? 'rotate(180deg)' : 'none' }}>
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                          </button>
                         )}
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap">
@@ -763,6 +811,40 @@ export default function ExpeditionsPage() {
                         </div>
                       </td>
                     </tr>
+
+                    {ouvert && contenu && (
+                      <tr>
+                        <td colSpan={10} className="px-5 pb-4 pt-0 bg-[#EEF4FA]">
+                          <table className="w-full text-left text-sm border border-[#C9C1B1]/60 rounded-xl overflow-hidden bg-white">
+                            <thead>
+                              <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
+                                <th className="px-4 py-2.5">Entrepôt</th>
+                                <th className="px-4 py-2.5">Produit</th>
+                                <th className="px-4 py-2.5 text-right">Quantité envoyée</th>
+                                <th className="px-4 py-2.5 text-right">Quantité reçue</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#C9C1B1]/30">
+                              {contenu.lignes.map((l, i) => (
+                                <tr key={i}>
+                                  <td className="px-4 py-2.5 text-[#1B2632]/75">{destinationNom(e) || '—'}</td>
+                                  <td className="px-4 py-2.5 font-semibold text-[#1B2632]">{l.nom}</td>
+                                  <td className="px-4 py-2.5 text-right font-mono">{l.quantite}</td>
+                                  {/* `null` veut dire « pas encore confirmée », ce qui
+                                      n'est pas la même chose que « zéro reçu ». */}
+                                  <td className="px-4 py-2.5 text-right font-mono font-bold">
+                                    {l.recue == null
+                                      ? <span className="font-normal text-[#1B2632]/35">En attente</span>
+                                      : l.recue}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   )
                 })
               )}
