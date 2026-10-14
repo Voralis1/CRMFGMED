@@ -79,11 +79,7 @@ export default function ExpeditionsPage() {
   const [recherchePays, setRecherchePays] = useState('')
   const [rechercheProduit, setRechercheProduit] = useState('')
   const [nbProduits, setNbProduits] = useState({})
-  const [receptionEnCours, setReceptionEnCours] = useState(null)
-  const [dateReception, setDateReception] = useState('')
-  // Ce qui est réellement arrivé, ligne par ligne. Le dépôt n'est pas demandé :
-  // il se déduit du pays de destination, puisqu'il y en a un seul par pays.
-  const [lignesReception, setLignesReception] = useState([])
+  // Un seul drapeau reste : l'envoi en cours, pour désactiver le bouton.
   const [receptionEnvoi, setReceptionEnvoi] = useState(false)
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
@@ -218,8 +214,10 @@ export default function ExpeditionsPage() {
       total: affichees.length,
       enAttente: parStatut.en_attente || 0,
       confirmees: parStatut.confirmee || 0,
-      enTransit: parStatut.en_transit || 0,
-      recues: parStatut.receptionnee || 0,
+      // `en_transit` n'est plus produit, et `receptionnee` ne concerne que les
+      // lignes d'avant le 14/10 : on les additionne aux anciennes plutot que
+      // d'afficher deux cases a zero.
+      anciennes: (parStatut.en_transit || 0) + (parStatut.receptionnee || 0),
       refusees: parStatut.refusee || 0,
       poids, delai, parStatut,
     }
@@ -302,7 +300,6 @@ export default function ExpeditionsPage() {
     // La date de réception appartient au responsable : c'est lui qui constate
     // l'arrivée. L'envoyer depuis le formulaire d'un vendeur l'écraserait avec
     // une valeur vide à chaque correction.
-    if (peutConfirmer) donnees.date_reception = formulaire.date_reception || null
 
     setEnregistrement(true)
     const requete = idEnEdition
@@ -380,68 +377,38 @@ export default function ExpeditionsPage() {
     charger()
   }
 
-  // Recevoir, c'est constater. On ouvre donc la liste de ce qui était annoncé,
-  // pré-remplie, et le responsable corrige ce qui est vraiment arrivé.
-  async function ouvrirReception(e) {
-    setReceptionEnCours(e)
-    // Par défaut aujourd'hui : on constate une arrivée le jour où elle a lieu,
-    // pas trois semaines après.
-    setDateReception(pourInput(new Date()))
-    setLignesReception([])
-
-    const { data, error } = await supabase
-      .from('expeditions_produits')
-      .select('id, produit_id, quantite')
-      .eq('expedition_id', e.id)
-
-    if (error) return annonce('Lignes illisibles : ' + error.message, 'erreur')
-
-    setLignesReception((data || []).map((l) => ({
-      id: l.id,
-      produit_id: l.produit_id,
-      nom: catalogue.find((p) => p.id === l.produit_id)?.product || 'Produit supprimé',
-      declare: l.quantite || 0,
-      // Pré-rempli au déclaré : le cas courant est que tout arrive, et on ne
-      // force pas à retaper ce qui n'a pas changé.
-      recue: String(l.quantite ?? 0),
-    })))
-  }
-
-  // Tout part dans UN appel : statut, date, dépôt, quantités reçues et
-  // mouvements d'entrée. En plusieurs requêtes, une coupure au milieu
-  // laisserait une expédition « reçue » avec un stock vide, et personne ne
-  // saurait lequel des deux est vrai.
-  async function marquerReceptionnee() {
-    const e = receptionEnCours
-    if (!e) return
+  // Confirmer, c'est recevoir.
+  //
+  // Le vendeur déclare une expédition quand la marchandise est DÉJÀ au dépôt :
+  // « En transit » ne décrivait rien, et « Réceptionnée » répétait
+  // « Confirmée ». Un seul geste, donc — et au même moment la date de
+  // réception se pose et les quantités déclarées entrent en stock.
+  //
+  // Tout se fait dans UN appel côté base. En plusieurs requêtes depuis le
+  // navigateur, une coupure au milieu laisserait une expédition confirmée avec
+  // un stock vide, et personne ne saurait lequel des deux est vrai.
+  async function confirmerEtRecevoir(e) {
+    if (!window.confirm(
+      `Confirmer ${e.reference} ?\n\n`
+      + "Les quantités déclarées entrent en stock, et cela ne se défait pas.",
+    )) return
 
     setReceptionEnvoi(true)
     const { data, error } = await supabase.rpc('receptionner_expedition', {
       p_expedition: e.id,
-      p_date: dateReception ? new Date(dateReception).toISOString() : null,
-      // Toujours null : la base déduit le dépôt du pays de destination. Un
-      // seul endroit décide, et c'est celui qui connaît les entrepôts.
+      p_date: new Date().toISOString(),
+      // null : la base déduit le dépôt du pays de destination. Un seul endroit
+      // décide, et c'est celui qui connaît les entrepôts.
       p_entrepot: null,
-      p_lignes: lignesReception.map((l) => ({
-        id: l.id,
-        quantite_recue: Math.max(0, parseInt(l.recue, 10) || 0),
-      })),
+      // Plus de saisie : les quantités déclarées font foi.
+      p_lignes: [],
     })
     setReceptionEnvoi(false)
 
     if (error) return annonce(error.message, 'erreur')
 
     const r = Array.isArray(data) ? data[0] : data
-    setReceptionEnCours(null)
-
-    // L'écart est dit tout de suite. Le taire laisserait croire que tout est
-    // arrivé, et les manquants ne seraient jamais réclamés à personne.
-    annonce(
-      r?.ecart > 0
-        ? `Réception enregistrée : ${r.total_recu} reçus sur ${r.total_declare} — il manque ${r.ecart}.`
-        : `Réception enregistrée : ${r?.total_recu ?? 0} entrés en stock.`,
-      r?.ecart > 0 ? 'erreur' : 'succes',
-    )
+    annonce(`Expédition confirmée : ${r?.total_recu ?? 0} pièce(s) entrées en stock.`, 'succes')
     charger()
   }
 
@@ -651,12 +618,13 @@ export default function ExpeditionsPage() {
 
       {analyseOuverte && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm p-6 pop-in">
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-5">
             <Chiffre label="Expéditions" valeur={analyse.total} />
             <Chiffre label="En attente" valeur={analyse.enAttente} alerte={analyse.enAttente > 0} />
             <Chiffre label="Confirmées" valeur={analyse.confirmees} />
-            <Chiffre label="En transit" valeur={analyse.enTransit} />
-            <Chiffre label="Réceptionnées" valeur={analyse.recues} />
+            {analyse.anciennes > 0 && (
+              <Chiffre label="Avant 14/10" valeur={analyse.anciennes} />
+            )}
             <Chiffre label="Refusées" valeur={analyse.refusees} alerte={analyse.refusees > 0} />
             <Chiffre label="Poids total" valeur={`${analyse.poids.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kg`} />
           </div>
@@ -761,7 +729,7 @@ export default function ExpeditionsPage() {
                           {peutConfirmer && enAttente && (
                             <>
                               <button
-                                onClick={() => changerStatut(e, 'confirmee')}
+                                onClick={() => confirmerEtRecevoir(e)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500 text-white hover:bg-green-600 transition-colors whitespace-nowrap"
                               >
                                 Confirmer
@@ -774,23 +742,6 @@ export default function ExpeditionsPage() {
                               </button>
                             </>
                           )}
-                          {peutConfirmer && e.statut === 'confirmee' && (
-                            <button
-                              onClick={() => changerStatut(e, 'en_transit')}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2C3B4D] text-white hover:bg-[#1B2632] transition-colors whitespace-nowrap"
-                            >
-                              En transit
-                            </button>
-                          )}
-                          {peutConfirmer && e.statut === 'en_transit' && (
-                            <button
-                              onClick={() => ouvrirReception(e)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors whitespace-nowrap"
-                            >
-                              Réceptionnée
-                            </button>
-                          )}
-
                           {/* Le seller ne corrige que tant que personne n'a tranché :
                               la base refuse le reste, autant ne pas l'afficher. */}
                           {(peutConfirmer || enAttente) && peutCreer && (
@@ -827,89 +778,6 @@ export default function ExpeditionsPage() {
         </div>
       </div>
 
-      {receptionEnCours && (
-        <>
-          <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setReceptionEnCours(null)} />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[560px] p-6 pop-in max-h-[90vh] overflow-y-auto">
-              <h2 className="text-lg font-bold text-[#1B2632] mb-1">Réception de {receptionEnCours.reference}</h2>
-              <p className="text-sm text-[#1B2632]/60 mb-4">
-                Ce qui est enregistré ici entre en stock. Corrigez les quantités si tout n&apos;est pas arrivé.
-              </p>
-
-              {/* Rien sur la destination ici : un entrepôt EST un pays, le pays
-                  a été choisi en déclarant l'expédition, et la ligne
-                  « Destination » de l'expédition l'affiche déjà. Le répéter
-                  n'ajoutait rien — et le demander aurait offert le moyen de
-                  faire entrer la marchandise dans le mauvais pays. */}
-              <div>
-                <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Date d&apos;arrivée</label>
-                <input
-                  type="datetime-local" className="ex-input"
-                  value={dateReception}
-                  onChange={(ev) => setDateReception(ev.target.value)}
-                />
-              </div>
-
-              <div className="mt-4 border border-[#C9C1B1] rounded-xl overflow-hidden">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                      <th className="px-4 py-3">Produit</th>
-                      <th className="px-4 py-3 text-right">Annoncé</th>
-                      <th className="px-4 py-3 text-right w-[120px]">Reçu</th>
-                      <th className="px-4 py-3 text-right">Écart</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#C9C1B1]/30">
-                    {lignesReception.length === 0 ? (
-                      <tr><td colSpan={4} className="px-4 py-6 text-center text-[#1B2632]/50">Aucune ligne de produit.</td></tr>
-                    ) : lignesReception.map((l) => {
-                      const recue = Math.max(0, parseInt(l.recue, 10) || 0)
-                      const ecart = l.declare - recue
-                      return (
-                        <tr key={l.id}>
-                          <td className="px-4 py-3 font-medium text-[#1B2632]">{l.nom}</td>
-                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/60">{l.declare}</td>
-                          <td className="px-4 py-3">
-                            <input
-                              type="number" min="0" className="ex-input text-right font-mono"
-                              value={l.recue}
-                              onChange={(ev) => setLignesReception((prec) => prec.map((x) =>
-                                x.id === l.id ? { ...x, recue: ev.target.value } : x))}
-                            />
-                          </td>
-                          <td className={`px-4 py-3 text-right font-mono font-bold ${ecart > 0 ? 'text-[#A35139]' : ecart < 0 ? 'text-[#2C3B4D]' : 'text-[#1B2632]/30'}`}>
-                            {ecart === 0 ? '—' : ecart > 0 ? `−${ecart}` : `+${-ecart}`}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <p className="text-[11px] text-[#1B2632]/50 mt-2">
-                L&apos;écart reste enregistré sur l&apos;expédition : c&apos;est ce qui permet de le
-                réclamer au transporteur plus tard.
-              </p>
-
-              <div className="flex justify-end gap-3 mt-5">
-                <button onClick={() => setReceptionEnCours(null)} className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
-                  Annuler
-                </button>
-                <button
-                  onClick={marquerReceptionnee}
-                  disabled={receptionEnvoi}
-                  className="px-5 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                >
-                  {receptionEnvoi ? 'Enregistrement...' : 'Enregistrer la réception'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
 
       {selecteurPays && (
         <>
@@ -1140,19 +1008,11 @@ export default function ExpeditionsPage() {
                           </p>
                         )}
                       </div>
-                      {/* La date de réception n'est plus ici pour un vendeur :
-                          c'est le responsable qui constate l'arrivée, le jour où
-                          elle arrive. La demander à la déclaration revenait à
-                          faire deviner une date. */}
-                      {peutConfirmer && (
-                        <div>
-                          <label className="ex-label">Date de réception</label>
-                          <input type="datetime-local" className="ex-input"
-                            value={formulaire.date_reception}
-                            onChange={(ev) => setFormulaire({ ...formulaire, date_reception: ev.target.value })} />
-                          <p className="text-[11px] text-[#1B2632]/50 mt-1">À renseigner quand la marchandise arrive.</p>
-                        </div>
-                      )}
+                      {/* Plus de date de réception saisie à la main. Elle est
+                          POSÉE par « Confirmer », en même temps que l'entrée en
+                          stock — et une date tapée ici faisait croire à la base
+                          que la marchandise était déjà comptée, ce qui bloquait
+                          la confirmation et laissait le stock à zéro. */}
                     </Bloc>
 
                     <Bloc titre="Transporteur">
