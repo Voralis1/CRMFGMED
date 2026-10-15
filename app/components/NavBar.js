@@ -16,6 +16,7 @@ const TOUS_LES_LIENS = [
   { href: '/paiements', label: 'Paiements', permission: 'menu_paiements' },
   { href: '/produits', label: 'Produits', permission: 'menu_produits' },
   { href: '/expeditions', label: 'Expéditions', permission: 'menu_expeditions' },
+  { href: '/sources-import', label: "Sources d'import", permission: 'menu_sources_import' },
   { href: '/utilisateurs', label: 'Utilisateurs', permission: 'menu_utilisateurs' },
   { href: '/parametres', label: 'Paramètres', permission: 'menu_parametres' },
   { href: '/profile', label: 'Profil' }, 
