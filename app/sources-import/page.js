@@ -25,19 +25,11 @@ const STATUTS_JOURNAL = {
 
 const URL_FONCTION = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/import-commande`
 
-// Le jeton est tiré dans le navigateur, et SEULE son empreinte part en base.
-// Même en lisant la table, personne ne peut reconstituer un jeton : il n'existe
-// qu'une fois, dans la fenêtre qui vient de le créer.
-function nouveauJeton() {
-  const octets = new Uint8Array(32)
-  crypto.getRandomValues(octets)
-  return [...octets].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-async function empreinte(jeton) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jeton))
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
+// Le jeton est tiré par la base (creer_source_import / regenerer_jeton_source)
+// et non plus ici : tiré dans le navigateur, celui qui crée la source pouvait
+// en choisir la valeur depuis la console, et la base, qui n'en voit que
+// l'empreinte, ne pouvait pas en juger. La fonction le rend une seule fois ;
+// il ne vit ensuite que dans l'état de la fenêtre, effacé à la fermeture.
 
 const quand = (d) =>
   d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'
@@ -143,26 +135,25 @@ export default function SourcesImportPage() {
     }
 
     setEnregistrement(true)
-    const jeton = nouveauJeton()
-    const { data, error } = await supabase.from('sources_import').insert([{
-      tenant_id: tenantId,
-      nom: brouillon.nom.trim(),
-      type: brouillon.type,
-      // Un vendeur ne choisit pas : la source est à lui, point. La policy
-      // `with check` refuserait de toute façon toute autre valeur.
-      vendeur_id: peutGererTout ? (brouillon.vendeur_id || null) : user?.id,
-      token_hash: await empreinte(jeton),
-      token_apercu: jeton.slice(-4),
-      spreadsheet_id: brouillon.type === 'google_sheet' ? brouillon.spreadsheet_id.trim() : null,
-      onglet: brouillon.type === 'google_sheet' ? (brouillon.onglet.trim() || 'Feuille 1') : null,
-      created_by: user?.id || null,
-    }]).select().single()
+    const { data, error } = await supabase.rpc('creer_source_import', {
+      p_tenant: tenantId,
+      p_nom: brouillon.nom.trim(),
+      p_type: brouillon.type,
+      // Un vendeur ne choisit pas : la source est à lui, point. La fonction
+      // refuserait de toute façon toute autre valeur.
+      p_vendeur: peutGererTout ? (brouillon.vendeur_id || null) : user?.id,
+      p_spreadsheet_id: brouillon.type === 'google_sheet' ? brouillon.spreadsheet_id.trim() : null,
+      p_onglet: brouillon.type === 'google_sheet' ? (brouillon.onglet.trim() || 'Feuille 1') : null,
+    })
     setEnregistrement(false)
 
     if (error) return annonce('Enregistrement refusé : ' + error.message, 'erreur')
 
     setModale(false)
-    setJetonAffiche({ jeton, nom: data.nom })
+    const creee = data?.[0]
+    // Une feuille Google n'est pas appelée de l'extérieur : pas de jeton.
+    if (creee?.jeton) setJetonAffiche({ jeton: creee.jeton, nom: creee.nom })
+    else annonce(`« ${creee?.nom ?? brouillon.nom.trim()} » est créée.`)
     await charger()
   }
 
@@ -174,10 +165,7 @@ export default function SourcesImportPage() {
       'n\'y est pas collé.'
     )) return
 
-    const jeton = nouveauJeton()
-    const { error } = await supabase.from('sources_import')
-      .update({ token_hash: await empreinte(jeton), token_apercu: jeton.slice(-4) })
-      .eq('id', s.id).eq('tenant_id', tenantId)
+    const { data: jeton, error } = await supabase.rpc('regenerer_jeton_source', { p_source: s.id })
     if (error) return annonce('Erreur : ' + error.message, 'erreur')
 
     setJetonAffiche({ jeton, nom: s.nom })
@@ -337,6 +325,13 @@ export default function SourcesImportPage() {
                   )}
                   <td className="px-5 py-4 font-mono text-sm text-[#1B2632]/70 whitespace-nowrap">
                     {s.token_apercu ? `••••${s.token_apercu}` : '—'}
+                    {/* Qui a changé le jeton se lit en base (jeton_regenere_par) ;
+                        la date suffit ici pour répondre à « depuis quand ça ne passe plus ? » */}
+                    {s.jeton_regenere_le && (
+                      <span className="block text-[11px] font-sans text-[#1B2632]/45 mt-0.5">
+                        changé le {quand(s.jeton_regenere_le)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-semibold bg-white"
@@ -537,7 +532,8 @@ export default function SourcesImportPage() {
               <div className="px-7 pt-6 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">Le jeton de « {jetonAffiche.nom} »</h2>
                 <p className="text-sm text-[#A35139] font-semibold mt-1.5">
-                  Copiez-le maintenant : il ne sera plus jamais affiché.
+                  Ce jeton s&apos;affiche une seule fois. Copiez-le maintenant : après
+                  avoir fermé cette fenêtre, ni vous ni personne ne pourra le relire.
                 </p>
               </div>
 
@@ -550,9 +546,9 @@ export default function SourcesImportPage() {
                   {copie ? 'Copié ✓' : 'Copier le jeton'}
                 </button>
                 <p className="text-[11px] text-[#1B2632]/50 mt-3">
-                  Seule son empreinte est enregistrée : même en lisant la base, personne
-                  ne peut le retrouver. Perdu, il ne se récupère pas — il faut en générer
-                  un nouveau, ce qui invalide l&apos;ancien.
+                  Le CRM n&apos;en garde qu&apos;une empreinte : même en lisant la base,
+                  personne ne peut le retrouver. Perdu, il ne se récupère pas — il faut
+                  cliquer sur « Nouveau jeton », ce qui coupe immédiatement l&apos;ancien.
                 </p>
               </div>
 
