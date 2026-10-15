@@ -6,7 +6,6 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
-import * as XLSX from 'xlsx'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -361,7 +360,6 @@ export default function CentreAppelAgent() {
   // agentId = null  -> global view (admin / manager / ceo / super_admin)
   async function chargerCommandes(pageActuelle, onglet, agentId) {
     if (!tenantKey || agentId === undefined) return
-    const estSuperAdmin = (roleNom || '').toLowerCase() === 'super_admin'
     setLoading(true)
     const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
     const fin = debut + ITEMS_PER_PAGE - 1
@@ -375,11 +373,21 @@ export default function CentreAppelAgent() {
     let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
     let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)`)
 
-    // super_admin sees every tenant; everybody else only his own tenant
-    if (!estSuperAdmin) {
-      requeteBase = requeteBase.eq('tenant_id', tenantKey)
-      requeteData = requeteData.eq('tenant_id', tenantKey)
-    }
+    // Le cloisonnement vaut POUR TOUT LE MONDE, super_admin compris.
+    //
+    // Avant, le super_admin était exempté de ce filtre : le centre d'appel lui
+    // montrait les commandes de toutes les entreprises mélangées, sans rien
+    // pour dire laquelle était laquelle. Deux clients différents dans la même
+    // file d'appel, c'est une fuite entre entreprises, et c'est intenable à
+    // l'écran.
+    //
+    // Ce n'est pas une perte d'accès : `tenantId` renvoie déjà l'entreprise
+    // que le super_admin a CHOISIE (`tenantChoisi`, AuthContext). Il voit donc
+    // tout, une entreprise à la fois, et change d'entreprise par le sélecteur.
+    // Les autres écrans fonctionnent ainsi depuis le début — celui-ci était le
+    // seul à part.
+    requeteBase = requeteBase.eq('tenant_id', tenantKey)
+    requeteData = requeteData.eq('tenant_id', tenantKey)
 
     // 🔒 An agent only sees HIS orders
     if (agentId) {
