@@ -10,30 +10,24 @@
 // Les noms de champs sont souples : `nom`/`name`/`client_nom`, `telephone`/
 // `phone`/`tel`… La liste complète est dans `_shared/import.ts`.
 //
-// TROIS FAÇONS D'ÊTRE AUTORISÉ, de la meilleure à la plus ancienne :
+// DEUX FAÇONS D'ÊTRE AUTORISÉ :
 //
 //   1. `x-import-token`  — le jeton d'UNE source. L'entreprise et le vendeur
 //      viennent du jeton, jamais du corps de la requête. C'est la seule façon
 //      qui permette de couper une source sans couper les autres.
 //
-//   2. `x-import-secret` — l'ancien secret unique, conservé le temps que les
-//      intégrations existantes basculent. Il lit `tenant_id` dans le corps, ce
-//      qui veut dire que qui le détient peut écrire dans n'importe quelle
-//      entreprise. À RETIRER une fois les sources migrées.
+//   2. utilisateur connecté avec `importer_csv` — l'import depuis l'écran.
 //
-//   3. utilisateur connecté avec `importer_csv` — l'import depuis l'écran.
+// L'ancien `x-import-secret` a été retiré : il lisait `tenant_id` dans le
+// corps, donc qui le détenait pouvait écrire dans n'importe quelle entreprise,
+// et il a fuité. Il n'existe plus aucun chemin qui fasse confiance au corps
+// pour choisir l'entreprise, sauf pour un super_admin connecté.
 import {
   adminClient, getCaller, handle, HttpError, json, readJson, requireAny,
 } from '../_shared/auth.ts'
 import {
   Brut, ContexteImport, importerLot, MAX_LOT, sourceDepuisJeton,
 } from '../_shared/import.ts'
-
-function secretLegacyValide(req: Request): boolean {
-  const attendu = Deno.env.get('IMPORT_SECRET')
-  const recu = req.headers.get('x-import-secret')
-  return !!attendu && attendu.length >= 16 && recu === attendu
-}
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -71,12 +65,6 @@ Deno.serve(handle(async (req) => {
       origine: source.type === 'google_sheet' ? 'google_sheet' : 'webhook',
       mapping: source.mapping ?? {},
     }
-  } else if (secretLegacyValide(req)) {
-    const tenantId = corps.tenant_id as string | undefined
-    if (!tenantId) throw new HttpError(400, 'tenant_id requis')
-    const { data: t } = await sb.from('tenants').select('statut').eq('id', tenantId).maybeSingle()
-    if (!t || t.statut !== 'actif') throw new HttpError(400, 'Entreprise introuvable ou suspendue')
-    ctx = { tenantId, sourceId: null, vendeurParDefaut: null, origine: 'google_sheet' }
   } else {
     const caller = await getCaller(req, sb)
     requireAny(caller, ['importer_csv'])
