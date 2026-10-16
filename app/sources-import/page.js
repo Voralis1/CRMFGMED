@@ -82,7 +82,14 @@ export default function SourcesImportPage() {
     setErreur('')
     try {
       const [s, v, j] = await Promise.all([
-        supabase.from('sources_import').select('*').eq('tenant_id', tenantId)
+        // Liste explicite, jamais '*' : signature_secret (intake_generique.sql)
+        // est rangé lisible pour calculer le HMAC, et '*' l'enverrait au
+        // navigateur de chaque responsable, ceo en lecture seule compris.
+        // Une colonne ajoutée à sources_import n'arrive ici que si on l'écrit.
+        supabase.from('sources_import')
+          .select('id, nom, type, actif, vendeur_id, spreadsheet_id, onglet, token_apercu, ' +
+                  'jeton_regenere_le, derniere_sync, derniere_erreur, created_at')
+          .eq('tenant_id', tenantId)
           .order('created_at', { ascending: false }),
         peutGererTout
           ? supabase.from('user_roles').select('user_id, nom, email')
