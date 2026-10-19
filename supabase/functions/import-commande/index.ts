@@ -30,12 +30,16 @@
 //
 // Le jeton peut être dans l'URL : NE JAMAIS journaliser req.url (voir
 // jetonDepuisRequete).
+//
+// QUOTA (appliquerQuota) : par source avec un jeton valide, par IP sinon.
+// Il passe APRÈS la lecture du jeton (il faut les limites de la source) et
+// AVANT tout le reste — signature, JSON, insertions.
 import {
-  adminClient, getCaller, handle, HttpError, json, requireAny,
+  adminClient, corsHeaders, getCaller, handle, HttpError, json, requireAny,
 } from '../_shared/auth.ts'
 import {
-  Brut, ContexteImport, deballer, estPingWebhook, importerLot, jetonDepuisRequete, MAX_LOT,
-  sourceDepuisJeton, verifierSignature,
+  appliquerQuota, ContexteImport, estPingWebhook, importerLot, jetonDepuisRequete, lignesDuCorps,
+  MAX_LOT, sourceDepuisJeton, verifierSignature,
 } from '../_shared/import.ts'
 
 function lireJson(texte: string): Record<string, unknown> {
@@ -59,15 +63,19 @@ Deno.serve(handle(async (req) => {
   let ctx: ContexteImport | null = null
 
   const jeton = jetonDepuisRequete(req)
-  if (jeton) {
-    const source = await sourceDepuisJeton(sb, jeton)
-    // Même réponse pour « jeton inconnu », « source coupée » et « entreprise
-    // suspendue » : distinguer les trois dirait à un inconnu quels jetons
-    // existent.
-    if (!source) throw new HttpError(401, 'Jeton inconnu ou source désactivée')
+  const source = jeton ? await sourceDepuisJeton(sb, jeton) : null
 
-    if (estPingWebhook(texte)) return json({ success: true, status: 'ping' })
+  // Le ping de WooCommerce passe AVANT le quota : il n'écrit rien, et un 429
+  // au moment où le vendeur enregistre son webhook le ferait désactiver par
+  // WooCommerce. Il exige quand même un jeton valide.
+  if (source && estPingWebhook(texte)) return json({ success: true, status: 'ping' })
 
+  // Avant la signature et avant le JSON : un essai refusé pour jeton faux,
+  // signature fausse ou corps illisible compte aussi.
+  const refus = await appliquerQuota(sb, source, req.headers, texte, corsHeaders)
+  if (refus) return refus
+
+  if (source) {
     // Pas de secret sur la source : pas de vérification, on ne refuse pas.
     if (await verifierSignature(octets, req.headers, source) === false) {
       throw new HttpError(401, 'Signature invalide')
@@ -83,23 +91,17 @@ Deno.serve(handle(async (req) => {
       etiquette,
       prefixeLead: source.prefixe_lead,
     }
+  } else if (jeton) {
+    // Même réponse pour « jeton inconnu », « source coupée » et « entreprise
+    // suspendue » : distinguer les trois dirait à un inconnu quels jetons
+    // existent.
+    throw new HttpError(401, 'Jeton inconnu ou source désactivée')
   }
 
   const corps = lireJson(texte)
 
   // --- un lead ou plusieurs ? ------------------------------------------------
-  // L'enveloppe ({ "data": … }) est ouverte pour trouver la liste ; une
-  // commande seule est passée ENTIÈRE, pour que imports_bruts garde ce qui
-  // est arrivé et que le mapping puisse citer le chemin complet.
-  const racine = deballer(corps).racine as Record<string, unknown>
-  let lignes: Brut[]
-  if (Array.isArray(racine)) lignes = racine as Brut[]
-  else if (Array.isArray(racine.leads)) lignes = racine.leads as Brut[]
-  else if (Array.isArray(racine.commandes)) lignes = racine.commandes as Brut[]
-  else lignes = [corps as Brut]
-
-  const lot = lignes.length > 1 || Array.isArray(racine) ||
-              Array.isArray(racine.leads) || Array.isArray(racine.commandes)
+  const { lignes, lot } = lignesDuCorps(corps)
 
   if (lignes.length === 0) throw new HttpError(400, 'Aucun lead dans la requête')
   if (lignes.length > MAX_LOT) {

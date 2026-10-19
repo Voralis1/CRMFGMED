@@ -743,6 +743,23 @@ export interface ResultatLot {
 
 export const MAX_LOT = 200
 
+// Un lead ou plusieurs ? L'enveloppe ({ "data": … }) est ouverte pour trouver
+// la liste ; une commande seule est passée ENTIÈRE, pour que imports_bruts
+// garde ce qui est arrivé et que le mapping puisse citer le chemin complet.
+// Ici et pas dans index.ts : le quota compte les leads avec CETTE lecture-ci,
+// sinon le compteur et l'import finiraient par ne plus voir le même nombre.
+export function lignesDuCorps(corps: Record<string, unknown>): { lignes: Brut[]; lot: boolean } {
+  const racine = deballer(corps).racine as Record<string, unknown>
+  let lignes: Brut[]
+  if (Array.isArray(racine)) lignes = racine as Brut[]
+  else if (Array.isArray(racine.leads)) lignes = racine.leads as Brut[]
+  else if (Array.isArray(racine.commandes)) lignes = racine.commandes as Brut[]
+  else lignes = [corps as Brut]
+  const lot = lignes.length > 1 || Array.isArray(racine) ||
+              Array.isArray(racine.leads) || Array.isArray(racine.commandes)
+  return { lignes, lot }
+}
+
 export async function importerLot(
   sb: SupabaseClient,
   ctx: ContexteImport,
@@ -790,6 +807,8 @@ export interface Source {
   signature_encodage: string | null
   signature_prefixe: string | null
   signature_secret: string | null
+  limite_appels_minute: number | null
+  limite_leads_minute: number | null
 }
 
 // Le jeton en clair n'existe nulle part en base : on compare les empreintes.
@@ -799,7 +818,8 @@ export async function sourceDepuisJeton(sb: SupabaseClient, jeton: string): Prom
   const empreinte = await sha256Hex(jeton)
   const { data } = await sb.from('sources_import')
     .select('id, tenant_id, vendeur_id, nom, type, mapping, prefixe_lead, ' +
-      'signature_entete, signature_algo, signature_encodage, signature_prefixe, signature_secret')
+      'signature_entete, signature_algo, signature_encodage, signature_prefixe, signature_secret, ' +
+      'limite_appels_minute, limite_leads_minute')
     .eq('token_hash', empreinte).eq('actif', true).maybeSingle()
   if (!data) return null
 
@@ -930,4 +950,171 @@ export async function verifierSignature(
 // Ce ping n'écrit rien : on lui répond 200.
 export function estPingWebhook(texte: string): boolean {
   return /^webhook_id=\d+$/.test(texte.trim())
+}
+
+// ------------------------------------------------------------------
+// Le quota : combien d'appels et de leads par minute
+// ------------------------------------------------------------------
+//
+// Le compteur vit en base (consommer_quota, table api_quota) et pas en
+// mémoire : une Edge Function tourne en plusieurs copies éphémères, un
+// compteur en mémoire ne tiendrait ni d'une copie à l'autre ni après un
+// recyclage.
+//
+// DEUX compteurs par clé : les appels ET les leads. Limiter les appels seuls
+// laisserait passer 60 × 200 = 12 000 leads par minute en respectant la règle.
+//
+// On compte la TENTATIVE, acceptée ou refusée : c'est l'essai qu'on ralentit,
+// pas la réussite — sinon un jeton deviné au hasard ne coûterait rien.
+
+export const FENETRE_QUOTA_SEC = 60
+
+// Sans jeton valide, on ne sait pas qui appelle : une limite basse par IP, qui
+// suffit à un vrai intégrateur en train de régler son jeton, pas à qui en essaie.
+export const LIMITES_IP = { appels: 20, unites: 20 }
+
+// La colonne est NOT NULL avec ces valeurs par défaut ; on les répète ici pour
+// qu'une source lue sans ces colonnes reste limitée, pas illimitée.
+export const LIMITES_SOURCE_DEFAUT = { appels: 60, unites: 600 }
+
+// Un en-tête absent ne doit JAMAIS couper la limite : toutes les requêtes sans
+// IP partagent cette clé, et donc le même quota.
+export const CLE_IP_INCONNUE = 'ip:inconnue'
+
+export interface Quota {
+  cle: string
+  unites: number
+  maxAppels: number
+  maxUnites: number
+}
+
+export interface EtatQuota {
+  autorise: boolean
+  appels: number
+  unites: number
+  restant: number
+  reset_dans: number
+}
+
+// Le PREMIER élément de x-forwarded-for : c'est le client, les suivants sont
+// les proxys traversés. Coupé à 64 caractères : la valeur finit dans une clé
+// en base et l'en-tête vient de l'extérieur.
+export function ipClient(entetes: Headers): string | null {
+  const premier = entetes.get('x-forwarded-for')?.split(',')[0]?.trim()
+  return premier ? premier.slice(0, 64) : null
+}
+
+// Le nombre de leads que la requête prétend porter, lu comme l'import le
+// lira (lignesDuCorps). Ne lève jamais : un corps illisible est une tentative
+// comme une autre, il coûte 1. Plafonné à MAX_LOT : au-delà, la requête est
+// refusée avant tout travail, et une seule erreur d'intégration ne doit pas
+// bloquer la source pour la minute.
+export function compterLeads(texte: string): number {
+  let corps: unknown
+  try { corps = JSON.parse(texte) } catch { return 1 }
+  const objet = corps && typeof corps === 'object' ? corps as Record<string, unknown> : {}
+  return Math.min(Math.max(lignesDuCorps(objet).lignes.length, 1), MAX_LOT)
+}
+
+const entierPositif = (v: unknown, defaut: number): number =>
+  typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : defaut
+
+// Jeton valide : la clé et les limites de LA source — une boutique bruyante
+// n'entame pas le quota des autres. Sinon : l'IP, avec la limite basse.
+export function quotaPour(
+  source: Pick<Source, 'id' | 'limite_appels_minute' | 'limite_leads_minute'> | null,
+  entetes: Headers,
+  unites: number,
+): Quota {
+  if (source) {
+    return {
+      cle: `src:${source.id}`,
+      unites,
+      maxAppels: entierPositif(source.limite_appels_minute, LIMITES_SOURCE_DEFAUT.appels),
+      maxUnites: entierPositif(source.limite_leads_minute, LIMITES_SOURCE_DEFAUT.unites),
+    }
+  }
+  const ip = ipClient(entetes)
+  return {
+    cle: ip ? `ip:${ip}` : CLE_IP_INCONNUE,
+    unites,
+    maxAppels: LIMITES_IP.appels,
+    maxUnites: LIMITES_IP.unites,
+  }
+}
+
+// null = le compteur n'a pas répondu (erreur, fonction absente, réponse
+// inattendue). L'appelant laisse alors PASSER la requête.
+//
+// NE PAS TRANSFORMER CE null EN REFUS. Un compteur cassé ne doit jamais
+// empêcher de vraies commandes d'arriver : en COD, un lead perdu est une
+// commande perdue, alors qu'une minute sans limite ne coûte presque rien — le
+// jeton, la signature et le plafond de MAX_LOT par requête restent en place.
+export async function consommerQuota(sb: SupabaseClient, q: Quota): Promise<EtatQuota | null> {
+  try {
+    const { data, error } = await sb.rpc('consommer_quota', {
+      p_cle: q.cle,
+      p_unites: q.unites,
+      p_max_appels: q.maxAppels,
+      p_max_unites: q.maxUnites,
+      p_fenetre_sec: FENETRE_QUOTA_SEC,
+    })
+    if (error) {
+      // Le message seul : la clé contient l'IP ou l'identifiant de la source.
+      console.error('consommer_quota indisponible, requête laissée passer :', error.message)
+      return null
+    }
+    const r = Array.isArray(data) ? data[0] : data
+    if (!r || typeof r.autorise !== 'boolean') {
+      console.error('consommer_quota : réponse inattendue, requête laissée passer')
+      return null
+    }
+    return r as EtatQuota
+  } catch (e) {
+    console.error('consommer_quota en erreur, requête laissée passer :', (e as Error)?.message)
+    return null
+  }
+}
+
+// La réponse 429. Un message simple : rien sur la clé, la source, la table ou
+// lequel des deux compteurs a débordé — l'appelant n'apprend rien sur
+// l'intérieur du CRM. `entetesBase` reçoit les en-têtes CORS d'auth.ts (que
+// ce fichier n'importe pas pour rester testable hors Deno).
+export function reponse429(etat: EtatQuota, q: Quota, entetesBase: Record<string, string> = {}): Response {
+  const n = Number(etat.reset_dans)
+  const attente = Math.max(1, Math.ceil(Number.isFinite(n) ? n : FENETRE_QUOTA_SEC))
+  return new Response(JSON.stringify({
+    success: false,
+    error: `Trop de requêtes. Réessayez dans ${attente} secondes.`,
+  }), {
+    status: 429,
+    headers: {
+      ...entetesBase,
+      'Content-Type': 'application/json',
+      'Retry-After': String(attente),
+      'X-RateLimit-Limit': String(q.maxAppels),
+      // Refusé = 0, même si c'est le compteur de leads qui a débordé et qu'il
+      // reste des appels : annoncer « il en reste » ferait réessayer aussitôt.
+      'X-RateLimit-Remaining': String(etat.autorise ? Math.max(0, etat.restant) : 0),
+      // Sans cette ligne, un formulaire de landing page (navigateur) ne peut
+      // pas lire Retry-After.
+      'Access-Control-Expose-Headers': 'Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining',
+    },
+  })
+}
+
+// Tout le quota en un appel : une Response 429 si la requête est refusée,
+// null si elle passe — y compris quand le compteur est en panne (voir
+// consommerQuota).
+export async function appliquerQuota(
+  sb: SupabaseClient,
+  source: Pick<Source, 'id' | 'limite_appels_minute' | 'limite_leads_minute'> | null,
+  entetes: Headers,
+  texte: string,
+  entetesBase: Record<string, string> = {},
+): Promise<Response | null> {
+  const q = quotaPour(source, entetes, compterLeads(texte))
+  const etat = await consommerQuota(sb, q)
+  if (!etat || etat.autorise) return null
+  return reponse429(etat, q, entetesBase)
 }
