@@ -7,9 +7,10 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  // x-import-token : un formulaire de landing page qui appelle import-commande
-  // depuis le navigateur doit passer le pré-vol CORS avec son jeton.
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-token',
+  // x-import-token / x-api-secret : un formulaire de landing page qui appelle
+  // import-commande depuis le navigateur doit passer le pré-vol CORS avec sa
+  // clé et son secret.
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-token, x-api-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 

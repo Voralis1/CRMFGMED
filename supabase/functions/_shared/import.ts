@@ -802,32 +802,46 @@ export interface Source {
   type: string
   mapping: Record<string, string> | null
   prefixe_lead: string | null
-  signature_entete: string | null
-  signature_algo: string | null
-  signature_encodage: string | null
-  signature_prefixe: string | null
-  signature_secret: string | null
   limite_appels_minute: number | null
   limite_leads_minute: number | null
+  // Le « Secret API » de l'URL (&secret=). Familiarité, pas protection — et
+  // JAMAIS la clé HMAC : voir secretUrlValide et identifiants_api.sql.
+  secret_url: string | null
+  secret_url_requis: boolean | null
 }
+
+const COLONNES_SOURCE = 'id, tenant_id, vendeur_id, nom, type, mapping, prefixe_lead, ' +
+  'limite_appels_minute, limite_leads_minute'
 
 // Le jeton en clair n'existe nulle part en base : on compare les empreintes.
 // `actif` est dans la requête — couper une source doit la couper tout de suite.
 export async function sourceDepuisJeton(sb: SupabaseClient, jeton: string): Promise<Source | null> {
   if (!jeton || jeton.length < 16) return null
   const empreinte = await sha256Hex(jeton)
-  const { data } = await sb.from('sources_import')
-    .select('id, tenant_id, vendeur_id, nom, type, mapping, prefixe_lead, ' +
-      'signature_entete, signature_algo, signature_encodage, signature_prefixe, signature_secret, ' +
-      'limite_appels_minute, limite_leads_minute')
-    .eq('token_hash', empreinte).eq('actif', true).maybeSingle()
+  const lire = (colonnes: string) => sb.from('sources_import')
+    .select(colonnes).eq('token_hash', empreinte).eq('actif', true).maybeSingle()
+
+  const premiere = await lire(COLONNES_SOURCE + ', secret_url, secret_url_requis')
+  let data = premiere.data as Record<string, unknown> | null
+  // Colonnes absentes (code déployé avant identifiants_api.sql) : on relit
+  // sans elles, et rien n'est exigé — aucune source ne PEUT l'exiger tant que
+  // la colonne n'existe pas. Sans ce repli, une erreur d'ordre entre le
+  // déploiement et le SQL refuserait toutes les commandes de toutes les
+  // sources.
+  const err = premiere.error
+  if (err && (err.code === '42703' || /secret_url/.test(err.message ?? ''))) {
+    const repli = await lire(COLONNES_SOURCE)
+    data = repli.data
+      ? { ...(repli.data as Record<string, unknown>), secret_url: null, secret_url_requis: false }
+      : null
+  }
   if (!data) return null
 
   // Une entreprise suspendue n'accepte plus rien, même avec un jeton valide.
-  const { data: t } = await sb.from('tenants').select('statut').eq('id', data.tenant_id).maybeSingle()
+  const { data: t } = await sb.from('tenants').select('statut').eq('id', data.tenant_id as string).maybeSingle()
   if (!t || t.statut !== 'actif') return null
 
-  return data as Source
+  return data as unknown as Source
 }
 
 // ------------------------------------------------------------------
@@ -837,14 +851,14 @@ export async function sourceDepuisJeton(sb: SupabaseClient, jeton: string): Prom
 //   1. en-tête   x-import-token: fgm_…            Zapier, Make, un serveur
 //   2. en-tête   Authorization: Bearer fgm_…      outils qui ne savent que ça
 //   3. URL       ?token=fgm_…                     WooCommerce, formulaires,
-//                ?key=fgm_…&secret=…              tout ce qui ne donne qu'une URL
+//                ?key=fgm_…&secret=fgu_…          tout ce qui ne donne qu'une URL
+//   (le secret, lui, en en-tête x-api-secret ou &secret= — secretUrlValide)
 //
 // L'URL est la porte principale : c'est la seule chose que TOUTE application
-// sait donner. La signature (plus bas) est une défense en plus, pas la porte.
+// sait donner.
 //
-// `?key=&secret=` est la forme d'URL de ShipLead, pour qu'un vendeur qui en
-// vient colle ce qu'il connaît. Notre jeton est UNE valeur : `key` la porte ;
-// `secret` est accepté et ignoré, il ne prouverait rien de plus.
+// `?key=&secret=` est la forme d'URL de ShipLead et de CodinAfrica. `secret`
+// est vérifié quand la source l'exige (secretUrlValide).
 //
 // `Bearer` n'est pris pour un jeton de source que s'il commence par `fgm_`
 // (le format tiré par la base) : un JWT Supabase (eyJ…) reste un utilisateur
@@ -864,48 +878,31 @@ export function jetonDepuisRequete(req: Request): string | null {
   return url.searchParams.get('token')?.trim() || url.searchParams.get('key')?.trim() || null
 }
 
-// ------------------------------------------------------------------
-// La signature : décidée par la configuration de la source, pas par le nom
-// d'une boutique
-// ------------------------------------------------------------------
-//
-//   WooCommerce   x-wc-webhook-signature   HMAC-SHA256   base64
-//   Shopify       x-shopify-hmac-sha256    HMAC-SHA256   base64
-//   GitHub        x-hub-signature-256      HMAC-SHA256   hex, préfixe 'sha256='
-//
-// Même calcul, autre en-tête, autre encodage : quatre colonnes de
-// sources_import (en-tête, algorithme, encodage, préfixe) + le secret, un seul
-// chemin de code.
-//
-// Le HMAC se calcule sur les OCTETS BRUTS du corps, lus AVANT JSON.parse :
-// parser puis ré-écrire change les octets (espaces, ordre, échappements) et la
-// signature ne se vérifie plus.
-//
-// LE SECRET N'EST PAS UN JETON. Le jeton est haché parce qu'on ne fait que le
-// comparer. Le secret de signature doit SERVIR à calculer le HMAC : il ne peut
-// pas être haché, il est rangé lisible dans sources_import.signature_secret.
-// Qui le lit, c'est la RLS de sources_import qui le décide (super_admin, les
-// responsables de l'entreprise, le vendeur de la source).
-
-const ALGOS: Record<string, string> = { sha1: 'SHA-1', sha256: 'SHA-256', sha512: 'SHA-512' }
-
-function decoderSignature(texte: string, encodage: string): Uint8Array | null {
-  const t = texte.trim()
-  if (encodage === 'hex') {
-    if (!/^[0-9a-f]+$/i.test(t) || t.length % 2 !== 0) return null
-    return new Uint8Array(t.match(/../g)!.map((h) => parseInt(h, 16)))
-  }
-  try {
-    const bin = atob(t)
-    return Uint8Array.from(bin, (c) => c.charCodeAt(0))
-  } catch {
-    return null
-  }
+// `?source=WooCommerce` : l'étiquette d'attribution. Les URL de ShipLead et de
+// CodinAfrica en portent toutes une ; le vendeur la colle telle quelle et
+// s'attend à voir d'où vient la commande. Rangée dans commandes.source_sheet
+// (voir ContexteImport.etiquette), que l'écran Commandes affiche à côté de
+// l'origine. Coupée à 100 : elle vient de l'extérieur.
+export function etiquetteDepuisRequete(req: Request): string | null {
+  return new URL(req.url).searchParams.get('source')?.trim().slice(0, 100) || null
 }
 
+// ------------------------------------------------------------------
+// Pas de signature
+// ------------------------------------------------------------------
+//
+// La vérification de signature HMAC (WooCommerce, Shopify) a été RETIRÉE du
+// produit le 20/10 : aucune ligne de ce code ne lit ni ne vérifie une
+// signature, donc aucun lead ne peut être refusé à cause d'elle, et rien
+// n'écrit plus le compteur d'échecs.
+//
+// Les colonnes sources_import.signature_* restent en base, vides et NON LUES :
+// les supprimer voulait dire retoucher des fichiers SQL déjà appliqués en
+// production. Ne pas les rajouter à COLONNES_SOURCE sans une décision —
+// c'est le code qui les lit qui pourrait refuser des commandes, pas elles.
+
 // Temps constant : la comparaison lit tous les octets, qu'ils diffèrent au
-// premier ou au dernier. Seule la longueur peut répondre plus vite, et elle
-// est publique (celle de l'algorithme).
+// premier ou au dernier. Seule la longueur peut répondre plus vite.
 function egalTempsConstant(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false
   let diff = 0
@@ -913,36 +910,50 @@ function egalTempsConstant(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0
 }
 
-// null  : la source n'a pas de secret, rien à vérifier — on ne refuse pas.
-// true  : signature juste.
-// false : signature absente, mal formée ou fausse — ou configuration
-//         incomplète : un secret posé sans en-tête refuse plutôt que d'ouvrir.
-export async function verifierSignature(
-  corps: Uint8Array,
-  entetes: Headers,
-  cfg: Pick<Source, 'signature_entete' | 'signature_algo' | 'signature_encodage' |
-                    'signature_prefixe' | 'signature_secret'>,
-): Promise<boolean | null> {
-  if (!cfg.signature_secret) return null
-  const hash = ALGOS[String(cfg.signature_algo ?? 'sha256').toLowerCase()]
-  if (!hash || !cfg.signature_entete) return false
+// Le « Secret API » de l'URL : `&secret=`.
+//
+// SOYONS HONNÊTES SUR CE QU'IL VAUT. Il voyage dans la MÊME URL que la clé :
+// les deux forment un seul long mot de passe, pas deux facteurs — qui voit
+// l'URL a les deux. Il existe parce que les vendeurs viennent de ShipLead /
+// CodinAfrica, dont l'URL porte `key` ET `secret`, et qu'une URL sans
+// `&secret=` leur paraît incomplète. Il achète la familiarité et une migration
+// facile. Sans signature (retirée le 20/10), la clé + ce secret sont la seule
+// porte : une URL qui fuit se régénère, une source se coupe en un clic.
+//
+// Exigé ou rien : un secret facultatif serait simplement omis. Quand la source
+// l'exige, absent ou faux = la requête est traitée EXACTEMENT comme une clé
+// inconnue (même quota par IP, même 401, même corps) : personne n'apprend
+// laquelle des deux moitiés était fausse.
+//
+// DEUX PLACES, comme pour la clé : l'en-tête `x-api-secret` ou `&secret=`
+// dans l'URL. L'appelant choisit — un serveur, Zapier ou Postman l'envoie en
+// en-tête (qui ne finit pas dans les journaux), WooCommerce ne sait donner
+// qu'une URL. Sans l'en-tête, tout appel qui passait la clé en
+// x-import-token était refusé dès que la source exigeait le secret.
+// L'en-tête passe en premier, comme x-import-token pour la clé : s'il est
+// là, c'est lui qui est comparé, même si l'URL en porte un autre.
+//
+// Une source qui l'exige sans en avoir (impossible par la contrainte
+// sources_import_secret_url_complet) refuse plutôt que d'ouvrir.
+export function secretUrlValide(req: Request, source: Pick<Source, 'secret_url' | 'secret_url_requis'>): boolean {
+  if (!source.secret_url_requis) return true
+  if (!source.secret_url) return false
+  const recu = req.headers.get('x-api-secret')?.trim() ||
+    new URL(req.url).searchParams.get('secret')?.trim()
+  if (!recu) return false
+  const enc = new TextEncoder()
+  return egalTempsConstant(enc.encode(recu), enc.encode(source.secret_url))
+}
 
-  let recue: string | undefined
-  try { recue = entetes.get(cfg.signature_entete)?.trim() } catch { return false }
-  if (!recue) return false
-  const prefixe = cfg.signature_prefixe ?? ''
-  if (prefixe) {
-    if (!recue.toLowerCase().startsWith(prefixe.toLowerCase())) return false
-    recue = recue.slice(prefixe.length)
-  }
-  const attendue = decoderSignature(recue, String(cfg.signature_encodage ?? 'base64').toLowerCase())
-  if (!attendue) return false
-
-  const cle = await crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(cfg.signature_secret), { name: 'HMAC', hash }, false, ['sign'],
-  )
-  const calculee = new Uint8Array(await crypto.subtle.sign('HMAC', cle, corps as BufferSource))
-  return egalTempsConstant(calculee, attendue)
+// La source qui appelle, ou null — UNE réponse pour « pas de clé », « clé
+// inconnue », « source coupée », « entreprise suspendue » et « secret d'URL
+// absent ou faux ». import-commande ne sait donc pas lui-même lequel c'était,
+// et ne peut pas le laisser filer dans une réponse ou un quota.
+export async function sourceDeLaRequete(sb: SupabaseClient, req: Request): Promise<Source | null> {
+  const jeton = jetonDepuisRequete(req)
+  if (!jeton) return null
+  const trouvee = await sourceDepuisJeton(sb, jeton)
+  return trouvee && secretUrlValide(req, trouvee) ? trouvee : null
 }
 
 // WooCommerce, quand on enregistre un webhook, envoie `webhook_id=12` en
@@ -1049,7 +1060,7 @@ export function quotaPour(
 // NE PAS TRANSFORMER CE null EN REFUS. Un compteur cassé ne doit jamais
 // empêcher de vraies commandes d'arriver : en COD, un lead perdu est une
 // commande perdue, alors qu'une minute sans limite ne coûte presque rien — le
-// jeton, la signature et le plafond de MAX_LOT par requête restent en place.
+// jeton, le secret d'URL et le plafond de MAX_LOT par requête restent en place.
 export async function consommerQuota(sb: SupabaseClient, q: Quota): Promise<EtatQuota | null> {
   try {
     const { data, error } = await sb.rpc('consommer_quota', {

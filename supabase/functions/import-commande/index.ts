@@ -1,8 +1,9 @@
 // Le point d'entrée des leads : boutique, landing page, formulaire, Zapier,
 // ou n'importe quel outil capable de faire un POST.
 //
-//   POST /functions/v1/import-commande?token=<jeton>&source=<étiquette>
-//   (ou en-tête x-import-token, ou Authorization: Bearer fgm_…)
+//   POST /functions/v1/import-commande?key=<clé>&secret=<secret>&source=<étiquette>
+//   (ou ?token=, ou en-tête x-import-token, ou Authorization: Bearer fgm_… ;
+//    `secret` est exigé si la source l'exige — voir secretUrlValide)
 //
 //   un lead          { "nom": "...", "telephone": "...", "pays": "Maroc", ... }
 //   ou plusieurs     { "leads": [ {...}, {...} ] }        (200 maximum)
@@ -18,8 +19,9 @@
 //   1. le jeton d'UNE source, de l'une des trois façons (jetonDepuisRequete).
 //      L'entreprise et le vendeur viennent du jeton, jamais du corps de la
 //      requête. C'est la seule façon qui permette de couper une source sans
-//      couper les autres. Si la source a un secret de signature, la signature
-//      est vérifiée en plus.
+//      couper les autres. Si la source l'exige, le secret d'URL (&secret=)
+//      est vérifié avec la clé (sourceDeLaRequete). Aucune signature n'est
+//      lue ni vérifiée : retirée du produit le 20/10 (_shared/import.ts).
 //
 //   2. utilisateur connecté avec `importer_csv` — l'import depuis l'écran.
 //
@@ -33,13 +35,13 @@
 //
 // QUOTA (appliquerQuota) : par source avec un jeton valide, par IP sinon.
 // Il passe APRÈS la lecture du jeton (il faut les limites de la source) et
-// AVANT tout le reste — signature, JSON, insertions.
+// AVANT tout le reste — JSON, insertions.
 import {
   adminClient, corsHeaders, getCaller, handle, HttpError, json, requireAny,
 } from '../_shared/auth.ts'
 import {
-  appliquerQuota, ContexteImport, estPingWebhook, importerLot, jetonDepuisRequete, lignesDuCorps,
-  MAX_LOT, sourceDepuisJeton, verifierSignature,
+  appliquerQuota, ContexteImport, estPingWebhook, etiquetteDepuisRequete, importerLot,
+  jetonDepuisRequete, lignesDuCorps, MAX_LOT, sourceDeLaRequete,
 } from '../_shared/import.ts'
 
 function lireJson(texte: string): Record<string, unknown> {
@@ -54,34 +56,30 @@ function lireJson(texte: string): Record<string, unknown> {
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
 
-  // Les octets bruts d'abord : la signature se vérifie sur eux, pas sur un
-  // JSON relu et ré-écrit.
-  const octets = new Uint8Array(await req.arrayBuffer())
-  const texte = new TextDecoder().decode(octets)
+  const texte = await req.text()
 
   // --- qui appelle ? (1) une source ------------------------------------------
   let ctx: ContexteImport | null = null
 
   const jeton = jetonDepuisRequete(req)
-  const source = jeton ? await sourceDepuisJeton(sb, jeton) : null
+  // Secret d'URL exigé mais absent ou faux : la source est traitée comme
+  // INCONNUE, pas comme « trouvée mais refusée ». Même 401 que pour une clé
+  // fausse, et le quota passe par l'IP : sinon qui détient la clé seule
+  // pourrait épuiser le quota de la boutique et l'arrêter.
+  const source = await sourceDeLaRequete(sb, req)
 
   // Le ping de WooCommerce passe AVANT le quota : il n'écrit rien, et un 429
   // au moment où le vendeur enregistre son webhook le ferait désactiver par
   // WooCommerce. Il exige quand même un jeton valide.
   if (source && estPingWebhook(texte)) return json({ success: true, status: 'ping' })
 
-  // Avant la signature et avant le JSON : un essai refusé pour jeton faux,
-  // signature fausse ou corps illisible compte aussi.
+  // Avant le JSON : un essai refusé pour clé ou secret faux, ou pour corps
+  // illisible, compte aussi.
   const refus = await appliquerQuota(sb, source, req.headers, texte, corsHeaders)
   if (refus) return refus
 
   if (source) {
-    // Pas de secret sur la source : pas de vérification, on ne refuse pas.
-    if (await verifierSignature(octets, req.headers, source) === false) {
-      throw new HttpError(401, 'Signature invalide')
-    }
-
-    const etiquette = new URL(req.url).searchParams.get('source')?.trim().slice(0, 100) || null
+    const etiquette = etiquetteDepuisRequete(req)
     ctx = {
       tenantId: source.tenant_id,
       sourceId: source.id,
