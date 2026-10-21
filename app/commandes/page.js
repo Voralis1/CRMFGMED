@@ -6,6 +6,10 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
+// La règle du pays, la même que import-commande (API) : un seul fichier.
+import { analyserColonnePays, resoudrePays } from '../../supabase/functions/_shared/pays.ts'
+// Les noms des colonnes, la même table que l'API.
+import { cleNormalisee, NOMS } from '../../supabase/functions/_shared/champs.ts'
 
 const TAILLE_PAGE = 50
 
@@ -73,39 +77,77 @@ function IconPlus(props) {
 // en-tête a été reconnue. Deux listes auraient fini par diverger, et l'aperçu
 // aurait menti.
 //
-// `exacts` : le nom normalisé complet. `mots` : un repli, pour les en-têtes
-// qu'on n'a pas prévues — « Unit Price (USD) » contient « price ».
+// Les NOMS acceptés viennent de supabase/functions/_shared/champs.ts — la
+// même table que l'API (import-commande) : « Cidade » passe par les deux ou
+// par aucun. `champ` dit quelle liste de cette table.
+// `mots` : un repli propre au tableur, pour les en-têtes qu'on n'a pas
+// prévues — « Unit Price (USD) » contient « price ». L'API ne l'a pas (voir
+// champs.ts : dans un JSON, « shipping_total » contient « total »).
+// `aussi` : les noms montrés au vendeur quand une colonne obligatoire manque.
 const CHAMPS_IMPORT = [
-  { cle: 'order_id',  nom: 'Order ID',     exacts: ['order_id', 'lead_id', 'leadid', 'id', 'numero_commande', 'reference'], mots: ['order_id', 'lead_id'] },
-  { cle: 'produit',   nom: 'Product',      exacts: ['produit', 'product_name', 'product_id', 'product', 'produit_nom', 'article'], mots: ['produit', 'product', 'article'] },
-  { cle: 'client',    nom: 'Customer',     exacts: ['client_nom', 'customer', 'customer_name', 'consumer_name', 'nom', 'client'], mots: ['customer', 'client', 'nom', 'name'] },
-  { cle: 'telephone', nom: 'Phone number', exacts: ['client_telephone', 'telephone', 'tel', 'phone', 'phone_number', 'numero', 'gsm', 'mobile'], mots: ['phone', 'telephone', 'tel', 'numero'], requis: true },
-  { cle: 'ville',     nom: 'City',         exacts: ['city', 'ville_zone', 'ville', 'zone'], mots: ['city', 'ville'] },
-  { cle: 'adresse',   nom: 'Address',      exacts: ['address', 'adresse', 'addresse'], mots: ['address', 'adresse'] },
-  { cle: 'quantite',  nom: 'Quantities',   exacts: ['quantite', 'quantities', 'quantity', 'qty', 'qte'], mots: ['quantit', 'qty', 'qte', 'nombre'] },
-  { cle: 'prix',      nom: 'Unit price',   exacts: ['unit_price', 'prix_unitaire', 'prix', 'price', 'montant', 'total_price'], mots: ['price', 'prix', 'montant'] },
-  { cle: 'store',     nom: 'Store',        exacts: ['store', 'store_name', 'boutique'], mots: ['store', 'boutique'] },
+  { cle: 'order_id',  nom: 'Order ID',     champ: 'lead_id',          mots: ['order_id', 'lead_id'] },
+  { cle: 'produit',   nom: 'Product',      champ: 'produit',          mots: ['produit', 'product', 'produto', 'article'] },
+  { cle: 'client',    nom: 'Customer',     champ: 'client_nom',       mots: ['customer', 'client', 'nom', 'name'] },
+  { cle: 'telephone', nom: 'Phone number', champ: 'client_telephone', mots: ['phone', 'telephone', 'telefone', 'tel', 'numero'], requis: true, aussi: 'Phone, Téléphone, Telefone, Telemóvel, Celular' },
+  // Le vendeur connaît le pays (choisi à l'écran) et la ville, rien de plus.
+  // Le pays de la ligne : nom tel qu'il est dans le CRM, ou code ISO2. Vide :
+  // le pays choisi à l'écran. Un pays inconnu bloque le fichier à l'aperçu.
+  { cle: 'pays',      nom: 'Country',      champ: 'pays',             mots: ['country', 'pays', 'pais'] },
+  { cle: 'ville',     nom: 'City',         champ: 'ville_zone',       mots: ['city', 'ville', 'cidade', 'localidade', 'town'], requis: true, aussi: 'City, Ville, Cidade, Localidade, Town, Município' },
+  // L'adresse s'écrit pendant l'appel, par l'agent. Prise si le fichier l'a.
+  { cle: 'adresse',   nom: 'Address',      champ: 'adresse',          mots: ['address', 'adresse', 'endereco', 'morada'], note: 'remplie par l\u2019agent' },
+  { cle: 'quantite',  nom: 'Quantities',   champ: 'quantite',         mots: ['quantit', 'quantidade', 'qty', 'qte', 'qtd', 'nombre'] },
+  // Le montant de TOUTE la commande, celui que le livreur encaisse. Jamais
+  // multiplié par la quantité. L'ancien en-tête « Unit price » du modèle est
+  // encore lu (mot « price ») : les vendeurs y écrivaient déjà le total
+  // (vérifié le 21/10 : 1 = 35 000, 2 = 45 000, 3 = 58 000).
+  { cle: 'prix',      nom: 'Montant à encaisser', champ: 'prix',      mots: ['encaisser', 'price', 'prix', 'preco', 'montant', 'valor'] },
+  { cle: 'store',     nom: 'Store',        champ: 'source_sheet',     mots: ['store', 'boutique', 'loja'] },
   // Pas de colonne « Notes » : un texte libre que personne ne relit n'aide ni
   // l'agent ni le livreur. Les consignes réelles passent par l'appel.
 ]
 
-// Accents retirés, minuscules, et tout ce qui n'est ni lettre ni chiffre
-// devient « _ ». L'ancienne version ne remplaçait que les espaces et les
-// tirets : une parenthèse ou un accent suffisait à ce que la colonne ne soit
-// pas trouvée, et le prix arrivait à 0 sans que rien ne le dise.
-function normaliserCle(cle) {
-  return String(cle)
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().trim()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+// Ce qu'il faut savoir pour remplir le fichier — UNE liste, rendue deux
+// fois : dans l'aide à l'écran et dans la feuille « À lire » du modèle.
+const CONSIGNES_IMPORT = [
+  { titre: 'Country', texte: 'Le pays du client : son nom tel qu\u2019il est dans le CRM (ex. Angola) ou son code à deux lettres (ex. AO). Une cellule vide prend le pays choisi à l\u2019écran avant l\u2019import. Un pays que l\u2019entreprise n\u2019a pas, ou mal écrit, bloque le fichier dès l\u2019aperçu : rien n\u2019est importé tant qu\u2019il n\u2019est pas corrigé.' },
+  { titre: 'Order ID', texte: 'Votre numéro de commande, gardé tel quel : c\u2019est celui que vous citerez au téléphone. Sans cette colonne, un numéro est généré.' },
+  { titre: 'Phone number', texte: 'Obligatoire. Plusieurs numéros séparés par | : le premier est appelé, les autres sont notés sur la commande.' },
+  { titre: 'City', texte: 'Obligatoire. La ville du client (City, Ville, Cidade, Localidade, Town sont reconnus).' },
+  { titre: 'Address', texte: 'Laissez vide si vous ne la connaissez pas : l\u2019agent l\u2019écrit pendant l\u2019appel.' },
+  { titre: 'Product', texte: 'Le code du produit au catalogue. Un seul produit par ligne : une ligne à plusieurs produits (séparés par |) ne trouve ni produit ni entrepôt, et le stock ne bouge pas à la livraison.' },
+  { titre: 'Montant à encaisser', texte: 'Le montant de TOUTE la commande, celui que le livreur encaisse, enregistré tel quel. Jamais multiplié par la quantité : 3 unités à 58 000 s\u2019écrivent 58000.' },
+]
+
+// La ligne d'exemple, la même dans l'aide à l'écran et dans « À lire ».
+// JAMAIS dans la feuille de données : une ligne oubliée devenait un faux lead
+// dans la file d'appel, et un numéro plausible, un agent finit par l'appeler.
+// D'où des valeurs que personne ne peut prendre pour une vraie commande.
+// Un seul produit, la ville et la boutique remplies, l'adresse VIDE (c'est
+// l'agent qui l'écrit), le montant de toute la commande.
+const EXEMPLE_IMPORT = {
+  'Order ID': 'NUMERO_COMMANDE',
+  'Product': 'CODE_PRODUIT',
+  'Customer': 'NOM_DU_CLIENT',
+  'Phone number': '+244 000 000 000',
+  'Country': 'Angola',
+  'City': 'VILLE_DU_CLIENT',
+  'Address': '',
+  'Quantities': '1',
+  'Montant à encaisser': '35000',
+  'Store': 'NOM_DE_LA_BOUTIQUE',
 }
+
+// Les en-têtes sont comparées sous la forme de cleNormalisee (champs.ts) :
+// accents retirés, minuscules, tout ce qui n'est ni lettre ni chiffre → « _ ».
+// Une parenthèse ou un accent ne fait plus rater une colonne.
+const normaliserCle = cleNormalisee
 
 // Quelle en-tête du fichier correspond à ce champ — ou null.
 function enteteDe(entetes, cle) {
   const champ = CHAMPS_IMPORT.find((c) => c.cle === cle)
   if (!champ) return null
-  for (const nom of champ.exacts) {
+  for (const nom of NOMS[champ.champ]) {
     const trouve = entetes.find((e) => normaliserCle(e) === nom)
     if (trouve) return trouve
   }
@@ -119,7 +161,7 @@ function enteteDe(entetes, cle) {
 function lireChamp(L, cle) {
   const champ = CHAMPS_IMPORT.find((c) => c.cle === cle)
   if (!champ) return ''
-  for (const nom of champ.exacts) {
+  for (const nom of NOMS[champ.champ]) {
     const v = L[nom]
     if (v !== undefined && v !== null && String(v).trim() !== '') return v
   }
@@ -184,20 +226,23 @@ export default function GestionCommandesPage() {
   const [historique, setHistorique] = useState([])
   const [nouveauStatut, setNouveauStatut] = useState('')
   const [changementEnCours, setChangementEnCours] = useState(false)
+  // L'adresse, corrigeable ici par qui corrige le statut : c'est souvent lui
+  // qui vient de l'avoir au téléphone. Sans ce champ, confirmer une commande
+  // sans adresse le laissait devant un refus qu'il ne pouvait pas lever.
+  const [adresseCorrigee, setAdresseCorrigee] = useState('')
+  const [erreurStatut, setErreurStatut] = useState('')
   const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
 
-  // Import : on choisit D'ABORD d'où part la marchandise. Tant que ce n'est
-  // pas fait, rien d'autre ne s'affiche.
+  // Import : on choisit D'ABORD le pays. Tant que ce n'est pas fait, rien
+  // d'autre ne s'affiche.
   //
-  // Le responsable choisit un ENTREPÔT (Casablanca, Rabat...). Le vendeur,
-  // lui, ne choisit qu'un PAYS : les entrepôts sont l'organisation interne de
-  // FGMED, un vendeur externe n'a pas à savoir combien il y en a ni où.
+  // Responsable comme vendeur, on choisit un PAYS, jamais un entrepôt : c'est
+  // la base qui trouve l'entrepôt qui tient le produit dans ce pays.
   //
   // C'est son pays qui est appliqué à toutes les lignes — et le pays décide
   // quel agent recevra les leads. Une colonne « pays » mal orthographiée dans
   // le fichier était la première cause de refus ; il n'y en a plus.
-  const [listeEntrepots, setListeEntrepots] = useState([])
-  // Pour un vendeur : les pays où il y a VRAIMENT un entrepôt. Pas tous les
+  // Les pays où il y a VRAIMENT un entrepôt. Pas tous les
   // pays — il déposerait des commandes là où rien ne peut partir — et aucun
   // nom d'entrepôt, qui ne le regarde pas.
   const [paysLivrables, setPaysLivrables] = useState([])
@@ -224,7 +269,7 @@ export default function GestionCommandesPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [creationLoading, setCreationLoading] = useState(false)
   const [newCmd, setNewCmd] = useState({
-    client_nom: '', client_telephone: '', pays_id: '', ville_zone: '',
+    client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '',
     produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: ''
   })
 
@@ -242,7 +287,7 @@ export default function GestionCommandesPage() {
   const chargerReferentiels = useCallback(async () => {
     if (!tenantKey) return
     const [{ data: agentsData }, { data: paysData }, { data: statutsData }, { data: sellersData },
-           { data: entrepotsData }, { data: paysLivrablesData }] = await Promise.all([
+           { data: paysLivrablesData }] = await Promise.all([
       supabase.from('agents').select('id, nom').eq('tenant_id', tenantKey).eq('actif', true),
       supabase.from('pays').select('id, nom, code').eq('tenant_id', tenantKey),
       supabase.from('statuts').select('*').eq('tenant_id', tenantKey),
@@ -250,24 +295,16 @@ export default function GestionCommandesPage() {
       // fichier importé. La RLS fait le tri : un responsable reçoit l'équipe,
       // un seller ne reçoit que sa propre ligne.
       supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey),
-      // Les entrepôts servent à l'import, côté responsable seulement. On ne
-      // les demande même pas pour un vendeur : ce qu'on ne charge pas ne peut
-      // pas fuiter dans la réponse réseau.
-      estSeller
-        ? Promise.resolve({ data: [] })
-        : supabase.from('entrepots').select('id, nom, pays_id, pays(nom)')
-            .eq('tenant_id', tenantKey).order('nom'),
-      // La vue ne rend que des noms de pays, jamais d'entrepôt.
-      estSeller
-        ? supabase.from('v_pays_livrables').select('pays_id, nom')
-            .eq('tenant_id', tenantKey).order('nom')
-        : Promise.resolve({ data: [] }),
+      // Les pays qui ont un entrepôt : ce qu'on choisit à l'import, vendeur
+      // comme responsable. La vue ne rend que des noms de pays, jamais
+      // d'entrepôt.
+      supabase.from('v_pays_livrables').select('pays_id, nom')
+        .eq('tenant_id', tenantKey).order('nom'),
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
     if (statutsData) setListeStatutsDB(statutsData)
     if (sellersData) setPersonnel(sellersData)
-    if (entrepotsData) setListeEntrepots(entrepotsData)
     if (paysLivrablesData) setPaysLivrables(paysLivrablesData)
   }, [tenantKey, estSeller])
 
@@ -287,18 +324,28 @@ export default function GestionCommandesPage() {
     filtresActifs.source, filtresActifs.du, filtresActifs.au,
   ].filter(Boolean).length
 
-  // Ce que le choix du haut désigne, selon qui regarde.
+  // Les colonnes obligatoires que l'aperçu n'a pas trouvées : l'import est
+  // bloqué tant qu'il en manque une.
+  const colonnesManquantes = (apercu && !apercu.erreur)
+    ? apercu.correspondances.filter((c) => c.requis && !c.entete)
+    : []
+
+  // Un fichier qui n'a que ses en-têtes (le modèle tel quel) : rien à importer.
+  const fichierSansLigne = Boolean(apercu && !apercu.erreur && apercu.nbLignes === 0)
+  // Des valeurs de Country qui ne désignent aucun pays de l'entreprise :
+  // l'import est bloqué tant qu'il en reste une.
+  const paysInconnus = (apercu && !apercu.erreur && apercu.pays) ? apercu.pays.inconnues : []
+
+  // Ce que le choix du haut désigne : un PAYS, pour tout le monde. L'entrepôt
+  // n'est jamais choisi ici : la base le déduit du produit et de ce pays
+  // (resoudre_entrepot_commande), comme pour l'API et la saisie manuelle.
+  // Choisir un entrepôt permettait de classer une commande là où le produit
+  // n'est pas rangé.
   const cibleImport = useMemo(() => {
     if (!importCibleId) return null
-    if (estSeller) {
-      const p = paysLivrables.find((x) => x.pays_id === importCibleId)
-      // Le vendeur n'a pas choisi d'entrepôt : on n'en invente pas un. Le
-      // responsable le renseignera s'il y en a plusieurs dans ce pays.
-      return p ? { pays_id: p.pays_id, entrepot_id: null, nom: p.nom, pretE: true } : null
-    }
-    const e = listeEntrepots.find((x) => x.id === importCibleId)
-    return e ? { pays_id: e.pays_id, entrepot_id: e.id, nom: e.nom, pretE: !!e.pays_id } : null
-  }, [importCibleId, estSeller, paysLivrables, listeEntrepots])
+    const p = paysLivrables.find((x) => x.pays_id === importCibleId)
+    return p ? { pays_id: p.pays_id, nom: p.nom } : null
+  }, [importCibleId, paysLivrables])
 
   // Le détail d'une commande tient sous sa ligne : on vérifie un produit ou
   // un entrepôt sans quitter la liste ni ouvrir la fiche complète.
@@ -388,6 +435,8 @@ export default function GestionCommandesPage() {
     setDetail(cmd)
     setHistorique([])
     setNouveauStatut(cmd.statut_confirmation || '')
+    setAdresseCorrigee(cmd.adresse || '')
+    setErreurStatut('')
 
     const { data } = await supabase
       .from('appels')
@@ -406,7 +455,11 @@ export default function GestionCommandesPage() {
   // leur travail. Un `update` muet aurait changé l'affichage sans que
   // personne ne sache qui, quand, ni d'où ça venait.
   async function changerStatut() {
-    if (!detail || !nouveauStatut || nouveauStatut === detail.statut_confirmation) return
+    if (!detail || !nouveauStatut) return
+    const statutChange = nouveauStatut !== detail.statut_confirmation
+    const adresseChange = adresseCorrigee.trim() !== String(detail.adresse || '').trim()
+    if (!statutChange && !adresseChange) return
+    setErreurStatut('')
 
     setChangementEnCours(true)
     const { data: { session } } = await supabase.auth.getSession()
@@ -421,19 +474,22 @@ export default function GestionCommandesPage() {
           commande_id: detail.id,
           statut: nouveauStatut,
           tenant_id: tenantKey,
+          // Envoyée avec le statut : la règle « pas de confirmation sans
+          // adresse » juge l'adresse qu'on est en train d'écrire.
+          adresse: adresseCorrigee,
           // Une correction de bureau n'est pas un appel : pas de durée, et une
           // note qui dit ce que c'est. Sans elle, l'historique laisserait
           // croire que quelqu'un a eu le client au téléphone.
-          notes: 'Statut corrigé depuis Commandes',
+          notes: statutChange ? 'Statut corrigé depuis Commandes' : 'Adresse corrigée depuis Commandes',
         }),
       },
     )
 
     const resultat = await reponse.json()
     setChangementEnCours(false)
-    if (resultat.error) { alert('Erreur : ' + resultat.error); return }
+    if (resultat.error) { setErreurStatut(resultat.error); return }
 
-    const maj = { ...detail, statut_confirmation: nouveauStatut }
+    const maj = { ...detail, statut_confirmation: nouveauStatut, adresse: adresseCorrigee.trim() || null }
     setDetail(maj)
     await ouvrirDetail(maj)
     chargerCommandes(pageActuelle)
@@ -467,8 +523,9 @@ export default function GestionCommandesPage() {
       lead_id: leadIdGeneré,
       client_nom: newCmd.client_nom,
       client_telephone: newCmd.client_telephone,
-      pays_id: newCmd.pays_id || null,
-      ville_zone: newCmd.ville_zone,
+      pays_id: newCmd.pays_id,
+      ville_zone: newCmd.ville_zone.trim(),
+      adresse: newCmd.adresse.trim() || null,
       produit: newCmd.produit,
       quantite: parseInt(newCmd.quantite) || 1,
       prix: parseFloat(newCmd.prix) || 0,
@@ -485,7 +542,7 @@ export default function GestionCommandesPage() {
       alert("Erreur lors de la création : " + error.message)
     } else {
       setIsCreateModalOpen(false)
-      setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '' })
+      setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '' })
       chargerCommandes(0)
       setPageActuelle(0)
     }
@@ -554,11 +611,11 @@ export default function GestionCommandesPage() {
     return estSeller ? (user?.id || null) : null
   }
 
+  // Le pays part VIDE, même quand il n'y en a qu'un : une valeur remplie
+  // d'office est une valeur que personne n'a lue (comme les dates, voir
+  // CLAUDE.md). Un fichier = un pays, choisi une fois.
   function ouvrirImport() {
-    const choix = estSeller
-      ? paysLivrables.map((p) => p.pays_id)
-      : listeEntrepots.map((e) => e.id)
-    setImportCibleId(choix.length === 1 ? choix[0] : '')
+    setImportCibleId('')
     setImportFichier(null)
     setApercu(null)
     setImportResultat(null)
@@ -601,29 +658,46 @@ export default function GestionCommandesPage() {
     }
   }
 
+  // Les consignes, plus la liste des pays de CETTE entreprise : la seule
+  // chose qu'une constante ne peut pas savoir. Une fonction, deux rendus
+  // (aide à l'écran, feuille « À lire »).
+  function consignesImport() {
+    const reconnus = listePays.map((p) => `${p.nom}${p.code ? ` (${p.code})` : ''}`).join(', ')
+    return [
+      ...CONSIGNES_IMPORT,
+      { titre: 'Pays de votre entreprise', texte: reconnus || 'aucun pays pour l\u2019instant' },
+    ]
+  }
+
   // Le fichier d'exemple, fabriqué à partir de la MÊME liste que celle qui
   // sert à lire les imports. Un modèle écrit à la main finirait par ne plus
   // correspondre à ce que l'application sait lire, et le vendeur suivrait un
   // modèle devenu faux.
+  //
+  // Feuille 1, la seule que l'import lit : les en-têtes, AUCUNE ligne. Il n'y
+  // a rien à oublier d'effacer ; importer le modèle tel quel dit « aucune
+  // ligne » au lieu de créer une commande fantôme.
+  // Feuille « À lire » : CONSIGNES_IMPORT puis EXEMPLE_IMPORT, les mêmes que
+  // l'aide à l'écran.
   function telechargerModele() {
     const entetes = CHAMPS_IMPORT.map((c) => c.nom)
-    const exemple = {
-      'Order ID': '1234',
-      'Product': 'PRODUIT_A|PRODUIT_B',
-      'Customer': 'Hassan Benali',
-      'Phone number': '0612345678|0699887766',
-      'City': 'Luanda',
-      'Address': 'Rua 17 de Setembro, nº 42',
-      'Quantities': '2|1',
-      'Unit price': '900|500',
-      'Store': 'Ma boutique',
-    }
-    const feuille = XLSX.utils.json_to_sheet([exemple], { header: entetes })
+    const feuille = XLSX.utils.aoa_to_sheet([entetes])
     // Des colonnes à la bonne largeur : sans ça, tout est tronqué à
     // l'ouverture et le vendeur ne lit pas ses propres en-têtes.
     feuille['!cols'] = entetes.map((e) => ({ wch: Math.max(14, e.length + 4) }))
     const classeur = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(classeur, feuille, 'Commandes')
+    const aLire = XLSX.utils.aoa_to_sheet([
+      ['Comment remplir la feuille « Commandes »'],
+      [],
+      ...consignesImport().map((c) => [c.titre, c.texte]),
+      [],
+      ['Exemple de ligne — à NE PAS recopier : écrivez vos vraies commandes sous les en-têtes de « Commandes ».'],
+      entetes,
+      CHAMPS_IMPORT.map((c) => EXEMPLE_IMPORT[c.nom] || (c.note ? `(vide — ${c.note})` : '')),
+    ])
+    aLire['!cols'] = entetes.map((_, i) => ({ wch: i === 0 ? 22 : 20 }))
+    XLSX.utils.book_append_sheet(classeur, aLire, 'À lire')
     XLSX.writeFile(classeur, 'modele_import_commandes.xlsx')
   }
 
@@ -647,11 +721,19 @@ export default function GestionCommandesPage() {
       const feuille = classeur.Sheets[classeur.SheetNames[0]]
       const lignes = XLSX.utils.sheet_to_json(feuille, { header: 1, defval: '' })
       const entetes = (lignes[0] || []).map((x) => String(x).trim()).filter(Boolean)
+      // Le pays de chaque ligne, lu MAINTENANT : un pays mal écrit doit se voir
+      // avant l'import, pas en trois cents refus après.
+      const entetePays = enteteDe(entetes, 'pays')
+      const colonnePays = entetePays ? (lignes[0] || []).findIndex((x) => String(x).trim() === entetePays) : -1
+      const lignesDonnees = lignes.slice(1).filter((r) => r.some((x) => String(x ?? '').trim() !== ''))
       setApercu({
         nbLignes: Math.max(0, lignes.length - 1),
         entetes,
+        pays: colonnePays >= 0
+          ? analyserColonnePays(lignesDonnees.map((r) => r[colonnePays]), listePays)
+          : null,
         correspondances: CHAMPS_IMPORT.map((c) => ({
-          nom: c.nom, requis: !!c.requis, entete: enteteDe(entetes, c.cle),
+          nom: c.nom, requis: !!c.requis, note: c.note || null, aussi: c.aussi || null, entete: enteteDe(entetes, c.cle),
         })),
       })
     } catch (e) {
@@ -662,15 +744,9 @@ export default function GestionCommandesPage() {
   async function lancerImport() {
     if (!importFichier || !tenantKey) return
     const cible = cibleImport
-    if (!cible) { alert(estSeller ? 'Choisissez le pays.' : 'Choisissez l\'entrepôt.'); return }
     // Sans pays, impossible de savoir quel agent doit recevoir les leads :
     // mieux vaut refuser tout de suite que les faire entrer orphelins.
-    if (!cible.pretE) {
-      setImportResultat({
-        erreur: `L'entrepôt « ${cible.nom} » n'a pas de pays. Un responsable doit le renseigner dans Paramètres avant d'importer.`,
-      })
-      return
-    }
+    if (!cible) { alert('Choisissez le pays.'); return }
 
     setImportEnCours(true)
     setImportResultat(null)
@@ -687,7 +763,7 @@ export default function GestionCommandesPage() {
       const lignes = XLSX.utils.sheet_to_json(classeur.Sheets[classeur.SheetNames[0]], { defval: '' })
 
       if (lignes.length === 0) {
-        setImportResultat({ erreur: 'Le fichier est vide.' })
+        setImportResultat({ erreur: 'Aucune ligne dans le fichier : la feuille « Commandes » n\u2019a que ses en-têtes.' })
         setImportEnCours(false)
         return
       }
@@ -701,6 +777,26 @@ export default function GestionCommandesPage() {
         const tel = separerNumeros(lireChamp(L, 'telephone'))
         if (!tel.principal) {
           refusees.push(`Ligne ${i + 2} : téléphone manquant`)
+          return null
+        }
+        // Sans ville, ni zone ni livreur : la commande n'irait nulle part.
+        if (!String(lireChamp(L, 'ville') ?? '').trim()) {
+          refusees.push(`Ligne ${i + 2} : ville manquante`)
+          return null
+        }
+        // Le pays : la colonne Country de la ligne, sinon celui de l'écran,
+        // sinon refus — la même règle que l'API (pays.ts). Sans pays, pas
+        // d'entrepôt : une commande que personne ne peut livrer n'entre pas.
+        // L'aperçu a déjà bloqué un fichier aux pays inconnus ; ce refus-ci
+        // est le filet, pas le chemin normal.
+        const pays = resoudrePays({
+          liste: listePays,
+          textes: [lireChamp(L, 'pays')],
+          defaut: cible?.pays_id ?? null,
+          manquant: 'pays manquant (colonne Country vide et aucun pays choisi à l\u2019écran)',
+        })
+        if (!pays.pays_id) {
+          refusees.push(`Ligne ${i + 2} : ${pays.motif}`)
           return null
         }
 
@@ -733,13 +829,9 @@ export default function GestionCommandesPage() {
           source_sheet: lireChamp(L, 'store') || null,
           notes,
           commentaire_1: L['commentaire_1'] || '',
-          // Le pays vient de l'entrepôt choisi, pas du fichier : un seul
-          // endroit où se tromper au lieu d'une colonne par ligne.
-          pays_id: cible.pays_id,
-          // D'où la marchandise doit sortir. Le pays en vient, mais il ne
-          // suffit pas : deux entrepôts peuvent être dans le même pays.
-          // Vide quand c'est un vendeur qui importe : il n'a choisi qu'un pays.
-          entrepot_id: cible.entrepot_id,
+          // Pas d'entrepot_id : le trigger de la base le déduit du produit et
+          // de ce pays.
+          pays_id: pays.pays_id,
           tenant_id: tenantKey,
           vendeur_id: vendeurDeLImport(),
         }
@@ -1122,7 +1214,16 @@ export default function GestionCommandesPage() {
                           <tbody>
                             <tr>
                               <td className="px-3 py-2.5 text-[#1B2632]">
-                                {cmd.entrepots?.nom || <span className="text-[#1B2632]/40">Non renseigné</span>}
+                                {/* L'entrepôt est fixé par la base (resoudre_entrepot_commande),
+                                    le même qui servira au stock à la livraison. Le vendeur ne lit
+                                    pas `entrepots` : il voit le pays, puisqu'un entrepôt = un pays
+                                    et que la règle ne prend que celui du pays du client. */}
+                                {cmd.entrepots?.nom || (cmd.entrepot_id && cmd.pays?.nom)
+                                  || <span className="text-[#1B2632]/40">Non renseigné</span>}
+                                {/* Pourquoi aucun entrepôt, ou pourquoi le stock n'a pas bougé. */}
+                                {cmd.stock_note && (
+                                  <span className="block mt-1 text-[10px] leading-snug text-[#A35139]">{cmd.stock_note}</span>
+                                )}
                               </td>
                               <td className="px-3 py-2.5 font-semibold text-[#A35139]">{cmd.produit || '—'}</td>
                               <td className="px-3 py-2.5 font-mono text-[#1B2632]">{cmd.prix ?? 0}</td>
@@ -1198,16 +1299,24 @@ export default function GestionCommandesPage() {
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Pays</label>
-                      <select value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
-                        <option value="">-- Non spécifié --</option>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Pays <span className="text-[#A35139]">*</span></label>
+                      <select required value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
+                        <option value="">-- Choisir --</option>
                         {listePays.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Ville / Adresse</label>
-                      <input type="text" value={newCmd.ville_zone} onChange={(e) => setNewCmd({...newCmd, ville_zone: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Adresse de livraison..." />
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Ville <span className="text-[#A35139]">*</span></label>
+                      <input type="text" required value={newCmd.ville_zone} onChange={(e) => setNewCmd({...newCmd, ville_zone: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Ex: Luanda" />
                     </div>
+                  </div>
+                  {/* Le vendeur ne connaît en général que le pays et la ville :
+                      l'adresse s'écrit pendant l'appel, par l'agent. */}
+                  <div>
+                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">
+                      Adresse <span className="font-normal text-[#1B2632]/50">— facultative, remplie par l&apos;agent</span>
+                    </label>
+                    <input type="text" value={newCmd.adresse} onChange={(e) => setNewCmd({...newCmd, adresse: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Laissez vide si vous ne la connaissez pas" />
                   </div>
                 </div>
 
@@ -1284,28 +1393,19 @@ export default function GestionCommandesPage() {
                     de sens : c'est lui qui décide quel agent prendra les leads. */}
                 <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
                   <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
-                    {estSeller ? 'Pays' : 'Entrepôt'} <span className="text-[#A35139]">*</span>
+                    Pays <span className="text-[#A35139]">*</span>
                   </legend>
                   <select className="cm-input" value={importCibleId}
                     onChange={(e) => { setImportCibleId(e.target.value); setImportResultat(null) }}>
-                    <option value="">{estSeller ? 'Choisissez un pays...' : 'Choisissez un entrepôt...'}</option>
-                    {estSeller
-                      ? paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)
-                      : listeEntrepots.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.nom}{e.pays?.nom ? ` — ${e.pays.nom}` : ' — pays non renseigné'}
-                          </option>
-                        ))}
+                    <option value="">Choisissez un pays...</option>
+                    {paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)}
                   </select>
-                  {!estSeller && listeEntrepots.length === 0 && (
+                  {paysLivrables.length === 0 && (
                     <p className="text-[11px] text-[#A35139] mt-2 font-medium">
-                      Aucun entrepôt. Créez-en un dans Paramètres avant d&apos;importer.
-                    </p>
-                  )}
-                  {estSeller && paysLivrables.length === 0 && (
-                    <p className="text-[11px] text-[#A35139] mt-2 font-medium">
-                      Aucun pays livrable pour l&apos;instant. Prévenez un responsable :
-                      aucun entrepôt n&apos;est rattaché à un pays.
+                      {estSeller
+                        ? <>Aucun pays livrable pour l&apos;instant. Prévenez un responsable :
+                            aucun entrepôt n&apos;est rattaché à un pays.</>
+                        : <>Aucun pays n&apos;a d&apos;entrepôt. Créez-en un dans Paramètres avant d&apos;importer.</>}
                     </p>
                   )}
                 </fieldset>
@@ -1325,58 +1425,28 @@ export default function GestionCommandesPage() {
 
                     {importAide && (
                       <div className="flex flex-col gap-3">
-                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
-                          <b>Order ID</b> est le numéro du vendeur, gardé tel quel : c&apos;est celui
-                          qu&apos;il cite au téléphone. Deux vendeurs peuvent utiliser le même sans
-                          se gêner. Sans cette colonne, un numéro est généré.
-                        </div>
-
-                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
-                          <b>Note</b> : pour plusieurs numéros, séparez-les par <code className="font-mono">|</code>.
-                          Exemple : <code className="font-mono">0708852502|0708852501</code> — le premier est appelé,
-                          les autres sont notés sur la commande.
-                        </div>
-
-                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
-                          <b>Note</b> : pour plusieurs produits dans une commande, séparez nom,
-                          quantité et prix par <code className="font-mono">|</code>. Ils sont réunis
-                          en <b>une seule commande</b> — un colis, un encaissement.
-                        </div>
-
-                        <div className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
-                          <b>Le prix est enregistré tel quel.</b> Il n&apos;est ni multiplié par la
-                          quantité, ni recalculé : ce qui est écrit dans le fichier est ce que le
-                          livreur encaissera. Plusieurs prix séparés par <code className="font-mono">|</code>
-                          sont simplement additionnés.
-                        </div>
+                        {/* Les mêmes consignes que la feuille « À lire » du modèle. */}
+                        {consignesImport().map((c) => (
+                          <div key={c.titre} className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
+                            <b>{c.titre}</b> — {c.texte}
+                          </div>
+                        ))}
 
                         <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                           <div className="overflow-x-auto">
                             <table className="w-full min-w-[760px] text-left text-xs border-collapse">
                               <thead>
                                 <tr className="bg-[#1B2632] text-white uppercase tracking-wider">
-                                  <th className="px-3 py-2.5">Order ID</th>
-                                  <th className="px-3 py-2.5">Product</th>
-                                  <th className="px-3 py-2.5">Customer</th>
-                                  <th className="px-3 py-2.5">Phone number</th>
-                                  <th className="px-3 py-2.5">City</th>
-                                  <th className="px-3 py-2.5">Address</th>
-                                  <th className="px-3 py-2.5">Quantities</th>
-                                  <th className="px-3 py-2.5">Unit price</th>
-                                  <th className="px-3 py-2.5">Store</th>
+                                  {CHAMPS_IMPORT.map((c) => <th key={c.cle} className="px-3 py-2.5">{c.nom}</th>)}
                                 </tr>
                               </thead>
                               <tbody>
                                 <tr className="bg-white">
-                                  <td className="px-3 py-3 font-mono">1234</td>
-                                  <td className="px-3 py-3 font-mono">PRODUIT_A|PRODUIT_B</td>
-                                  <td className="px-3 py-3">Hassan</td>
-                                  <td className="px-3 py-3 font-mono">06 XX XX XX XX</td>
-                                  <td className="px-3 py-3">Casablanca</td>
-                                  <td className="px-3 py-3">12 rue des Écoles</td>
-                                  <td className="px-3 py-3 font-mono">2|1</td>
-                                  <td className="px-3 py-3 font-mono">900|500</td>
-                                  <td className="px-3 py-3">Storeino</td>
+                                  {CHAMPS_IMPORT.map((c) => (
+                                    <td key={c.cle} className="px-3 py-3 font-mono">
+                                      {EXEMPLE_IMPORT[c.nom] || <span className="font-sans text-[#1B2632]/40">{c.note ? `vide — ${c.note}` : '—'}</span>}
+                                    </td>
+                                  ))}
                                 </tr>
                               </tbody>
                             </table>
@@ -1385,9 +1455,10 @@ export default function GestionCommandesPage() {
                             Les en-têtes françaises sont acceptées aussi (<code className="font-mono">nom</code>,
                             <code className="font-mono"> téléphone</code>, <code className="font-mono">ville</code>,
                             <code className="font-mono"> adresse</code>, <code className="font-mono">quantité</code>,
-                            <code className="font-mono"> prix</code>…). Les colonnes <b>pays</b> et
-                            <b> vendeur</b> du fichier sont ignorées : le pays vient de l&apos;entrepôt
-                            choisi en haut, et {estSeller
+                            <code className="font-mono"> prix</code>…), et les portugaises (<code className="font-mono">cidade</code>,
+                            <code className="font-mono"> telefone</code>, <code className="font-mono">quantidade</code>,
+                            <code className="font-mono"> valor</code>…). La colonne <b>vendeur</b> du fichier
+                            est ignorée : {estSeller
                               ? 'les commandes vous sont attribuées puisque c\u2019est vous qui importez'
                               : 'les commandes n\u2019iront à aucun vendeur, puisque vous importez en tant que responsable'}.
                           </p>
@@ -1417,8 +1488,9 @@ export default function GestionCommandesPage() {
                         </button>
                       </div>
                       <p className="text-[11px] text-[#1B2632]/50 mt-2">
-                        Le modèle contient les en-têtes attendues et une ligne d&apos;exemple.
-                        Effacez l&apos;exemple, collez vos commandes, enregistrez, importez.
+                        La feuille « Commandes » du modèle n&apos;a que les en-têtes : collez vos
+                        commandes dessous, enregistrez, importez. L&apos;exemple et les consignes sont
+                        dans la feuille « À lire ».
                       </p>
                     </fieldset>
 
@@ -1436,7 +1508,7 @@ export default function GestionCommandesPage() {
                                 <span className="font-mono font-semibold text-[#2E7D53] text-right truncate">{c.entete}</span>
                               ) : (
                                 <span className={`text-right ${c.requis ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/35'}`}>
-                                  {c.requis ? 'manquante — obligatoire' : 'non trouvée'}
+                                  {c.requis ? 'manquante — obligatoire' : c.note ? `absente — ${c.note}` : 'non trouvée'}
                                 </span>
                               )}
                             </div>
@@ -1445,6 +1517,56 @@ export default function GestionCommandesPage() {
                         <p className="px-4 pb-3 text-[11px] text-[#1B2632]/50">
                           En-têtes du fichier : <span className="font-mono">{apercu.entetes.join(' · ') || 'aucune'}</span>
                         </p>
+                        {/* Une colonne obligatoire absente, c'est 100 % des lignes
+                            refusées : on le dit ICI, avant, et on n'importe pas. */}
+                        {/* Les pays du fichier, AVANT l'import. */}
+                        {!fichierSansLigne && (
+                          <div className="px-4 py-3 border-t border-[#C9C1B1]/50 text-xs text-[#1B2632] flex flex-col gap-1">
+                            <span className="font-bold">Pays</span>
+                            {!apercu.pays ? (
+                              <span className="text-[#1B2632]/65">
+                                Pas de colonne Country : toutes les lignes prendront le pays choisi en haut
+                                {cibleImport ? ` (${cibleImport.nom})` : ''}.
+                              </span>
+                            ) : (
+                              <>
+                                {apercu.pays.valeurs.map((v) => (
+                                  <span key={v.valeur} className={v.pays_id ? 'text-[#2E7D53]' : 'text-[#A35139] font-semibold'}>
+                                    « {v.valeur} » ({v.lignes} ligne{v.lignes > 1 ? 's' : ''}) : {v.pays_id ? v.pays_nom : 'pays inconnu'}
+                                  </span>
+                                ))}
+                                {apercu.pays.vides > 0 && (
+                                  <span className="text-[#1B2632]/65">
+                                    {apercu.pays.vides} ligne{apercu.pays.vides > 1 ? 's' : ''} sans pays : elle{apercu.pays.vides > 1 ? 's' : ''} prendr{apercu.pays.vides > 1 ? 'ont' : 'a'} le pays choisi en haut
+                                    {cibleImport ? ` (${cibleImport.nom})` : ''}.
+                                  </span>
+                                )}
+                              </>
+                            )}
+                            {paysInconnus.length > 0 && (
+                              <span className="mt-1 px-3 py-2 rounded-lg bg-[#A35139]/10 border border-[#A35139]/30 text-[#A35139] font-medium">
+                                Import bloqué : {paysInconnus.length === 1 ? 'ce pays n\u2019est' : 'ces pays ne sont'} pas
+                                un pays de l&apos;entreprise. Corrigez le fichier, avec le nom ou le code à deux lettres :
+                                {' '}{listePays.map((p) => `${p.nom}${p.code ? ` (${p.code})` : ''}`).join(', ') || 'aucun pays'}.
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {fichierSansLigne && (
+                          <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs font-medium text-[#A35139]">
+                            Aucune ligne dans le fichier : la feuille « Commandes » n&apos;a que ses en-têtes. Ajoutez vos commandes sous les en-têtes.
+                          </div>
+                        )}
+                        {colonnesManquantes.length > 0 && (
+                          <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs text-[#A35139]">
+                            {colonnesManquantes.map((c) => (
+                              <p key={c.nom} className="font-medium">
+                                Colonne « {c.nom} » introuvable : sans elle, toutes les lignes seraient refusées.
+                                Renommez l&apos;en-tête du fichier ({c.aussi}) puis choisissez-le à nouveau.
+                              </p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                     {apercu?.erreur && (
@@ -1482,7 +1604,7 @@ export default function GestionCommandesPage() {
                         className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
                         Fermer
                       </button>
-                      <button onClick={lancerImport} disabled={!importFichier || importEnCours}
+                      <button onClick={lancerImport} disabled={!importFichier || importEnCours || !cibleImport || colonnesManquantes.length > 0 || fichierSansLigne || paysInconnus.length > 0}
                         className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer">
                         {importEnCours ? 'Import en cours...' : 'Importer'}
                       </button>
@@ -1643,10 +1765,23 @@ export default function GestionCommandesPage() {
                     </div>
                   )}
 
-                  {/* Corriger le statut. Passe par la même porte que l'agent,
-                      pour que la correction laisse elle aussi une trace. */}
+                  {/* Corriger le statut et l'adresse. Passe par la même porte que
+                      l'agent, pour que la correction laisse elle aussi une trace. */}
                   {peutChangerStatut && (
                     <div className="px-5 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20 flex flex-wrap items-end gap-3">
+                      <div className="w-full">
+                        <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
+                          Adresse de livraison
+                          {listeStatutsDB.some((s) => s.nom === nouveauStatut && s.declenche_assignation) && <span className="text-[#A35139]"> *</span>}
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
+                          value={adresseCorrigee}
+                          onChange={(e) => { setAdresseCorrigee(e.target.value); setErreurStatut('') }}
+                          placeholder="Rue, quartier ou repère : « près du marché, maison bleue »"
+                        />
+                      </div>
                       <div className="flex-1 min-w-[180px]">
                         <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Changer le statut</label>
                         <select
@@ -1662,11 +1797,16 @@ export default function GestionCommandesPage() {
                       </div>
                       <button
                         onClick={changerStatut}
-                        disabled={changementEnCours || !nouveauStatut || nouveauStatut === detail.statut_confirmation}
+                        disabled={changementEnCours || !nouveauStatut
+                          || (nouveauStatut === detail.statut_confirmation
+                              && adresseCorrigee.trim() === String(detail.adresse || '').trim())}
                         className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40 transition-colors cursor-pointer"
                       >
                         {changementEnCours ? 'Enregistrement...' : 'Appliquer'}
                       </button>
+                      {erreurStatut && (
+                        <p className="w-full text-xs font-medium text-[#A35139]">{erreurStatut}</p>
+                      )}
                     </div>
                   )}
                 </div>

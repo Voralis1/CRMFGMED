@@ -4,6 +4,7 @@
 import {
   adminClient, assertTenant, getCaller, handle, HttpError, json, myAgentId, readJson, requireAny,
 } from '../_shared/auth.ts'
+import { adresseManquante, MESSAGE_ADRESSE_MANQUANTE } from '../_shared/appel.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -14,7 +15,7 @@ Deno.serve(handle(async (req) => {
   const payload = await readJson(req) as Record<string, any>
   const {
     commande_id, statut, notes, date_rappel, source, duree_secondes,
-    client_nom, client_telephone, ville_zone, zone_id, pays_id, produit, quantite, prix,
+    client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, produit, quantite, prix,
   } = payload
 
   if (!commande_id || !statut || typeof statut !== 'string') {
@@ -23,7 +24,7 @@ Deno.serve(handle(async (req) => {
 
   const { data: commande } = await sb
     .from('commandes')
-    .select('id, tenant_id, agent_id, statut_confirmation')
+    .select('id, tenant_id, agent_id, statut_confirmation, adresse, pays_id')
     .eq('id', commande_id)
     .maybeSingle()
   if (!commande) throw new HttpError(404, 'Commande introuvable')
@@ -36,6 +37,20 @@ Deno.serve(handle(async (req) => {
     if (commande.agent_id && commande.agent_id !== agentId) {
       throw new HttpError(403, 'Cette commande est assignée à un autre agent')
     }
+  }
+
+  // 0. Pas de confirmation sans adresse : c'est le seul moment où quelqu'un a
+  // le client au téléphone. Vérifié AVANT d'écrire l'appel : un refus ne
+  // laisse pas de ligne d'historique « Confirmed » qui n'a jamais eu lieu.
+  // L'adresse retenue est celle envoyée avec l'appel, sinon celle déjà là.
+  const { data: statuts } = await sb
+    .from('statuts')
+    .select('nom, code, pays_id, declenche_assignation')
+    .eq('tenant_id', commande.tenant_id)
+  const paysFinal = pays_id || commande.pays_id
+  const adresseFinale = adresse !== undefined ? adresse : commande.adresse
+  if (adresseManquante(statuts ?? [], statut, paysFinal, adresseFinale)) {
+    throw new HttpError(400, MESSAGE_ADRESSE_MANQUANTE)
   }
 
   const estRappel = statut.toLowerCase().includes('rappel') || statut.toLowerCase().includes('reminder')
@@ -77,6 +92,8 @@ Deno.serve(handle(async (req) => {
   if (client_nom !== undefined) maj.client_nom = client_nom
   if (client_telephone) maj.client_telephone = client_telephone
   if (ville_zone !== undefined) maj.ville_zone = ville_zone
+  // Écrite par l'agent pendant l'appel : c'est ce que le livreur lira.
+  if (adresse !== undefined) maj.adresse = String(adresse ?? '').trim() || null
   if (zone_id !== undefined) maj.zone_id = zone_id || null
   if (pays_id) maj.pays_id = pays_id // pays_id is NOT NULL in the table: never send null
   if (produit !== undefined) maj.produit = produit

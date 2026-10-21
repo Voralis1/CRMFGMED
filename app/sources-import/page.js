@@ -32,13 +32,13 @@ const URL_FONCTION = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/impor
 const CHAMPS = [
   { champ: 'telephone', autres: ['tel', 'phone', 'mobile', 'gsm', 'billing.phone'], obligatoire: 'oui' },
   { champ: 'nom', autres: ['name', 'client', 'full_name', 'first_name + last_name'], obligatoire: 'non' },
-  { champ: 'pays', autres: ['country', 'country_code', 'billing.country'], note: 'nom ou code ISO', obligatoire: 'si vous livrez plusieurs pays' },
+  { champ: 'pays', autres: ['country', 'country_code', 'billing.country'], note: 'nom ou code ISO', obligatoire: 'si la source n\u2019a pas de pays' },
   { champ: 'ville', autres: ['city', 'zone', 'billing.city'], obligatoire: 'non' },
   { champ: 'adresse', autres: ['address', 'address_1', 'billing.address_1'], obligatoire: 'non' },
   { champ: 'produit', autres: ['product', 'article', 'line_items[].name'], obligatoire: 'non' },
   { champ: 'code', autres: ['sku', 'product_code'], note: 'reconnu avant le nom', obligatoire: 'non' },
   { champ: 'quantite', autres: ['qty', 'quantity'], obligatoire: 'non' },
-  { champ: 'prix', autres: ['price', 'total', 'montant', 'total_price'], note: 'enregistré tel quel', obligatoire: 'non' },
+  { champ: 'prix', autres: ['price', 'total', 'montant', 'montant_a_encaisser', 'valor'], note: 'montant de toute la commande, jamais multiplié par la quantité', obligatoire: 'non' },
   { champ: 'lead_id', autres: ['id', 'order_id', 'reference'], note: 'votre n° de commande', obligatoire: 'non' },
   { champ: 'notes', autres: ['note', 'commentaire', 'customer_note'], obligatoire: 'non' },
 ]
@@ -113,6 +113,8 @@ export default function SourcesImportPage() {
 
   const [sources, setSources] = useState([])
   const [sellers, setSellers] = useState([])
+  // Les pays de l'entreprise : pour nommer le pays des leads d'une source.
+  const [paysListe, setPaysListe] = useState([])
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
   const [message, setMessage] = useState({ texte: '', type: '' })
@@ -133,7 +135,7 @@ export default function SourcesImportPage() {
 
   const [etiquette, setEtiquette] = useState('WooCommerce')
   const [onglet, setOnglet] = useState('woo')
-  const [nouvelle, setNouvelle] = useState(null) // { nom, vendeur_id } : « Nouvelle source »
+  const [nouvelle, setNouvelle] = useState(null) // { nom, vendeur_id, pays_id } : « Nouvelle source »
   const [enCours, setEnCours] = useState(false)
 
   const annonce = (texte, type = 'ok') => {
@@ -152,24 +154,26 @@ export default function SourcesImportPage() {
     setChargement(true)
     setErreur('')
     try {
-      const [s, v] = await Promise.all([
+      const [s, v, p] = await Promise.all([
         // Liste explicite, jamais '*' : la base refuse les trois colonnes
         // secrètes à un utilisateur connecté, et '*' échouerait en entier.
         // Webhook seulement : aucune feuille Google n'existe (vérifié le
         // 20/10) et rien ne les lit plus (sync-sheets n'est pas déployé).
         supabase.from('sources_import')
-          .select('id, nom, actif, vendeur_id, token_apercu, created_at')
+          .select('id, nom, actif, vendeur_id, token_apercu, created_at, pays_defaut')
           .eq('tenant_id', tenantId).eq('type', 'webhook')
           .order('created_at', { ascending: true }),
         peutGererTout
           ? supabase.from('user_roles').select('user_id, nom, email')
               .eq('tenant_id', tenantId).eq('role', 'seller')
           : Promise.resolve({ data: [], error: null }),
+        supabase.from('pays').select('id, nom').eq('tenant_id', tenantId).order('nom'),
       ])
       if (s.error) throw new Error(s.error.message)
       const liste = s.data || []
       setSources(liste)
       setSellers(v.data || [])
+      setPaysListe(p.data || [])
       setSourceId((avant) => (liste.some((x) => x.id === avant) ? avant : liste[0]?.id ?? null))
     } catch (e) {
       setErreur(e?.message || 'Erreur de chargement')
@@ -240,12 +244,32 @@ export default function SourcesImportPage() {
       p_tenant: tenantId, p_nom: nouvelle.nom.trim(), p_type: 'webhook',
       p_vendeur: nouvelle.vendeur_id || null, p_secret_requis: true,
     })
+    if (error) { setEnCours(false); return annonce('Création refusée : ' + error.message, 'erreur') }
+    // Une entreprise à un seul pays : la base l'a déjà mis (tr_sources_pays_defaut).
+    // Sinon, le pays choisi dans le formulaire.
+    if (nouvelle.pays_id && data?.[0]?.id) {
+      const { error: e2 } = await supabase.from('sources_import')
+        .update({ pays_defaut: nouvelle.pays_id }).eq('id', data[0].id).eq('tenant_id', tenantId)
+      if (e2) annonce('Source créée, mais le pays n\'a pas été enregistré : ' + e2.message, 'erreur')
+    }
     setEnCours(false)
-    if (error) return annonce('Création refusée : ' + error.message, 'erreur')
     setNouvelle(null)
     annonce(`« ${data?.[0]?.nom ?? 'La source'} » est créée.`)
     await charger()
     if (data?.[0]?.id) setSourceId(data[0].id)
+  }
+
+  // --- le pays des leads ------------------------------------------------------
+  // Un lead qui n'écrit pas son pays prend celui de sa source. Seul un
+  // responsable le change (tr_sources_pays_defaut le refuse au vendeur).
+  async function changerPays(s, paysId) {
+    const { error } = await supabase.from('sources_import')
+      .update({ pays_defaut: paysId || null }).eq('id', s.id).eq('tenant_id', tenantId)
+    if (error) return annonce('Erreur : ' + error.message, 'erreur')
+    annonce(paysId
+      ? `Les leads sans pays de « ${s.nom} » iront en ${paysListe.find((x) => x.id === paysId)?.nom ?? '?'}.`
+      : `« ${s.nom} » n'a plus de pays : chaque lead devra écrire le sien.`)
+    await charger()
   }
 
   // --- couper, supprimer -------------------------------------------------------
@@ -400,11 +424,19 @@ export default function SourcesImportPage() {
                 <option value="">Sans vendeur</option>
                 {sellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
               </select>
+              {/* Un seul pays : la base le met d'office, rien à choisir. */}
+              {paysListe.length > 1 && (
+                <select className={INPUT} value={nouvelle.pays_id}
+                  onChange={(e) => setNouvelle({ ...nouvelle, pays_id: e.target.value })}>
+                  <option value="">Pays des leads...</option>
+                  {paysListe.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
+                </select>
+              )}
               <button className={BTN_PLEIN} onClick={creerSource} disabled={enCours}>Créer</button>
               <button className={BTN} onClick={() => setNouvelle(null)}>Annuler</button>
             </div>
           ) : (
-            <button className={`${BTN} sm:ml-auto`} onClick={() => setNouvelle({ nom: '', vendeur_id: '' })}>
+            <button className={`${BTN} sm:ml-auto`} onClick={() => setNouvelle({ nom: '', vendeur_id: '', pays_id: '' })}>
               + Nouvelle source
             </button>
           ))}
@@ -437,6 +469,24 @@ export default function SourcesImportPage() {
         </section>
       ) : (
         <>
+          {/* Le pays des leads : ce que la source donne à un lead qui n'écrit
+              pas le sien. Visible de tous ; seul un responsable le change. */}
+          <section className={`${CARTE} px-5 py-3.5 flex flex-wrap items-center gap-3`}>
+            <span className={LABEL}>Pays des leads</span>
+            {peutGererTout ? (
+              <select className={INPUT} value={source.pays_defaut ?? ''} onChange={(e) => changerPays(source, e.target.value)}>
+                <option value="">Aucun — chaque lead doit écrire son pays</option>
+                {paysListe.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
+              </select>
+            ) : (
+              <span className="text-sm font-semibold text-[#1B2632]">
+                {paysListe.find((x) => x.id === source.pays_defaut)?.nom
+                  || <span className="font-normal text-[#A35139]">Aucun : chaque lead doit envoyer son pays. Un responsable peut le fixer.</span>}
+              </span>
+            )}
+            <span className={AIDE}>Un lead qui envoie son pays garde le sien.</span>
+          </section>
+
           {/* 1. Identifiants API */}
           <section className={CARTE}>
             <TeteCarte titre={<>Identifiants API {!source.actif && <span className="ml-2 align-middle"><Pastille couleur={BRIQUE}>Coupée</Pastille></span>}</>}>

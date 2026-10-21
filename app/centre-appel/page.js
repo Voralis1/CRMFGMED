@@ -112,6 +112,11 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
   return { iso, nom, paysTrouve }
 }
 
+// Le texte de MESSAGE_ADRESSE_MANQUANTE (supabase/functions/_shared/appel.ts).
+// Le serveur refuse avec le sien de toute façon ; celui-ci ne sert qu'à le
+// dire avant l'envoi.
+const MESSAGE_ADRESSE = 'Ajoutez l\'adresse avant de confirmer. Un repère suffit (« près du marché, maison bleue ») : écrivez ce que le client a dit.'
+
 const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
 // Changer l'agent d'un lead, c'est arbitrer la charge de travail : le CEO lit,
 // il n'arbitre pas.
@@ -171,9 +176,12 @@ export default function CentreAppelAgent() {
   // premier contact.
   const [appelsPrecedents, setAppelsPrecedents] = useState([])
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
+  // Le refus du serveur, affiché dans le panneau : une alerte se ferme sans
+  // être lue, et l'agent ne sait plus pourquoi il est bloqué.
+  const [erreurEnvoi, setErreurEnvoi] = useState('')
 
   const [formData, setFormData] = useState({
-    source: '', client_nom: '', client_telephone: '', ville_zone: '',
+    source: '', client_nom: '', client_telephone: '', ville_zone: '', adresse: '',
     zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: '', prixUnitaire: 0
   })
 
@@ -371,7 +379,7 @@ export default function CentreAppelAgent() {
     setListeZones(zonesListDB || [])
 
     let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
-    let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, zone_id, pays_id, notes, pays(id, nom, code, devise)`)
+    let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`)
 
     // Le cloisonnement vaut POUR TOUT LE MONDE, super_admin compris.
     //
@@ -496,6 +504,7 @@ export default function CentreAppelAgent() {
 
   async function ouvrirPanneau(commande) {
     setCommandeSelectionnee(commande)
+    setErreurEnvoi('')
     setAppelsPrecedents([])
 
     // L'historique des appels de CETTE commande. Il arrive après l'ouverture :
@@ -542,6 +551,7 @@ export default function CentreAppelAgent() {
       client_nom: commande.client_nom || '',
       client_telephone: commande.client_telephone || '',
       ville_zone: commande.ville_zone || '',
+      adresse: commande.adresse || '',
       zone_id: commande.zone_id || '',
       pays_id: paysId,
       produit: commande.produit || '',
@@ -561,6 +571,13 @@ export default function CentreAppelAgent() {
       alert("Veuillez sélectionner un résultat d'appel.");
       return;
     }
+    // Même règle que confirmer-appel, dite avant l'envoi. Le serveur reste
+    // celui qui décide ; ici on évite seulement l'aller-retour.
+    if (adresseExigee) {
+      setErreurEnvoi(MESSAGE_ADRESSE)
+      return
+    }
+    setErreurEnvoi('')
 
     setEnvoiEnCours(true)
     const { data: { session } } = await supabase.auth.getSession()
@@ -594,7 +611,7 @@ export default function CentreAppelAgent() {
     setEnvoiEnCours(false)
 
     if (resultat.error) {
-      alert('Erreur : ' + resultat.error)
+      setErreurEnvoi(resultat.error)
       return
     }
 
@@ -622,6 +639,13 @@ export default function CentreAppelAgent() {
   const statutsDeLaCommande = listeStatutsDB.filter(
     (s) => !s.pays_id || !commandeSelectionnee?.pays_id || s.pays_id === commandeSelectionnee.pays_id
   )
+
+  // Le statut choisi envoie-t-il la commande au livreur ? C'est le drapeau
+  // `declenche_assignation` qui le dit, pas le mot « Confirmed ».
+  const statutEnvoieAuLivreur = statutsDeLaCommande.some(
+    (s) => s.nom === statutChoisi && s.declenche_assignation
+  )
+  const adresseExigee = statutEnvoieAuLivreur && !String(formData.adresse || '').trim()
 
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
   const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
@@ -1054,6 +1078,25 @@ export default function CentreAppelAgent() {
                   </div>
                 </div>
 
+                {/* L'adresse s'écrit ICI, pendant l'appel : le vendeur ne connaît
+                    que le pays et la ville. C'est ce que le livreur lira devant
+                    la porte. Un repère vaut une adresse. */}
+                <div>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
+                    Adresse de livraison {statutEnvoieAuLivreur && <span className="text-[#A35139]">*</span>}
+                  </label>
+                  <textarea
+                    value={formData.adresse}
+                    onChange={(e) => { setFormData({ ...formData, adresse: e.target.value }); setErreurEnvoi('') }}
+                    placeholder="Rue, quartier ou repère : « près du marché, maison bleue »"
+                    rows={2}
+                    className={`w-full border-b py-2 text-sm text-[#1B2632] bg-transparent focus:outline-none focus:border-[#FFB162] resize-none ${adresseExigee ? 'border-[#A35139]' : 'border-[#C9C1B1]'}`}
+                  />
+                  {adresseExigee && (
+                    <p className="mt-1 text-[11px] font-medium text-[#A35139]">{MESSAGE_ADRESSE}</p>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Produit</label>
@@ -1172,6 +1215,9 @@ export default function CentreAppelAgent() {
             </div>
 
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
+              {erreurEnvoi && (
+                <p className="mb-3 text-xs font-medium text-[#A35139] bg-[#A35139]/5 border border-[#A35139]/30 rounded-lg px-3 py-2">{erreurEnvoi}</p>
+              )}
               {hasPermission('traiter_appel') ? (
               <button
                 onClick={validerAppel}

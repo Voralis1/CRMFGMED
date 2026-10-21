@@ -88,6 +88,7 @@ Deno.serve(handle(async (req) => {
       mapping: source.mapping ?? {},
       etiquette,
       prefixeLead: source.prefixe_lead,
+      paysDefaut: source.pays_defaut,
     }
   } else if (jeton) {
     // Même réponse pour « jeton inconnu », « source coupée » et « entreprise
@@ -117,6 +118,8 @@ Deno.serve(handle(async (req) => {
       sourceId: null,
       vendeurParDefaut: null,
       origine: 'manuel',
+      // Pas de source, donc pas de défaut : le lead doit écrire son pays.
+      paysDefaut: null,
     }
   }
 

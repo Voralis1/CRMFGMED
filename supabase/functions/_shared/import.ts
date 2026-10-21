@@ -12,6 +12,11 @@
 // Deno comme Node savent alors retirer complètement cette ligne, ce qui rend
 // ce fichier testable hors Deno — sans quoi l'URL esm.sh bloquerait le test.
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Le pays : la même règle que l'import de fichier de l'écran Commandes.
+import { resoudrePays, sansAccents } from './pays.ts'
+// Les noms des champs : la même table que l'import de fichier de l'écran.
+import { cleNormalisee, NOMS } from './champs.ts'
+export { sansAccents }
 
 // ------------------------------------------------------------------
 // Outils
@@ -25,13 +30,7 @@ export async function sha256Hex(texte: string): Promise<string> {
 // "Téléphone ", "PHONE", "phone_number" désignent la même colonne. Un tableur
 // rempli par un vendeur ne respecte aucune convention : on ramène donc chaque
 // en-tête à une forme unique avant de chercher ce qu'elle veut dire.
-function cleNormalisee(cle: string): string {
-  return String(cle)
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // accents
-    .toLowerCase().trim()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-}
+// cleNormalisee vient de ./champs.ts (partagée avec l'écran Commandes).
 
 // Les noms acceptés pour chaque champ. Le premier qui répond gagne.
 //
@@ -39,25 +38,18 @@ function cleNormalisee(cle: string): string {
 // sont en FIN de liste : un payload plat qui répondait déjà à un nom plus haut
 // répond exactement comme avant.
 const ALIAS: Record<string, string[]> = {
-  lead_id:          ['lead_id', 'leadid', 'id', 'numero_commande', 'order_id', 'reference', 'ref'],
-  client_nom:       ['client_nom', 'nom', 'name', 'customer_name', 'full_name', 'nom_client', 'client'],
-  client_telephone: ['client_telephone', 'telephone', 'tel', 'phone', 'phone_number', 'numero', 'gsm', 'mobile'],
-  pays:             ['pays', 'country', 'pays_nom', 'pays_code', 'country_code'],
+  // Les champs que l'écran lit aussi : une seule table, ./champs.ts.
+  ...NOMS,
+  // Ceux que seule l'API lit.
   // Deuxième chance pour le pays : Shopify envoie "Senegal" ET "SN".
   pays_code:        ['pays_code', 'country_code'],
-  ville_zone:       ['ville_zone', 'ville', 'city', 'zone', 'region'],
-  adresse:          ['adresse', 'address', 'addresse', 'rue', 'address_1', 'address1'],
-  produit:          ['produit', 'product', 'article', 'item', 'offre'],
   // Le code produit — voir resoudreArticles() pour l'ordre de résolution.
   code:             ['code', 'sku', 'code_produit', 'product_code'],
-  quantite:         ['quantite', 'quantity', 'qty', 'qte', 'nombre'],
-  prix:             ['prix', 'price', 'montant', 'total', 'amount', 'cod', 'total_price'],
   vendeur:          ['vendeur', 'seller', 'vendeur_email', 'seller_email', 'vendor'],
   notes:            ['notes', 'note', 'remarque', 'remarques', 'commentaire', 'customer_note'],
   commentaire_1:    ['commentaire_1', 'commentaire1', 'comment', 'comment_1'],
   commentaire_2:    ['commentaire_2', 'commentaire2', 'comment_2'],
   source_url:       ['source_url', 'url', 'page', 'landing', 'lien'],
-  source_sheet:     ['source_sheet', 'feuille', 'sheet'],
 }
 
 // Les champs qui décrivent l'ACHETEUR. Dans une commande imbriquée ils vivent
@@ -447,11 +439,7 @@ export interface ProduitCatalogue {
   code: string | null
 }
 
-// "Crème  Éclat " → "creme eclat".
-export function sansAccents(t: string): string {
-  return String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().trim().replace(/\s+/g, ' ')
-}
+// sansAccents vient de ./pays.ts (partagé avec l'écran Commandes).
 
 // ORDRE DE RÉSOLUTION, pour chaque article :
 //
@@ -564,6 +552,10 @@ export interface ContexteImport {
   etiquette?: string | null
   // sources_import.prefixe_lead — null pour la saisie et l'import Excel.
   prefixeLead?: string | null
+  // sources_import.pays_defaut : le pays des leads qui n'en écrivent pas.
+  // null = pas de défaut → « pays manquant ». undefined = la colonne n'existe
+  // pas encore (code déployé avant pays_defaut_source.sql) : voir importerLigne.
+  paysDefaut?: string | null
 }
 
 // Chargé une fois par lot : 200 lignes ne doivent pas déclencher 400 requêtes.
@@ -636,31 +628,24 @@ export async function importerLigne(
   }
 
   // --- le pays décide quel agent reçoit le lead : il doit être juste --------
-  let paysId = lead.pays_id
+  // Champ du lead → pays par défaut de la SOURCE → refus. Voir ./pays.ts.
   const liste = cache.pays ?? []
-  if (paysId) {
-    if (!liste.some((p) => p.id === paysId)) {
-      return conclure({ statut: 'rejete', motif: 'Ce pays n\'appartient pas à cette entreprise' })
-    }
-  } else if (lead.pays) {
-    // Sans accents : Shopify écrit "Senegal", le CRM "Sénégal". Puis le code
-    // ISO2 si la source l'envoie aussi (country_code).
-    const cherche = [lead.pays, lead.pays_code].filter(Boolean).map((t) => sansAccents(t as string))
-    const trouve = cherche.map((c) => liste.find((p) =>
-      sansAccents(String(p.nom ?? '')) === c || sansAccents(String(p.code ?? '')) === c
-    )).find(Boolean)
-    if (!trouve) {
-      return conclure({
-        statut: 'rejete',
-        motif: `Pays "${lead.pays}" introuvable. Disponibles : ${liste.map((p) => p.nom).join(', ')}`,
-      })
-    }
-    paysId = trouve.id
-  } else if (liste.length === 1) {
-    paysId = liste[0].id
-  } else {
-    return conclure({ statut: 'rejete', motif: 'Pays requis : l\'entreprise en a plusieurs' })
-  }
+  // Repli TRANSITOIRE, seulement tant que la colonne pays_defaut n'existe pas
+  // (déploiement avant le SQL) : l'ancien « seul pays de l'entreprise ».
+  // Sans lui, une erreur d'ordre refuserait tous les leads de toutes les
+  // sources. Une fois pays_defaut_source.sql passé, il ne sert plus jamais.
+  const defaut = ctx.paysDefaut !== undefined
+    ? ctx.paysDefaut
+    : (liste.length === 1 ? liste[0].id : null)
+  const pays = resoudrePays({
+    liste,
+    paysId: lead.pays_id ?? null,
+    // Le code ISO seul ne compte que s'il accompagne un nom : comme avant.
+    textes: lead.pays ? [lead.pays, lead.pays_code] : [],
+    defaut,
+  })
+  if (!pays.pays_id) return conclure({ statut: 'rejete', motif: pays.motif })
+  const paysId = pays.pays_id
 
   // --- à quel vendeur appartient ce lead ------------------------------------
   let vendeurId: string | null = ctx.vendeurParDefaut
@@ -808,6 +793,8 @@ export interface Source {
   // JAMAIS la clé HMAC : voir secretUrlValide et identifiants_api.sql.
   secret_url: string | null
   secret_url_requis: boolean | null
+  // undefined tant que pays_defaut_source.sql n'est pas passé.
+  pays_defaut?: string | null
 }
 
 const COLONNES_SOURCE = 'id, tenant_id, vendeur_id, nom, type, mapping, prefixe_lead, ' +
@@ -840,6 +827,12 @@ export async function sourceDepuisJeton(sb: SupabaseClient, jeton: string): Prom
   // Une entreprise suspendue n'accepte plus rien, même avec un jeton valide.
   const { data: t } = await sb.from('tenants').select('statut').eq('id', data.tenant_id as string).maybeSingle()
   if (!t || t.statut !== 'actif') return null
+
+  // Lu À PART : si la colonne n'existe pas encore, seule cette lecture échoue.
+  // La glisser dans la requête du jeton ferait passer par le repli ci-dessus,
+  // qui coupe aussi la vérification du secret.
+  const pd = await sb.from('sources_import').select('pays_defaut').eq('id', data.id as string).maybeSingle()
+  data.pays_defaut = pd.error ? undefined : ((pd.data as Record<string, unknown> | null)?.pays_defaut ?? null)
 
   return data as unknown as Source
 }
