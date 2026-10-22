@@ -412,6 +412,8 @@ export default function GestionCommandesPage() {
 
   const produitsRefuses = (verdictsImport?.liste || []).filter((v) => !v.ok)
   const produitsEnRupture = (verdictsImport?.liste || []).filter((v) => v.cas === 'rupture')
+  // Trouvés par leur NOM et pas par leur code : avertissement, jamais un refus.
+  const produitsParNom = (verdictsImport?.liste || []).filter((v) => v.avisNom)
   const stockNonVerifie = (verdictsImport?.liste || []).some((v) => v.cas === 'stock_non_verifie')
   // Tant que le verdict n'est pas là (ou a échoué), on n'importe pas : un
   // fichier dont le catalogue n'a pas été vérifié n'entre pas.
@@ -1641,6 +1643,14 @@ export default function GestionCommandesPage() {
                               <p key={v.produit} className="font-medium">{v.message}</p>
                             ))}
                             <p className="mt-1">Ces commandes entreront quand même.</p>
+                          </div>
+                        )}
+                        {/* Reconnu par le nom : on donne le code, sans bloquer. */}
+                        {!fichierSansLigne && produitsParNom.length > 0 && (
+                          <div className="px-4 py-3 border-t border-[#FFB162]/60 bg-[#FFB162]/15 text-xs text-[#8a5a1f] flex flex-col gap-1">
+                            {produitsParNom.map((v) => (
+                              <p key={v.produit} className="font-medium">{v.avisNom}</p>
+                            ))}
                           </div>
                         )}
                         {!fichierSansLigne && stockNonVerifie && (

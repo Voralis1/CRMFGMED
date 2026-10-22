@@ -311,6 +311,11 @@ export default function ProduitsPage() {
     e.preventDefault()
     if (!tenantKey) return
     if (!formulaire.product.trim()) return annonce('Le nom du produit est obligatoire.', 'erreur')
+    // Le code est ce que le vendeur écrit dans la colonne Product de son
+    // fichier d'import : sans lui, seul le nom peut correspondre, et un nom
+    // casse sur un accent ou un espace. Obligatoire à la création ; un
+    // produit ancien sans code reste modifiable.
+    if (!idEnEdition && !formulaire.code.trim()) return annonce('Le code du produit est obligatoire.', 'erreur')
     if (formulaire.price === '' || Number.isNaN(Number(formulaire.price))) {
       return annonce('Le prix est obligatoire.', 'erreur')
     }
@@ -348,6 +353,10 @@ export default function ProduitsPage() {
 
     if (error) {
       setEnregistrement(false)
+      // idx_produits_code_unique : un code par entreprise (casse et espaces ignorés).
+      if (error.code === '23505' && String(error.message).includes('idx_produits_code_unique')) {
+        return annonce('Ce code est déjà celui d\u2019un autre produit de l\u2019entreprise.', 'erreur')
+      }
       return annonce('Enregistrement refusé : ' + error.message, 'erreur')
     }
     if (!data || data.length === 0) {
@@ -708,7 +717,9 @@ export default function ProduitsPage() {
                   return (
                     <tr key={p.id} className="hover:bg-[#EEE9DF]/40 transition-colors">
                       <td className="px-5 py-4 font-mono text-xs text-[#A35139] font-semibold whitespace-nowrap">
-                        {p.code || p.id.slice(0, 8)}
+                        {/* Pas un bout d'id à la place : il ressemblerait à un code que
+                            l'import ne reconnaîtrait pas. */}
+                        {p.code || <span className="font-sans font-normal text-[#1B2632]/40">sans code</span>}
                       </td>
                       <td className="px-5 py-4">
                         <div className="font-bold text-[#1B2632] max-w-[220px] truncate" title={p.product}>{p.product}</div>
@@ -970,8 +981,10 @@ export default function ProduitsPage() {
                     onChange={(e) => setFormulaire({ ...formulaire, description: e.target.value })} />
                 </Champ>
 
-                <Champ label="Code">
-                  <input className="ch-input font-mono" placeholder="Ajouter un code" value={formulaire.code}
+                <Champ label="Code" requis={!idEnEdition}
+                  aide="Ce que le vendeur écrit dans la colonne Product de son fichier d'import : la référence (SKU) qu'il utilise déjà dans sa boutique.">
+                  <input className="ch-input font-mono" placeholder="ex. colontea" value={formulaire.code}
+                    required={!idEnEdition}
                     onChange={(e) => setFormulaire({ ...formulaire, code: e.target.value })} />
                 </Champ>
 
