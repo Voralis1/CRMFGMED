@@ -6,8 +6,8 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
-// La règle du pays, la même que import-commande (API) : un seul fichier.
-import { analyserColonnePays, resoudrePays } from '../../supabase/functions/_shared/pays.ts'
+// Le verdict produit de l'import CSV : une fonction, vendeur et responsable.
+import { verdictProduits, commandesEnRupture } from '../../lib/verdictImport.mjs'
 // Les noms des colonnes, la même table que l'API.
 import { cleNormalisee, NOMS } from '../../supabase/functions/_shared/champs.ts'
 
@@ -89,10 +89,9 @@ const CHAMPS_IMPORT = [
   { cle: 'produit',   nom: 'Product',      champ: 'produit',          mots: ['produit', 'product', 'produto', 'article'] },
   { cle: 'client',    nom: 'Customer',     champ: 'client_nom',       mots: ['customer', 'client', 'nom', 'name'] },
   { cle: 'telephone', nom: 'Phone number', champ: 'client_telephone', mots: ['phone', 'telephone', 'telefone', 'tel', 'numero'], requis: true, aussi: 'Phone, Téléphone, Telefone, Telemóvel, Celular' },
-  // Le vendeur connaît le pays (choisi à l'écran) et la ville, rien de plus.
-  // Le pays de la ligne : nom tel qu'il est dans le CRM, ou code ISO2. Vide :
-  // le pays choisi à l'écran. Un pays inconnu bloque le fichier à l'aperçu.
-  { cle: 'pays',      nom: 'Country',      champ: 'pays',             mots: ['country', 'pays', 'pais'] },
+  // Pas de colonne pays : le pays est celui de l'entrepôt (ou du pays)
+  // choisi à l'écran. Celui qui importe sait d'où partent ses leads ; un
+  // pays par ligne n'était qu'une chose de plus à mal écrire.
   { cle: 'ville',     nom: 'City',         champ: 'ville_zone',       mots: ['city', 'ville', 'cidade', 'localidade', 'town'], requis: true, aussi: 'City, Ville, Cidade, Localidade, Town, Município' },
   // L'adresse s'écrit pendant l'appel, par l'agent. Prise si le fichier l'a.
   { cle: 'adresse',   nom: 'Address',      champ: 'adresse',          mots: ['address', 'adresse', 'endereco', 'morada'], note: 'remplie par l\u2019agent' },
@@ -110,12 +109,11 @@ const CHAMPS_IMPORT = [
 // Ce qu'il faut savoir pour remplir le fichier — UNE liste, rendue deux
 // fois : dans l'aide à l'écran et dans la feuille « À lire » du modèle.
 const CONSIGNES_IMPORT = [
-  { titre: 'Country', texte: 'Le pays du client : son nom tel qu\u2019il est dans le CRM (ex. Angola) ou son code à deux lettres (ex. AO). Une cellule vide prend le pays choisi à l\u2019écran avant l\u2019import. Un pays que l\u2019entreprise n\u2019a pas, ou mal écrit, bloque le fichier dès l\u2019aperçu : rien n\u2019est importé tant qu\u2019il n\u2019est pas corrigé.' },
   { titre: 'Order ID', texte: 'Votre numéro de commande, gardé tel quel : c\u2019est celui que vous citerez au téléphone. Sans cette colonne, un numéro est généré.' },
   { titre: 'Phone number', texte: 'Obligatoire. Plusieurs numéros séparés par | : le premier est appelé, les autres sont notés sur la commande.' },
   { titre: 'City', texte: 'Obligatoire. La ville du client (City, Ville, Cidade, Localidade, Town sont reconnus).' },
   { titre: 'Address', texte: 'Laissez vide si vous ne la connaissez pas : l\u2019agent l\u2019écrit pendant l\u2019appel.' },
-  { titre: 'Product', texte: 'Le code du produit au catalogue. Un seul produit par ligne : une ligne à plusieurs produits (séparés par |) ne trouve ni produit ni entrepôt, et le stock ne bouge pas à la livraison.' },
+  { titre: 'Product', texte: 'Le code du produit au catalogue, un seul produit par ligne. Un produit absent du catalogue bloque l\u2019import : l\u2019aperçu le nomme et dit quoi faire. Un produit en rupture de stock entre quand même — l\u2019aperçu le signale.' },
   { titre: 'Montant à encaisser', texte: 'Le montant de TOUTE la commande, celui que le livreur encaisse, enregistré tel quel. Jamais multiplié par la quantité : 3 unités à 58 000 s\u2019écrivent 58000.' },
 ]
 
@@ -130,7 +128,6 @@ const EXEMPLE_IMPORT = {
   'Product': 'CODE_PRODUIT',
   'Customer': 'NOM_DU_CLIENT',
   'Phone number': '+244 000 000 000',
-  'Country': 'Angola',
   'City': 'VILLE_DU_CLIENT',
   'Address': '',
   'Quantities': '1',
@@ -233,19 +230,28 @@ export default function GestionCommandesPage() {
   const [erreurStatut, setErreurStatut] = useState('')
   const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
 
-  // Import : on choisit D'ABORD le pays. Tant que ce n'est pas fait, rien
-  // d'autre ne s'affiche.
+  // Import : on choisit D'ABORD d'où partent les leads. Tant que ce n'est
+  // pas fait, rien d'autre ne s'affiche.
   //
-  // Responsable comme vendeur, on choisit un PAYS, jamais un entrepôt : c'est
-  // la base qui trouve l'entrepôt qui tient le produit dans ce pays.
+  // Le responsable choisit un ENTREPÔT : il sait d'où partent ces leads, c'est
+  // un fait qu'il détient, pas une chose à deviner dans le fichier. Un
+  // entrepôt = un pays : le choisir, c'est aussi choisir le pays.
+  // Le vendeur choisit un PAYS : il ne lit pas `entrepots`, comme partout
+  // ailleurs dans l'application.
   //
-  // C'est son pays qui est appliqué à toutes les lignes — et le pays décide
-  // quel agent recevra les leads. Une colonne « pays » mal orthographiée dans
-  // le fichier était la première cause de refus ; il n'y en a plus.
-  // Les pays où il y a VRAIMENT un entrepôt. Pas tous les
+  // C'est ce pays qui est appliqué à toutes les lignes — et le pays décide
+  // quel agent recevra les leads.
+  const [listeEntrepots, setListeEntrepots] = useState([])
+  // Le vendeur : les pays où il y a VRAIMENT un entrepôt. Pas tous les
   // pays — il déposerait des commandes là où rien ne peut partir — et aucun
   // nom d'entrepôt, qui ne le regarde pas.
   const [paysLivrables, setPaysLivrables] = useState([])
+  // Le catalogue de l'entreprise (lisible par tous ses comptes, vendeur
+  // compris) : sert au verdict produit de l'aperçu (voir verdictsImport).
+  const [catalogue, setCatalogue] = useState([])
+  // Le verdict produit du fichier pour le choix du haut :
+  // { etat: 'en_cours' | 'pret' | 'erreur', liste }.
+  const [verdictsImport, setVerdictsImport] = useState(null)
   const [modaleImport, setModaleImport] = useState(false)
   const [importCibleId, setImportCibleId] = useState('')
   const [importAide, setImportAide] = useState(true)
@@ -287,7 +293,7 @@ export default function GestionCommandesPage() {
   const chargerReferentiels = useCallback(async () => {
     if (!tenantKey) return
     const [{ data: agentsData }, { data: paysData }, { data: statutsData }, { data: sellersData },
-           { data: paysLivrablesData }] = await Promise.all([
+           { data: entrepotsData }, { data: paysLivrablesData }, { data: catalogueData }] = await Promise.all([
       supabase.from('agents').select('id, nom').eq('tenant_id', tenantKey).eq('actif', true),
       supabase.from('pays').select('id, nom, code').eq('tenant_id', tenantKey),
       supabase.from('statuts').select('*').eq('tenant_id', tenantKey),
@@ -295,17 +301,29 @@ export default function GestionCommandesPage() {
       // fichier importé. La RLS fait le tri : un responsable reçoit l'équipe,
       // un seller ne reçoit que sa propre ligne.
       supabase.from('user_roles').select('user_id, email, nom, role').eq('tenant_id', tenantKey),
-      // Les pays qui ont un entrepôt : ce qu'on choisit à l'import, vendeur
-      // comme responsable. La vue ne rend que des noms de pays, jamais
-      // d'entrepôt.
-      supabase.from('v_pays_livrables').select('pays_id, nom')
-        .eq('tenant_id', tenantKey).order('nom'),
+      // Les entrepôts servent à l'import, côté responsable seulement. On ne
+      // les demande même pas pour un vendeur : ce qu'on ne charge pas ne peut
+      // pas fuiter dans la réponse réseau.
+      estSeller
+        ? Promise.resolve({ data: [] })
+        : supabase.from('entrepots').select('id, nom, pays_id, pays(nom)')
+            .eq('tenant_id', tenantKey).order('nom'),
+      // La vue ne rend que des noms de pays, jamais d'entrepôt.
+      estSeller
+        ? supabase.from('v_pays_livrables').select('pays_id, nom')
+            .eq('tenant_id', tenantKey).order('nom')
+        : Promise.resolve({ data: [] }),
+      // Le catalogue, pour tout le monde : la RLS de `produits` le donne déjà
+      // au vendeur. Le stock, lui, n'est jamais chargé : voir verdictsImport.
+      supabase.from('produits').select('id, code, product').eq('tenant_id', tenantKey),
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
     if (statutsData) setListeStatutsDB(statutsData)
     if (sellersData) setPersonnel(sellersData)
+    if (entrepotsData) setListeEntrepots(entrepotsData)
     if (paysLivrablesData) setPaysLivrables(paysLivrablesData)
+    if (catalogueData) setCatalogue(catalogueData)
   }, [tenantKey, estSeller])
 
   // Les produits et les sources proposés viennent de ce qui existe vraiment
@@ -332,20 +350,91 @@ export default function GestionCommandesPage() {
 
   // Un fichier qui n'a que ses en-têtes (le modèle tel quel) : rien à importer.
   const fichierSansLigne = Boolean(apercu && !apercu.erreur && apercu.nbLignes === 0)
-  // Des valeurs de Country qui ne désignent aucun pays de l'entreprise :
-  // l'import est bloqué tant qu'il en reste une.
-  const paysInconnus = (apercu && !apercu.erreur && apercu.pays) ? apercu.pays.inconnues : []
-
-  // Ce que le choix du haut désigne : un PAYS, pour tout le monde. L'entrepôt
-  // n'est jamais choisi ici : la base le déduit du produit et de ce pays
-  // (resoudre_entrepot_commande), comme pour l'API et la saisie manuelle.
-  // Choisir un entrepôt permettait de classer une commande là où le produit
-  // n'est pas rangé.
+  // Ce que le choix du haut désigne, selon qui regarde.
+  //
+  // Responsable : l'entrepôt choisi ET son pays, tous deux écrits sur chaque
+  // commande. Un entrepôt sans pays n'est pas proposé : la commande sortirait
+  // sans pays.
+  //
+  // Vendeur : le pays seulement ; la base écrit l'entrepôt de ce pays
+  // (trigger trg_zz_entrepot_commande, entrepot_commande.sql). Un entrepôt
+  // par pays : choisir l'un ou l'autre, c'est le même geste, et les deux
+  // arrivent à la même ligne. La base refuse un entrepôt qui ne serait pas
+  // celui du pays de la commande.
   const cibleImport = useMemo(() => {
     if (!importCibleId) return null
-    const p = paysLivrables.find((x) => x.pays_id === importCibleId)
-    return p ? { pays_id: p.pays_id, nom: p.nom } : null
-  }, [importCibleId, paysLivrables])
+    if (estSeller) {
+      const p = paysLivrables.find((x) => x.pays_id === importCibleId)
+      return p ? { pays_id: p.pays_id, entrepot_id: null, nom: p.nom } : null
+    }
+    const e = listeEntrepots.find((x) => x.id === importCibleId)
+    return e && e.pays_id ? { pays_id: e.pays_id, entrepot_id: e.id, nom: e.nom } : null
+  }, [importCibleId, estSeller, paysLivrables, listeEntrepots])
+
+  // LE VERDICT PRODUIT DE L'IMPORT CSV (22/10) — l'API n'est pas concernée.
+  // La règle est dans lib/verdictImport.mjs.
+  //
+  // UN SEUL REFUS : le produit n'est pas au catalogue (ou la cellule est
+  // vide, ou deux produits sur une ligne, ou deux produits du même nom) — on
+  // ne sait pas quoi expédier. L'aperçu nomme chaque produit avec son nombre
+  // de lignes et ce qu'il faut faire, et « Importer » reste bloqué tant qu'il
+  // en reste un, comme pour une colonne City absente.
+  //
+  // LE STOCK NE REFUSE JAMAIS. Sans stock dans l'entrepôt de la commande, la
+  // ligne entre et l'aperçu l'annonce en orange ; « Importer » reste actif.
+  // Le blocage se fait à la confirmation, sur le stock de ce moment-là.
+  //
+  // Vendeur et responsable passent par le MÊME chemin : le stock est lu par
+  // la porte produits_en_stock (oui/non par produit, sans quantité), jamais
+  // par `stocks` — que le vendeur ne lit pas. Même fichier, même choix :
+  // même verdict.
+  const enStock = useCallback(async (pays, ids) => {
+    const { data, error } = await supabase.rpc('produits_en_stock', { p_pays: pays, p_produits: ids })
+    if (error) throw error
+    return Array.isArray(data) ? data.filter(Boolean) : []
+  }, [])
+
+  useEffect(() => {
+    if (!apercu?.produits || !cibleImport) { setVerdictsImport(null); return }
+    let annule = false
+    setVerdictsImport({ etat: 'en_cours', liste: [] })
+    verdictProduits({
+      produits: apercu.produits,
+      catalogue,
+      paysId: cibleImport.pays_id,
+      nomEntrepot: cibleImport.nom,
+      enStock,
+    })
+      .then((liste) => { if (!annule) setVerdictsImport({ etat: 'pret', liste }) })
+      .catch(() => { if (!annule) setVerdictsImport({ etat: 'erreur', liste: [] }) })
+    return () => { annule = true }
+  }, [apercu, cibleImport, catalogue, enStock])
+
+  const produitsRefuses = (verdictsImport?.liste || []).filter((v) => !v.ok)
+  const produitsEnRupture = (verdictsImport?.liste || []).filter((v) => v.cas === 'rupture')
+  const stockNonVerifie = (verdictsImport?.liste || []).some((v) => v.cas === 'stock_non_verifie')
+  // Tant que le verdict n'est pas là (ou a échoué), on n'importe pas : un
+  // fichier dont le catalogue n'a pas été vérifié n'entre pas.
+  const verdictBloque = Boolean(apercu && !apercu.erreur && apercu.nbLignes > 0 &&
+    (verdictsImport?.etat !== 'pret' || produitsRefuses.length > 0))
+
+  // La rupture de stock SUR LES COMMANDES, pour que le bureau la voie après
+  // l'import, pas seulement pendant. Lue en direct à chaque chargement (même
+  // porte), jamais écrite sur la commande : une note de stock serait fausse
+  // dès le premier réassort. Seulement les commandes pas encore livrées, qui
+  // ont un entrepôt (sans entrepôt, stock_note dit déjà pourquoi).
+  const [rupturesCommandes, setRupturesCommandes] = useState(() => new Set())
+  useEffect(() => {
+    const aSurveiller = commandes.filter((c) => c.entrepot_id &&
+      !['livre', 'retour', 'annule'].includes(c.statut_livraison))
+    if (aSurveiller.length === 0 || catalogue.length === 0) { setRupturesCommandes(new Set()); return }
+    let annule = false
+    commandesEnRupture({ commandes: aSurveiller, catalogue, enStock })
+      .then((r) => { if (!annule) setRupturesCommandes(r) })
+      // Une lecture ratée n'affiche rien plutôt qu'une rupture fausse.
+      .catch(() => { if (!annule) setRupturesCommandes(new Set()) })
+    return () => { annule = true }
+  }, [commandes, catalogue, enStock])
 
   // Le détail d'une commande tient sous sa ligne : on vérifie un produit ou
   // un entrepôt sans quitter la liste ni ouvrir la fiche complète.
@@ -611,9 +700,9 @@ export default function GestionCommandesPage() {
     return estSeller ? (user?.id || null) : null
   }
 
-  // Le pays part VIDE, même quand il n'y en a qu'un : une valeur remplie
+  // Le choix part VIDE, même quand il n'y en a qu'un : une valeur remplie
   // d'office est une valeur que personne n'a lue (comme les dates, voir
-  // CLAUDE.md). Un fichier = un pays, choisi une fois.
+  // CLAUDE.md). Un fichier = un entrepôt (ou un pays), choisi une fois.
   function ouvrirImport() {
     setImportCibleId('')
     setImportFichier(null)
@@ -658,15 +747,13 @@ export default function GestionCommandesPage() {
     }
   }
 
-  // Les consignes, plus la liste des pays de CETTE entreprise : la seule
-  // chose qu'une constante ne peut pas savoir. Une fonction, deux rendus
-  // (aide à l'écran, feuille « À lire »).
-  function consignesImport() {
-    const reconnus = listePays.map((p) => `${p.nom}${p.code ? ` (${p.code})` : ''}`).join(', ')
-    return [
-      ...CONSIGNES_IMPORT,
-      { titre: 'Pays de votre entreprise', texte: reconnus || 'aucun pays pour l\u2019instant' },
-    ]
+  // Le produit d'une ligne, tel que l'import l'écrira (« A|B » → « A + B »),
+  // ou '' quand la cellule est vide (l'import écrirait « Produit standard »,
+  // qui n'est au catalogue de personne). La clé du verdict produit, à
+  // l'aperçu comme à l'import.
+  function produitDeLaLigne(L) {
+    const brut = lireChamp(L, 'produit')
+    return String(brut ?? '').trim() ? fusionnerProduits(brut, '', '').produit : ''
   }
 
   // Le fichier d'exemple, fabriqué à partir de la MÊME liste que celle qui
@@ -690,7 +777,7 @@ export default function GestionCommandesPage() {
     const aLire = XLSX.utils.aoa_to_sheet([
       ['Comment remplir la feuille « Commandes »'],
       [],
-      ...consignesImport().map((c) => [c.titre, c.texte]),
+      ...CONSIGNES_IMPORT.map((c) => [c.titre, c.texte]),
       [],
       ['Exemple de ligne — à NE PAS recopier : écrivez vos vraies commandes sous les en-têtes de « Commandes ».'],
       entetes,
@@ -721,17 +808,20 @@ export default function GestionCommandesPage() {
       const feuille = classeur.Sheets[classeur.SheetNames[0]]
       const lignes = XLSX.utils.sheet_to_json(feuille, { header: 1, defval: '' })
       const entetes = (lignes[0] || []).map((x) => String(x).trim()).filter(Boolean)
-      // Le pays de chaque ligne, lu MAINTENANT : un pays mal écrit doit se voir
-      // avant l'import, pas en trois cents refus après.
-      const entetePays = enteteDe(entetes, 'pays')
-      const colonnePays = entetePays ? (lignes[0] || []).findIndex((x) => String(x).trim() === entetePays) : -1
-      const lignesDonnees = lignes.slice(1).filter((r) => r.some((x) => String(x ?? '').trim() !== ''))
+      // Les produits du fichier, lus comme l'import les lira
+      // (produitDeLaLigne), comptés par ligne : la base du verdict produit,
+      // quel que soit l'entrepôt choisi ensuite.
+      const parProduit = new Map()
+      for (const ligne of XLSX.utils.sheet_to_json(feuille, { defval: '' })) {
+        const L = {}
+        for (const cle in ligne) L[normaliserCle(cle)] = ligne[cle]
+        const produit = produitDeLaLigne(L)
+        parProduit.set(produit, (parProduit.get(produit) || 0) + 1)
+      }
       setApercu({
         nbLignes: Math.max(0, lignes.length - 1),
         entetes,
-        pays: colonnePays >= 0
-          ? analyserColonnePays(lignesDonnees.map((r) => r[colonnePays]), listePays)
-          : null,
+        produits: [...parProduit].map(([produit, n]) => ({ produit, lignes: n })),
         correspondances: CHAMPS_IMPORT.map((c) => ({
           nom: c.nom, requis: !!c.requis, note: c.note || null, aussi: c.aussi || null, entete: enteteDe(entetes, c.cle),
         })),
@@ -746,7 +836,7 @@ export default function GestionCommandesPage() {
     const cible = cibleImport
     // Sans pays, impossible de savoir quel agent doit recevoir les leads :
     // mieux vaut refuser tout de suite que les faire entrer orphelins.
-    if (!cible) { alert('Choisissez le pays.'); return }
+    if (!cible) { alert(estSeller ? 'Choisissez le pays.' : 'Choisissez l\u2019entrepôt.'); return }
 
     setImportEnCours(true)
     setImportResultat(null)
@@ -784,22 +874,14 @@ export default function GestionCommandesPage() {
           refusees.push(`Ligne ${i + 2} : ville manquante`)
           return null
         }
-        // Le pays : la colonne Country de la ligne, sinon celui de l'écran,
-        // sinon refus — la même règle que l'API (pays.ts). Sans pays, pas
-        // d'entrepôt : une commande que personne ne peut livrer n'entre pas.
-        // L'aperçu a déjà bloqué un fichier aux pays inconnus ; ce refus-ci
-        // est le filet, pas le chemin normal.
-        const pays = resoudrePays({
-          liste: listePays,
-          textes: [lireChamp(L, 'pays')],
-          defaut: cible?.pays_id ?? null,
-          manquant: 'pays manquant (colonne Country vide et aucun pays choisi à l\u2019écran)',
-        })
-        if (!pays.pays_id) {
-          refusees.push(`Ligne ${i + 2} : ${pays.motif}`)
+        // Le filet du verdict produit : « Importer » est bloqué tant qu'un
+        // produit est refusé, cette ligne ne sert que si l'aperçu a été
+        // contourné.
+        const refus = produitsRefuses.find((v) => v.produit === produitDeLaLigne(L))
+        if (refus) {
+          refusees.push(`Ligne ${i + 2} : ${refus.message}`)
           return null
         }
-
         const art = fusionnerProduits(
           lireChamp(L, 'produit'), lireChamp(L, 'quantite'), lireChamp(L, 'prix'),
         )
@@ -829,9 +911,11 @@ export default function GestionCommandesPage() {
           source_sheet: lireChamp(L, 'store') || null,
           notes,
           commentaire_1: L['commentaire_1'] || '',
-          // Pas d'entrepot_id : le trigger de la base le déduit du produit et
-          // de ce pays.
-          pays_id: pays.pays_id,
+          // Le pays et l'entrepôt du choix de l'écran, les mêmes pour toutes
+          // les lignes. Vendeur : entrepot_id null, la base met celui de
+          // ce pays (voir cibleImport).
+          pays_id: cible.pays_id,
+          entrepot_id: cible.entrepot_id,
           tenant_id: tenantKey,
           vendeur_id: vendeurDeLImport(),
         }
@@ -1220,9 +1304,15 @@ export default function GestionCommandesPage() {
                                     et que la règle ne prend que celui du pays du client. */}
                                 {cmd.entrepots?.nom || (cmd.entrepot_id && cmd.pays?.nom)
                                   || <span className="text-[#1B2632]/40">Non renseigné</span>}
-                                {/* Pourquoi aucun entrepôt, ou pourquoi le stock n'a pas bougé. */}
+                                {/* La note de stock : pays sans entrepôt, produit introuvable ou ambigu, ou livré sans stock déclaré (négatif). */}
                                 {cmd.stock_note && (
                                   <span className="block mt-1 text-[10px] leading-snug text-[#A35139]">{cmd.stock_note}</span>
+                                )}
+                                {/* Le stock de MAINTENANT (rupturesCommandes), pas celui de l'import. */}
+                                {rupturesCommandes.has(cmd.id) && (
+                                  <span className="block mt-1 text-[10px] leading-snug font-semibold text-[#8a5a1f]">
+                                    Rupture de stock dans l&apos;entrepôt {cmd.entrepots?.nom || cmd.pays?.nom}.
+                                  </span>
                                 )}
                               </td>
                               <td className="px-3 py-2.5 font-semibold text-[#A35139]">{cmd.produit || '—'}</td>
@@ -1372,7 +1462,7 @@ export default function GestionCommandesPage() {
       )}
 
 
-      {/* Import — le pays d'abord, le reste ensuite */}
+      {/* Import — l'entrepôt (ou le pays) d'abord, le reste ensuite */}
       {modaleImport && (
         <>
           <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setModaleImport(false)} />
@@ -1389,23 +1479,34 @@ export default function GestionCommandesPage() {
 
               <div className="px-8 pb-8 flex flex-col gap-5">
 
-                {/* 1. Le pays. Tant qu'il n'est pas choisi, le reste n'a pas
-                    de sens : c'est lui qui décide quel agent prendra les leads. */}
+                {/* 1. L'entrepôt (responsable) ou le pays (vendeur). Tant qu'il
+                    n'est pas choisi, le reste n'a pas de sens : c'est le pays qui
+                    décide quel agent prendra les leads. */}
                 <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
                   <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
-                    Pays <span className="text-[#A35139]">*</span>
+                    {estSeller ? 'Pays' : 'Entrepôt'} <span className="text-[#A35139]">*</span>
                   </legend>
                   <select className="cm-input" value={importCibleId}
                     onChange={(e) => { setImportCibleId(e.target.value); setImportResultat(null) }}>
-                    <option value="">Choisissez un pays...</option>
-                    {paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)}
+                    <option value="">{estSeller ? 'Choisissez un pays...' : 'Choisissez un entrepôt...'}</option>
+                    {estSeller
+                      ? paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)
+                      : listeEntrepots.map((e) => (
+                          // Sans pays, la commande sortirait sans pays : visible, pas choisissable.
+                          <option key={e.id} value={e.id} disabled={!e.pays_id}>
+                            {e.nom}{e.pays?.nom ? ` — ${e.pays.nom}` : ' — pays non renseigné'}
+                          </option>
+                        ))}
                   </select>
-                  {paysLivrables.length === 0 && (
+                  {!estSeller && listeEntrepots.length === 0 && (
                     <p className="text-[11px] text-[#A35139] mt-2 font-medium">
-                      {estSeller
-                        ? <>Aucun pays livrable pour l&apos;instant. Prévenez un responsable :
-                            aucun entrepôt n&apos;est rattaché à un pays.</>
-                        : <>Aucun pays n&apos;a d&apos;entrepôt. Créez-en un dans Paramètres avant d&apos;importer.</>}
+                      Aucun entrepôt. Créez-en un dans Paramètres avant d&apos;importer.
+                    </p>
+                  )}
+                  {estSeller && paysLivrables.length === 0 && (
+                    <p className="text-[11px] text-[#A35139] mt-2 font-medium">
+                      Aucun pays livrable pour l&apos;instant. Prévenez un responsable :
+                      aucun entrepôt n&apos;est rattaché à un pays.
                     </p>
                   )}
                 </fieldset>
@@ -1426,7 +1527,7 @@ export default function GestionCommandesPage() {
                     {importAide && (
                       <div className="flex flex-col gap-3">
                         {/* Les mêmes consignes que la feuille « À lire » du modèle. */}
-                        {consignesImport().map((c) => (
+                        {CONSIGNES_IMPORT.map((c) => (
                           <div key={c.titre} className="px-4 py-3 rounded-xl bg-[#F4F0E6] border border-[#C9C1B1]/60 text-sm text-[#1B2632]">
                             <b>{c.titre}</b> — {c.texte}
                           </div>
@@ -1457,7 +1558,8 @@ export default function GestionCommandesPage() {
                             <code className="font-mono"> adresse</code>, <code className="font-mono">quantité</code>,
                             <code className="font-mono"> prix</code>…), et les portugaises (<code className="font-mono">cidade</code>,
                             <code className="font-mono"> telefone</code>, <code className="font-mono">quantidade</code>,
-                            <code className="font-mono"> valor</code>…). La colonne <b>vendeur</b> du fichier
+                            <code className="font-mono"> valor</code>…). Pas de colonne pays : toutes les
+                            lignes prennent le pays {estSeller ? 'choisi' : 'de l\u2019entrepôt choisi'} en haut. La colonne <b>vendeur</b> du fichier
                             est ignorée : {estSeller
                               ? 'les commandes vous sont attribuées puisque c\u2019est vous qui importez'
                               : 'les commandes n\u2019iront à aucun vendeur, puisque vous importez en tant que responsable'}.
@@ -1519,37 +1621,39 @@ export default function GestionCommandesPage() {
                         </p>
                         {/* Une colonne obligatoire absente, c'est 100 % des lignes
                             refusées : on le dit ICI, avant, et on n'importe pas. */}
-                        {/* Les pays du fichier, AVANT l'import. */}
-                        {!fichierSansLigne && (
-                          <div className="px-4 py-3 border-t border-[#C9C1B1]/50 text-xs text-[#1B2632] flex flex-col gap-1">
-                            <span className="font-bold">Pays</span>
-                            {!apercu.pays ? (
-                              <span className="text-[#1B2632]/65">
-                                Pas de colonne Country : toutes les lignes prendront le pays choisi en haut
-                                {cibleImport ? ` (${cibleImport.nom})` : ''}.
-                              </span>
-                            ) : (
-                              <>
-                                {apercu.pays.valeurs.map((v) => (
-                                  <span key={v.valeur} className={v.pays_id ? 'text-[#2E7D53]' : 'text-[#A35139] font-semibold'}>
-                                    « {v.valeur} » ({v.lignes} ligne{v.lignes > 1 ? 's' : ''}) : {v.pays_id ? v.pays_nom : 'pays inconnu'}
-                                  </span>
-                                ))}
-                                {apercu.pays.vides > 0 && (
-                                  <span className="text-[#1B2632]/65">
-                                    {apercu.pays.vides} ligne{apercu.pays.vides > 1 ? 's' : ''} sans pays : elle{apercu.pays.vides > 1 ? 's' : ''} prendr{apercu.pays.vides > 1 ? 'ont' : 'a'} le pays choisi en haut
-                                    {cibleImport ? ` (${cibleImport.nom})` : ''}.
-                                  </span>
-                                )}
-                              </>
-                            )}
-                            {paysInconnus.length > 0 && (
-                              <span className="mt-1 px-3 py-2 rounded-lg bg-[#A35139]/10 border border-[#A35139]/30 text-[#A35139] font-medium">
-                                Import bloqué : {paysInconnus.length === 1 ? 'ce pays n\u2019est' : 'ces pays ne sont'} pas
-                                un pays de l&apos;entreprise. Corrigez le fichier, avec le nom ou le code à deux lettres :
-                                {' '}{listePays.map((p) => `${p.nom}${p.code ? ` (${p.code})` : ''}`).join(', ') || 'aucun pays'}.
-                              </span>
-                            )}
+                        {/* Le verdict produit, AVANT l'import : chaque produit refusé,
+                            son nombre de lignes, et quoi faire. Bloquant. */}
+                        {!fichierSansLigne && verdictsImport?.etat === 'en_cours' && (
+                          <div className="px-4 py-3 border-t border-[#C9C1B1]/50 text-xs text-[#1B2632]/60">
+                            Vérification des produits…
+                          </div>
+                        )}
+                        {!fichierSansLigne && verdictsImport?.etat === 'erreur' && (
+                          <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs font-medium text-[#A35139]">
+                            Impossible de vérifier les produits du fichier. Choisissez le fichier à nouveau ; si
+                            l&apos;erreur revient, prévenez un responsable.
+                          </div>
+                        )}
+                        {/* Le stock n'arrête rien : orange, « Importer » reste actif. */}
+                        {!fichierSansLigne && produitsEnRupture.length > 0 && (
+                          <div className="px-4 py-3 border-t border-[#FFB162]/60 bg-[#FFB162]/15 text-xs text-[#8a5a1f] flex flex-col gap-1">
+                            {produitsEnRupture.map((v) => (
+                              <p key={v.produit} className="font-medium">{v.message}</p>
+                            ))}
+                            <p className="mt-1">Ces commandes entreront quand même.</p>
+                          </div>
+                        )}
+                        {!fichierSansLigne && stockNonVerifie && (
+                          <div className="px-4 py-3 border-t border-[#C9C1B1]/50 text-xs text-[#1B2632]/60">
+                            Stock non vérifié pour l&apos;instant : l&apos;import reste possible.
+                          </div>
+                        )}
+                        {!fichierSansLigne && produitsRefuses.length > 0 && (
+                          <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs text-[#A35139] flex flex-col gap-1">
+                            {produitsRefuses.map((v) => (
+                              <p key={v.produit} className="font-medium">{v.message}</p>
+                            ))}
+                            <p className="mt-1">Import bloqué tant que ces lignes sont dans le fichier.</p>
                           </div>
                         )}
                         {fichierSansLigne && (
@@ -1604,7 +1708,7 @@ export default function GestionCommandesPage() {
                         className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
                         Fermer
                       </button>
-                      <button onClick={lancerImport} disabled={!importFichier || importEnCours || !cibleImport || colonnesManquantes.length > 0 || fichierSansLigne || paysInconnus.length > 0}
+                      <button onClick={lancerImport} disabled={!importFichier || importEnCours || !cibleImport || colonnesManquantes.length > 0 || fichierSansLigne || verdictBloque}
                         className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer">
                         {importEnCours ? 'Import en cours...' : 'Importer'}
                       </button>
