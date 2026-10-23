@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
+// Google Sheets : le code Apps Script généré, et le modèle de colonnes de
+// l'import CSV (la même liste, le même exemple).
+import { genererScriptSheets, colonnesSheets, COLONNE_STATUT, PREFIXE_SHEETS, MAX_LIGNES_SHEETS } from '../../lib/scriptGoogleSheets.mjs'
+import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/modeleImport.mjs'
 
 // « Mon API » : un seul écran — les identifiants de la source, puis comment
 // s'en servir. Une source à la fois ; un sélecteur apparaît dès qu'il y en a
@@ -51,6 +55,25 @@ const REPONSES = [
   { code: 401, couleur: BRIQUE, corps: '—', sens: 'Clé ou secret absent, faux, ou source coupée.' },
   { code: 429, couleur: BRIQUE, corps: '—', sens: 'Trop de requêtes. L’en-tête Retry-After dit quand revenir.' },
 ]
+
+// Google Sheets : ce que le vendeur doit savoir de SA feuille. Pas les
+// consignes de l'import CSV : ici pas d'aperçu (un produit inconnu entre
+// quand même) et l'Order ID est obligatoire. Seul le montant est repris tel
+// quel. `pays` : le nom du pays de la source, ou null.
+const consignesSheets = (pays) => [
+  'Une ligne part dès qu\u2019elle est complète : toutes les colonnes obligatoires remplies. Tant qu\u2019il en manque une, rien ne part, et la colonne « Statut CRM » dit laquelle.',
+  `Order ID : votre numéro de commande, un par ligne, jamais réutilisé. C\u2019est lui qui empêche une commande d\u2019entrer deux fois. Il arrive dans le CRM précédé de ${PREFIXE_SHEETS} (727 devient ${PREFIXE_SHEETS}727).`,
+  'Une correction après l\u2019envoi se fait dans le CRM, pas dans la feuille.',
+  'Product : le code du produit au catalogue. Il n\u2019y a pas d\u2019aperçu comme pour l\u2019import de fichier : un produit inconnu entre quand même, sans mouvement de stock.',
+  CONSIGNES_IMPORT.find((c) => c.titre === 'Montant à encaisser')?.texte,
+  pays
+    ? `Pas de colonne pays : toutes les commandes de cette feuille arrivent en ${pays}.`
+    : 'Pas de colonne pays : les commandes prennent le pays de la source, et cette source n\u2019en a pas. Tant qu\u2019un responsable ne l\u2019a pas fixé, chaque ligne est refusée (« pays manquant »).',
+  'Un Google Form relié à la feuille marche aussi : donnez à ses questions les noms des colonnes (Product, Customer, Phone number…). L\u2019Order ID est fait tout seul avec la date de la réponse ; ajoutez une colonne « Order ID » à droite des réponses pour le voir.',
+  'Zapier, Make, AppSheet ou toute autre application qui écrit dans la feuille : Google ne prévient pas le script, ces lignes ne partiraient pas. Branchez plutôt cette application directement sur votre API (onglet « API directe » ci-dessus).',
+  `Coller plusieurs lignes : ${MAX_LIGNES_SHEETS} au plus à la fois.`,
+  'Statut CRM « trop de requêtes, réessayez » ou « erreur réseau, réessayez » : retapez une case de la ligne (le téléphone, par exemple), elle repart. Une ligne déjà reçue répond « déjà importé » : rien n\u2019est créé deux fois.',
+].filter(Boolean)
 
 // Les composants du CRM, une fois.
 const BTN = 'px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#C9C1B1] bg-white text-[#1B2632] hover:bg-[#EEE9DF]/70 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed'
@@ -130,6 +153,10 @@ export default function SourcesImportPage() {
   const [secretUrl, setSecretUrl] = useState(null)
   // Le mot de passe est-il demandé (formulaire ouvert dans la carte) ?
   const [demandeMdp, setDemandeMdp] = useState(false)
+  // Où le formulaire s'ouvre : la carte des identifiants, ou le panneau
+  // Google Sheets. Un seul formulaire, un seul secret révélé pour les deux.
+  const [ouMdp, setOuMdp] = useState('carte')
+  const [sheetsOuvert, setSheetsOuvert] = useState(false)
   const [motDePasse, setMotDePasse] = useState('')
   const [erreurMdp, setErreurMdp] = useState('')
 
@@ -199,6 +226,7 @@ export default function SourcesImportPage() {
   useEffect(() => {
     setSecretUrl(null)
     setDemandeMdp(false)
+    setSheetsOuvert(false)
     setMotDePasse('')
     setErreurMdp('')
     chargerIdentifiants(sourceId)
@@ -301,7 +329,8 @@ export default function SourcesImportPage() {
   // Vérifié PAR LA BASE (reveler_secret_url), jamais ici par
   // signInWithPassword : celui-ci ouvrirait une nouvelle session au passage,
   // et un échec ressemblerait à un problème de connexion.
-  function demanderMotDePasse() {
+  function demanderMotDePasse(ou = 'carte') {
+    setOuMdp(ou)
     setDemandeMdp(true)
     setMotDePasse('')
     setErreurMdp('')
@@ -340,11 +369,11 @@ export default function SourcesImportPage() {
   }
 
   // Le mot de passe, dans la carte même (pas de fenêtre).
-  const formulaireMotDePasse = () => (
+  const formulaireMotDePasse = (id = 'mdp') => (
     <form className="border-t border-dashed border-[#C9C1B1] pt-2.5 flex gap-2 flex-wrap items-center"
       onSubmit={(e) => { e.preventDefault(); revelerSecretUrl() }}>
-      <label className={LABEL} htmlFor="mdp">Mot de passe</label>
-      <input id="mdp" type="password" autoComplete="current-password" autoFocus
+      <label className={LABEL} htmlFor={id}>Mot de passe</label>
+      <input id={id} type="password" autoComplete="current-password" autoFocus
         className={`${INPUT} flex-[1_1_180px] min-w-0`} placeholder="Votre mot de passe"
         value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)} />
       <button type="submit" className={BTN_PLEIN} disabled={!motDePasse}>Afficher</button>
@@ -536,7 +565,7 @@ export default function SourcesImportPage() {
                         <>
                           <span className={MASQUE}>••••••••••••••••••••••••••••••••</span>
                           {identifiants.secret_url_existe && !demandeMdp && (
-                            <button className={BTN} onClick={demanderMotDePasse}>Révéler</button>
+                            <button className={BTN} onClick={() => demanderMotDePasse('carte')}>Révéler</button>
                           )}
                         </>
                       )}
@@ -546,7 +575,7 @@ export default function SourcesImportPage() {
                         ? 'Affiché. Il se remasque au rechargement de la page.'
                         : 'Masqué. Votre mot de passe est demandé pour l’afficher.'}
                     </p>
-                    {demandeMdp && formulaireMotDePasse()}
+                    {demandeMdp && ouMdp === 'carte' && formulaireMotDePasse()}
                   </div>
                 </div>
 
@@ -672,6 +701,165 @@ export default function SourcesImportPage() {
           )}
         </div>
       </section>
+
+      {/* 3 bis. Google Sheets — la feuille pousse ses lignes vers l'API. Le
+          code porte la clé et l'URL de CETTE source ; le secret y entre par le
+          même mot de passe que la carte des identifiants. */}
+      {source && !identifiantsRefuses && identifiants && (() => {
+        const paysSource = paysListe.find((x) => x.id === source.pays_defaut)?.nom || null
+        const colonnes = colonnesSheets()
+        const requis = colonnes.filter((c) => c.obligatoire).map((c) => c.nom)
+        const facultatives = colonnes.filter((c) => !c.obligatoire).map((c) => c.nom)
+        const exemple = (nom) => EXEMPLE_IMPORT[nom] || (CHAMPS_IMPORT.find((c) => c.nom === nom)?.note ? 'vide' : '')
+        const enTetes = [...colonnes.map((c) => c.nom), COLONNE_STATUT].join('\t')
+        const codeSheets = cle ? genererScriptSheets({ urlFonction: URL_FONCTION, cle, secret: secretUrl, nomSource: source.nom }) : null
+        return (
+          <section className={CARTE}>
+            <TeteCarte titre="Google Sheets">
+              Les commandes tapées dans votre feuille Google, ou arrivées par un Google Form relié à
+              la feuille, partent seules vers le centre d&apos;appel, ligne par ligne.
+            </TeteCarte>
+            <div className="px-5 pb-5 flex flex-col gap-4">
+              <p className="text-sm">
+                <span className={LABEL}>Pays des commandes</span>{' '}
+                {paysSource
+                  ? <strong className="text-[#1B2632]">{paysSource}</strong>
+                  : <span className="font-semibold text-[#A35139]">aucun — chaque ligne sera refusée tant qu&apos;un responsable ne l&apos;a pas fixé (en haut de la page).</span>}
+              </p>
+
+              {!sheetsOuvert ? (
+                <button className={`${BTN_PLEIN} w-fit`} onClick={() => setSheetsOuvert(true)}>
+                  Générer le code d&apos;intégration
+                </button>
+              ) : !cle ? (
+                <p className="text-sm text-[#A35139]">
+                  Cette source a une ancienne clé, impossible à mettre dans le code : « Régénérer les
+                  identifiants » ci-dessus, puis revenez ici.
+                </p>
+              ) : (
+                <>
+                  {/* 1. Le format */}
+                  <div className="flex flex-col gap-2.5">
+                    <h3 className="text-base font-bold text-[#1B2632]">1. Le format de votre feuille</h3>
+                    <p className="text-sm text-[#1B2632]/75">
+                      En ligne 1, ces en-têtes (les mêmes que le modèle d&apos;import de fichier).
+                      Obligatoires : <strong>{requis.join(', ')}</strong>. {facultatives.join(' et ')} peuvent rester vides.
+                    </p>
+                    <div className="overflow-x-auto border border-[#C9C1B1]/70 rounded-xl">
+                      <table className="w-full min-w-[480px] text-left border-collapse">
+                        <thead>
+                          <tr className="bg-[#C9D3DD] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
+                            <th className="px-4 py-2.5">Colonne</th><th className="px-4 py-2.5">Obligatoire</th><th className="px-4 py-2.5">Exemple</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {colonnes.map((c, i) => (
+                            <tr key={c.nom} className={i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
+                              <td className="px-4 py-2 text-[13px]"><code className={CODE}>{c.nom}</code></td>
+                              <td className={`px-4 py-2 text-[13px] ${c.obligatoire ? 'font-semibold' : 'text-[#1B2632]/70'}`}>{c.obligatoire ? 'oui' : 'non'}</td>
+                              <td className="px-4 py-2 text-[13px] font-mono text-[#1B2632]/70">{exemple(c.nom)}</td>
+                            </tr>
+                          ))}
+                          <tr className={colonnes.length % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
+                            <td className="px-4 py-2 text-[13px]"><code className={CODE}>{COLONNE_STATUT}</code></td>
+                            <td className="px-4 py-2 text-[13px] text-[#1B2632]/70">non — recommandée</td>
+                            <td className="px-4 py-2 text-[13px] text-[#1B2632]/70">
+                              Laissez-la vide : le script y écrit la réponse du CRM (« importé », « déjà importé »,
+                              « refusé : téléphone manquant »…). Sans elle tout marche, mais une ligne refusée ne se voit pas.
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <button className={`${BTN} w-fit`} onClick={() => copier(enTetes, 'entetes')}>
+                      {copie === 'entetes' ? 'Copié ✓' : 'Copier les en-têtes'}
+                    </button>
+                    <p className={AIDE}>Collez-les dans la case A1 : chaque en-tête prend sa colonne.</p>
+                    <ul className="flex flex-col gap-1.5 list-disc pl-5 text-sm text-[#1B2632]/80">
+                      {consignesSheets(paysSource).map((t) => <li key={t}>{t}</li>)}
+                    </ul>
+                  </div>
+
+                  {/* 2. Le code */}
+                  <div className="flex flex-col gap-2.5">
+                    <h3 className="text-base font-bold text-[#1B2632]">2. Le code à coller</h3>
+                    <div className="rounded-xl border border-[#C98A2B]/50 bg-[#C98A2B]/10 px-3.5 py-3 text-[13px] text-[#1B2632]/85 flex flex-col gap-1.5">
+                      <p>
+                        <strong>Le secret API sera écrit en clair dans ce code.</strong> Toute personne qui peut
+                        modifier votre feuille peut l&apos;y lire. Ne partagez la feuille qu&apos;avec les personnes
+                        qui envoient des commandes.
+                      </p>
+                      <p>
+                        S&apos;il fuit : « Régénérer les identifiants » ci-dessus (un clic), puis recollez un
+                        nouveau code ici. L&apos;ancien cesse aussitôt de marcher — et votre boutique, si elle
+                        utilise la même source, devra recevoir la nouvelle URL.
+                      </p>
+                    </div>
+                    {!secretUrl && (
+                      <div className="flex flex-col gap-2">
+                        {!(demandeMdp && ouMdp === 'sheets') && (
+                          <button className={`${BTN_PLEIN} w-fit`} disabled={!identifiants.secret_url_existe}
+                            onClick={() => demanderMotDePasse('sheets')}>
+                            Révéler le secret
+                          </button>
+                        )}
+                        {demandeMdp && ouMdp === 'sheets' && formulaireMotDePasse('mdp-sheets')}
+                        <p className={AIDE}>Votre mot de passe est demandé. Le secret remplace alors {'« COLLEZ_ICI_LE_SECRET_API »'} dans le code.</p>
+                      </div>
+                    )}
+                    <pre className="bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl p-3.5 overflow-auto max-h-[360px] font-mono text-[11.5px] leading-relaxed text-[#1B2632]">
+                      {codeSheets}
+                    </pre>
+                    <button className={`${BTN_PLEIN} w-fit`} disabled={!secretUrl} onClick={() => copier(codeSheets, 'code')}>
+                      {copie === 'code' ? 'Copié ✓' : 'Copier le code'}
+                    </button>
+                    {!secretUrl && <p className={AIDE}>Révélez d&apos;abord le secret : sans lui, le code ne peut rien envoyer.</p>}
+                  </div>
+
+                  {/* 3. Les étapes */}
+                  <div className="flex flex-col gap-2.5">
+                    <h3 className="text-base font-bold text-[#1B2632]">3. L&apos;installer dans votre feuille</h3>
+                    <Etapes items={[
+                      <>Ouvrez votre feuille Google. En <strong>ligne 1</strong>, mettez les en-têtes du format
+                        ci-dessus (« Copier les en-têtes », puis collez dans la case <strong>A1</strong>).</>,
+                      <>Tout en haut de la feuille, dans la barre de menus (<em>Fichier, Édition, Affichage,
+                        Insertion, Format, Données, Outils, <strong>Extensions</strong>, Aide</em>), cliquez sur{' '}
+                        <strong>Extensions</strong>, puis sur <strong>Apps Script</strong>. Un nouvel onglet du
+                        navigateur s&apos;ouvre.</>,
+                      <>À gauche, sous <strong>Fichiers</strong>, cliquez sur <strong>Code.gs</strong>. Il contient
+                        déjà quelques lignes (<code className={CODE}>function myFunction()</code>…) : sélectionnez
+                        tout (<strong>Ctrl+A</strong>, ou <strong>Cmd+A</strong> sur Mac) et supprimez.</>,
+                      <>Ici, « Révéler le secret », puis « Copier le code ». Revenez dans Code.gs et collez
+                        (<strong>Ctrl+V</strong>, ou <strong>Cmd+V</strong>).</>,
+                      <><strong>Enregistrez</strong> : l&apos;icône de disquette au-dessus du code, ou{' '}
+                        <strong>Ctrl+S</strong>. À ne pas sauter : tant que ce n&apos;est pas enregistré,
+                        « installer » n&apos;apparaît pas à l&apos;étape suivante.</>,
+                      <>Au-dessus du code, à droite du bouton <strong>Exécuter</strong>, une liste affiche le nom
+                        d&apos;une fonction. Choisissez <code className={CODE}>installer</code>, puis cliquez sur{' '}
+                        <strong>Exécuter</strong>. Une seule fois : c&apos;est lui qui branche la feuille, pour
+                        la saisie à la main comme pour un Google Form.{' '}
+                        <strong>Lancez-le depuis le compte Google qui gardera l&apos;accès à cette feuille</strong> :
+                        la feuille envoie au nom de ce compte. Si cette personne perd l&apos;accès ou quitte
+                        l&apos;entreprise, plus rien ne part, sans aucun message — quelqu&apos;un d&apos;autre doit
+                        alors relancer <code className={CODE}>installer</code> depuis son propre compte.</>,
+                      <>Google demande une autorisation : <strong>Examiner les autorisations</strong>, puis
+                        choisissez votre compte. S&apos;il affiche « Google n&apos;a pas validé cette
+                        application », cliquez sur <strong>Paramètres avancés</strong>, puis{' '}
+                        <strong>Accéder à … (non sécurisé)</strong> : c&apos;est votre propre script, il ne
+                        demande que cette feuille et l&apos;envoi vers le CRM. Puis <strong>Autoriser</strong>.</>,
+                      <>En bas, le <strong>Journal d&apos;exécution</strong> affiche « Installation terminée » et
+                        ce qu&apos;il a trouvé dans chaque onglet. Un message en rouge dit ce qui ne va pas :
+                        corrigez, puis relancez <code className={CODE}>installer</code>.</>,
+                      <>Testez : tapez une ligne complète dans la feuille. La colonne « Statut CRM » affiche
+                        « importé », et la commande apparaît dans le centre d&apos;appel.</>,
+                    ]} />
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )
+      })()}
 
       {/* 4. Champs reconnus */}
       <section className={CARTE}>

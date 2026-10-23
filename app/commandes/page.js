@@ -10,6 +10,9 @@ import * as XLSX from 'xlsx'
 import { verdictProduits, commandesEnRupture } from '../../lib/verdictImport.mjs'
 // Les noms des colonnes, la même table que l'API.
 import { cleNormalisee, NOMS } from '../../supabase/functions/_shared/champs.ts'
+// Le modèle d'import (colonnes, consignes, exemple) : partagé avec la feuille
+// Google de « Mon API ».
+import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/modeleImport.mjs'
 
 const TAILLE_PAGE = 50
 
@@ -70,69 +73,6 @@ function IconPlus(props) {
       <line x1="5" y1="12" x2="19" y2="12" />
     </svg>
   )
-}
-
-// Les colonnes qu'on sait lire dans un fichier d'import, et sous quels noms.
-// Une seule liste : elle sert à lire le fichier ET à montrer à l'écran quelle
-// en-tête a été reconnue. Deux listes auraient fini par diverger, et l'aperçu
-// aurait menti.
-//
-// Les NOMS acceptés viennent de supabase/functions/_shared/champs.ts — la
-// même table que l'API (import-commande) : « Cidade » passe par les deux ou
-// par aucun. `champ` dit quelle liste de cette table.
-// `mots` : un repli propre au tableur, pour les en-têtes qu'on n'a pas
-// prévues — « Unit Price (USD) » contient « price ». L'API ne l'a pas (voir
-// champs.ts : dans un JSON, « shipping_total » contient « total »).
-// `aussi` : les noms montrés au vendeur quand une colonne obligatoire manque.
-const CHAMPS_IMPORT = [
-  { cle: 'order_id',  nom: 'Order ID',     champ: 'lead_id',          mots: ['order_id', 'lead_id'] },
-  { cle: 'produit',   nom: 'Product',      champ: 'produit',          mots: ['produit', 'product', 'produto', 'article'] },
-  { cle: 'client',    nom: 'Customer',     champ: 'client_nom',       mots: ['customer', 'client', 'nom', 'name'] },
-  { cle: 'telephone', nom: 'Phone number', champ: 'client_telephone', mots: ['phone', 'telephone', 'telefone', 'tel', 'numero'], requis: true, aussi: 'Phone, Téléphone, Telefone, Telemóvel, Celular' },
-  // Pas de colonne pays : le pays est celui de l'entrepôt (ou du pays)
-  // choisi à l'écran. Celui qui importe sait d'où partent ses leads ; un
-  // pays par ligne n'était qu'une chose de plus à mal écrire.
-  { cle: 'ville',     nom: 'City',         champ: 'ville_zone',       mots: ['city', 'ville', 'cidade', 'localidade', 'town'], requis: true, aussi: 'City, Ville, Cidade, Localidade, Town, Município' },
-  // L'adresse s'écrit pendant l'appel, par l'agent. Prise si le fichier l'a.
-  { cle: 'adresse',   nom: 'Address',      champ: 'adresse',          mots: ['address', 'adresse', 'endereco', 'morada'], note: 'remplie par l\u2019agent' },
-  { cle: 'quantite',  nom: 'Quantities',   champ: 'quantite',         mots: ['quantit', 'quantidade', 'qty', 'qte', 'qtd', 'nombre'] },
-  // Le montant de TOUTE la commande, celui que le livreur encaisse. Jamais
-  // multiplié par la quantité. L'ancien en-tête « Unit price » du modèle est
-  // encore lu (mot « price ») : les vendeurs y écrivaient déjà le total
-  // (vérifié le 21/10 : 1 = 35 000, 2 = 45 000, 3 = 58 000).
-  { cle: 'prix',      nom: 'Montant à encaisser', champ: 'prix',      mots: ['encaisser', 'price', 'prix', 'preco', 'montant', 'valor'] },
-  { cle: 'store',     nom: 'Store',        champ: 'source_sheet',     mots: ['store', 'boutique', 'loja'] },
-  // Pas de colonne « Notes » : un texte libre que personne ne relit n'aide ni
-  // l'agent ni le livreur. Les consignes réelles passent par l'appel.
-]
-
-// Ce qu'il faut savoir pour remplir le fichier — UNE liste, rendue deux
-// fois : dans l'aide à l'écran et dans la feuille « À lire » du modèle.
-const CONSIGNES_IMPORT = [
-  { titre: 'Order ID', texte: 'Votre numéro de commande, gardé tel quel : c\u2019est celui que vous citerez au téléphone. Sans cette colonne, un numéro est généré.' },
-  { titre: 'Phone number', texte: 'Obligatoire. Plusieurs numéros séparés par | : le premier est appelé, les autres sont notés sur la commande.' },
-  { titre: 'City', texte: 'Obligatoire. La ville du client (City, Ville, Cidade, Localidade, Town sont reconnus).' },
-  { titre: 'Address', texte: 'Laissez vide si vous ne la connaissez pas : l\u2019agent l\u2019écrit pendant l\u2019appel.' },
-  { titre: 'Product', texte: 'Le code du produit au catalogue, un seul produit par ligne. Un produit absent du catalogue bloque l\u2019import : l\u2019aperçu le nomme et dit quoi faire. Un produit en rupture de stock entre quand même — l\u2019aperçu le signale.' },
-  { titre: 'Montant à encaisser', texte: 'Le montant de TOUTE la commande, celui que le livreur encaisse, enregistré tel quel. Jamais multiplié par la quantité : 3 unités à 58 000 s\u2019écrivent 58000.' },
-]
-
-// La ligne d'exemple, la même dans l'aide à l'écran et dans « À lire ».
-// JAMAIS dans la feuille de données : une ligne oubliée devenait un faux lead
-// dans la file d'appel, et un numéro plausible, un agent finit par l'appeler.
-// D'où des valeurs que personne ne peut prendre pour une vraie commande.
-// Un seul produit, la ville et la boutique remplies, l'adresse VIDE (c'est
-// l'agent qui l'écrit), le montant de toute la commande.
-const EXEMPLE_IMPORT = {
-  'Order ID': 'NUMERO_COMMANDE',
-  'Product': 'CODE_PRODUIT',
-  'Customer': 'NOM_DU_CLIENT',
-  'Phone number': '+244 000 000 000',
-  'City': 'VILLE_DU_CLIENT',
-  'Address': '',
-  'Quantities': '1',
-  'Montant à encaisser': '35000',
-  'Store': 'NOM_DE_LA_BOUTIQUE',
 }
 
 // Les en-têtes sont comparées sous la forme de cleNormalisee (champs.ts) :
