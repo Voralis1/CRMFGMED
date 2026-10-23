@@ -6,6 +6,18 @@ import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
 
+// Les plus récents seulement : la liste sert à retrouver un mouvement, pas à
+// tout recharger à chaque visite.
+const MOUVEMENTS_AFFICHES = 200;
+
+const LIBELLE_MOUVEMENT = {
+  entree: "Entrée",
+  sortie: "Sortie",
+  retour_ok: "Retour client (remis en stock)",
+  retour_defaut: "Retour client (défectueux)",
+  ajustement: "Ajustement inventaire",
+};
+
 export default function ParametresAdmin() {
   const { user, tenantId, loading: authLoading } = useAuth();
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
@@ -74,6 +86,10 @@ export default function ParametresAdmin() {
 
   // --- États Stocks & Mouvements ---
   const [listeStocks, setListeStocks] = useState([]);
+  // L'historique de TOUTE l'entreprise, ici, à côté de là où on déclare un
+  // mouvement. Un produit supprimé n'a plus de fiche dans Produits : c'est le
+  // seul endroit où ses mouvements restent lisibles.
+  const [listeMouvements, setListeMouvements] = useState([]);
   const [nouveauMouvement, setNouveauMouvement] = useState({
     produit_id: "", entrepot_id: "", type_mouvement: "entree", quantite: 1, notes: ""
   });
@@ -112,6 +128,13 @@ export default function ParametresAdmin() {
 
     const { data: stocksData } = await supabase.from("stocks").select("*, produits(product, code), entrepots(nom)").eq("tenant_id", tenantId);
     if (stocksData) setListeStocks(stocksData);
+
+    // Le nom écrit sur le mouvement (produit_nom) sert quand le produit
+    // n'existe plus : produit_id est alors NULL (produits_historique_nom.sql).
+    const { data: mouvementsData } = await supabase.from("mouvements_stock")
+      .select("id, created_at, type_mouvement, quantite, notes, produit_id, produit_nom, produit_code, entrepots(nom), produits(product, code)")
+      .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(MOUVEMENTS_AFFICHES);
+    if (mouvementsData) setListeMouvements(mouvementsData);
 
     setChargement(false);
   }
@@ -265,7 +288,8 @@ export default function ParametresAdmin() {
       chargerDonnees();
     }
   }
-  async function supprimerProduit(id) { if (!tenantId || !window.confirm("Supprimer ce produit ?")) return; await supabase.from("produits").delete().eq("id", id).eq("tenant_id", tenantId); chargerDonnees(); }
+  // L'erreur n'était pas lue : un refus de la base passait pour un succès muet.
+  async function supprimerProduit(id) { if (!tenantId || !window.confirm("Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.")) return; const { error } = await supabase.from("produits").delete().eq("id", id).eq("tenant_id", tenantId); if (error) afficherMessage("Suppression refusée : " + error.message, "erreur"); else afficherMessage("Produit supprimé.", "succes"); chargerDonnees(); }
 
   // =====================================================================
   // ACTIONS ENTREPÔTS & MOUVEMENTS
@@ -1020,6 +1044,51 @@ export default function ParametresAdmin() {
                         <td className="text-right font-semibold text-red-600">{s.quantite_defectueuse}</td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-10 mb-4">
+                <h3 className="text-lg font-bold text-[#1B2632]">Historique des mouvements</h3>
+                <p className="text-sm text-[#1B2632]/60 mt-1">
+                  Tous les produits de l&apos;entreprise, supprimés compris : un mouvement garde le nom du produit.
+                  {listeMouvements.length >= MOUVEMENTS_AFFICHES && ` Les ${MOUVEMENTS_AFFICHES} plus récents.`}
+                </p>
+              </div>
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[720px]">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Produit</th>
+                      <th>SKU</th>
+                      <th>Entrepôt</th>
+                      <th>Type</th>
+                      <th className="text-right">Quantité</th>
+                      <th>Raison</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listeMouvements.length === 0 && <tr><td colSpan="7" className="text-center py-6 text-gray-400">Aucun mouvement.</td></tr>}
+                    {listeMouvements.map((m) => {
+                      // Tant que le produit existe, son nom actuel ; supprimé,
+                      // le nom écrit sur le mouvement.
+                      const supprime = !m.produits;
+                      return (
+                        <tr key={m.id} className="hover:bg-[#EEE9DF]/20">
+                          <td className="whitespace-nowrap text-sm text-gray-700">{m.created_at ? new Date(m.created_at).toLocaleString("fr-FR") : "—"}</td>
+                          <td className="font-bold text-[#1B2632]">
+                            {(supprime ? m.produit_nom : m.produits.product) || "—"}
+                            {supprime && <span className="ml-2 text-[11px] font-semibold text-[#A35139]">produit supprimé</span>}
+                          </td>
+                          <td><span className="font-mono text-xs text-[#A35139] font-semibold">{(supprime ? m.produit_code : m.produits.code) || ""}</span></td>
+                          <td className="font-medium text-gray-700">{m.entrepots?.nom || "—"}</td>
+                          <td className="text-sm text-gray-700">{LIBELLE_MOUVEMENT[m.type_mouvement] || m.type_mouvement}</td>
+                          <td className="text-right font-bold text-[#1B2632]">{m.quantite}</td>
+                          <td className="text-sm text-gray-600">{m.notes || ""}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

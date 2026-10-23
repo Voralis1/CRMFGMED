@@ -443,7 +443,7 @@ export default function ProduitsPage() {
   }
 
   async function supprimer(p) {
-    if (!window.confirm(`Supprimer « ${p.product} » ?\n\nLes commandes passées gardent son nom, mais il disparaîtra du catalogue. Le désactiver est souvent préférable.`)) return
+    if (!window.confirm(`Supprimer « ${p.product} » ?\n\nSes commandes, ses mouvements de stock et ses lignes d\u2019expédition gardent son nom. Ses lignes de stock disparaissent avec lui.`)) return
     const { error } = await supabase.from('produits').delete().eq('id', p.id).eq('tenant_id', tenantKey)
     if (error) return annonce('Suppression refusée : ' + error.message, 'erreur')
     annonce('Produit supprimé.', 'succes')

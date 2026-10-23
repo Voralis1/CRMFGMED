@@ -165,7 +165,7 @@ export default function ExpeditionsPage() {
     // La RLS ne renvoie que les lignes des expéditions déjà visibles, le compte
     // est donc juste.
     const { data: toutesLignes } = await supabase
-      .from('expeditions_produits').select('expedition_id, produit_id, quantite, quantite_recue')
+      .from('expeditions_produits').select('expedition_id, produit_id, produit_nom, quantite, quantite_recue, recu_sans_mouvement')
       .eq('tenant_id', tenantKey)
 
     const nomDuProduit = new Map((prodDB || []).map((p) => [p.id, p.product]))
@@ -174,12 +174,20 @@ export default function ExpeditionsPage() {
       compte[l.expedition_id] = compte[l.expedition_id] || { articles: 0, pieces: 0, lignes: [] }
       compte[l.expedition_id].articles += 1
       compte[l.expedition_id].pieces += l.quantite || 0
+      // Produit supprimé : produit_id est NULL, la base a gardé son nom
+      // (produits_historique_nom.sql).
+      const supprime = !l.produit_id || !nomDuProduit.has(l.produit_id)
       compte[l.expedition_id].lignes.push({
         // `prodDB` et non `catalogue` : un produit passé inactif reste le nom
         // de ce qui a été expédié. Le filtrer ici effacerait l'historique.
-        nom: nomDuProduit.get(l.produit_id) || 'Produit supprimé',
+        nom: (supprime ? l.produit_nom : nomDuProduit.get(l.produit_id)) || 'Produit inconnu',
         quantite: l.quantite || 0,
         recue: l.quantite_recue,
+        supprime,
+        // Pas encore reçue, ou reçue alors que le produit était déjà supprimé :
+        // la marchandise n'est pas (ou ne sera pas) dans le compte de
+        // l'entrepôt. Supprimé APRÈS la réception, son mouvement existe.
+        sansMouvement: supprime && (l.quantite_recue == null || l.recu_sans_mouvement),
       })
     }
     setNbProduits(compte)
@@ -268,9 +276,15 @@ export default function ExpeditionsPage() {
     })
     const { data } = await supabase
       .from('expeditions_produits')
-      .select('produit_id, quantite')
+      .select('produit_id, produit_nom, quantite, quantite_recue, recu_sans_mouvement')
       .eq('expedition_id', e.id)
-    setLignes((data || []).map((l) => ({ produit_id: l.produit_id, quantite: l.quantite })))
+    // Une ligne dont le produit a été supprimé reste telle quelle : affichée,
+    // ni modifiable ni réécrite à l'enregistrement.
+    setLignes((data || []).map((l) => ({
+      produit_id: l.produit_id, quantite: l.quantite,
+      supprime: !l.produit_id, nom: l.produit_nom,
+      sansMouvement: !l.produit_id && (l.quantite_recue == null || l.recu_sans_mouvement),
+    })))
     setIdEnEdition(e.id)
     setModale(true)
   }
@@ -288,8 +302,9 @@ export default function ExpeditionsPage() {
     setRechercheProduit('')
   }
 
-  function nomProduit(id) {
-    const p = catalogue.find((x) => x.id === id)
+  function nomProduit(l) {
+    if (l.supprime) return l.nom || 'Produit inconnu'
+    const p = catalogue.find((x) => x.id === l.produit_id)
     return p ? p.product : 'Produit retiré du catalogue'
   }
 
@@ -337,17 +352,22 @@ export default function ExpeditionsPage() {
     // et un écart de calcul ici laisserait un produit fantôme dans une
     // expédition confirmée.
     const expeditionId = data[0].id
+    //
+    // Sauf les lignes d'un produit supprimé : elles ne sont ni effacées ni
+    // réécrites (la base refuserait d'en recréer une sans produit).
     const { error: erreurPurge } = await supabase
       .from('expeditions_produits').delete().eq('expedition_id', expeditionId)
+      .not('produit_id', 'is', null)
 
     if (erreurPurge) {
       setEnregistrement(false)
       return annonce("Expédition enregistrée, mais ses produits n'ont pas pu être mis à jour : " + erreurPurge.message, 'erreur')
     }
 
-    if (lignes.length > 0) {
+    const aEcrire = lignes.filter((l) => !l.supprime)
+    if (aEcrire.length > 0) {
       const { error: erreurLignes } = await supabase.from('expeditions_produits').insert(
-        lignes.map((l) => ({
+        aEcrire.map((l) => ({
           tenant_id: tenantKey,
           expedition_id: expeditionId,
           produit_id: l.produit_id,
@@ -403,9 +423,13 @@ export default function ExpeditionsPage() {
   // navigateur, une coupure au milieu laisserait une expédition confirmée avec
   // un stock vide, et personne ne saurait lequel des deux est vrai.
   async function confirmerEtRecevoir(e) {
+    const sansStock = (nbProduits[e.id]?.lignes || []).filter((l) => l.sansMouvement)
     if (!window.confirm(
       `Confirmer ${e.reference} ?\n\n`
-      + "Les quantités déclarées entrent en stock, et cela ne se défait pas.",
+      + "Les quantités déclarées entrent en stock, et cela ne se défait pas."
+      + (sansStock.length
+        ? '\n\n' + sansStock.map((l) => `${l.nom} ×${l.quantite} : produit supprimé — aucun mouvement de stock.`).join('\n')
+        : ''),
     )) return
 
     setReceptionEnvoi(true)
@@ -828,7 +852,14 @@ export default function ExpeditionsPage() {
                               {contenu.lignes.map((l, i) => (
                                 <tr key={i}>
                                   <td className="px-4 py-2.5 text-[#1B2632]/75">{destinationNom(e) || '—'}</td>
-                                  <td className="px-4 py-2.5 font-semibold text-[#1B2632]">{l.nom}</td>
+                                  <td className="px-4 py-2.5 font-semibold text-[#1B2632]">
+                                    {l.nom}
+                                    {l.supprime && (
+                                      <div className="text-[11px] font-semibold text-[#A35139] mt-0.5">
+                                        {l.sansMouvement ? 'produit supprimé — aucun mouvement de stock' : 'produit supprimé'}
+                                      </div>
+                                    )}
+                                  </td>
                                   <td className="px-4 py-2.5 text-right font-mono">{l.quantite}</td>
                                   {/* `null` veut dire « pas encore confirmée », ce qui
                                       n'est pas la même chose que « zéro reçu ». */}
@@ -1135,9 +1166,21 @@ export default function ExpeditionsPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#C9C1B1]/30">
-                          {lignes.map((l) => (
+                          {lignes.map((l, i) => l.supprime ? (
+                            // Produit supprimé : la ligne reste telle quelle.
+                            <tr key={`supprime-${i}`}>
+                              <td className="px-4 py-2.5 font-medium text-[#1B2632]">
+                                {nomProduit(l)}
+                                <div className="text-[11px] font-semibold text-[#A35139] mt-0.5">
+                                  {l.sansMouvement ? 'produit supprimé — aucun mouvement de stock' : 'produit supprimé'}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2.5 font-mono text-[#1B2632]/70">{l.quantite}</td>
+                              <td className="px-4 py-2" />
+                            </tr>
+                          ) : (
                             <tr key={l.produit_id}>
-                              <td className="px-4 py-2.5 font-medium text-[#1B2632]">{nomProduit(l.produit_id)}</td>
+                              <td className="px-4 py-2.5 font-medium text-[#1B2632]">{nomProduit(l)}</td>
                               <td className="px-4 py-2">
                                 <input
                                   type="number" min="1"
@@ -1151,7 +1194,7 @@ export default function ExpeditionsPage() {
                               </td>
                               <td className="px-4 py-2 text-right">
                                 <button type="button" title="Retirer"
-                                  onClick={() => setLignes((prec) => prec.filter((x) => x.produit_id !== l.produit_id))}
+                                  onClick={() => setLignes((prec) => prec.filter((x) => x.supprime || x.produit_id !== l.produit_id))}
                                   className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-[#1B2632]/40 hover:text-red-600 hover:bg-red-50 transition-colors">
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
                                 </button>
