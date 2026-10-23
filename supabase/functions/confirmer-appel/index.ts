@@ -39,7 +39,24 @@ Deno.serve(handle(async (req) => {
     }
   }
 
-  // 0. Pas de confirmation sans adresse : c'est le seul moment où quelqu'un a
+  // 0. Le pays envoyé doit être un pays de l'entreprise de la commande. La
+  // base le refuse de toute façon (trg_zy_pays_commande, qui ne fait pas
+  // d'exception pour la clé service) ; on le vérifie ici AVANT d'écrire
+  // l'appel, sinon l'historique garderait un appel dont la commande n'a
+  // jamais changé.
+  if (pays_id) {
+    const { data: paysDeLEntreprise } = await sb
+      .from('pays')
+      .select('id')
+      .eq('id', pays_id)
+      .eq('tenant_id', commande.tenant_id)
+      .maybeSingle()
+    if (!paysDeLEntreprise) {
+      throw new HttpError(400, 'Pays refusé : ce pays n\'appartient pas à l\'entreprise de la commande.')
+    }
+  }
+
+  // 0 bis. Pas de confirmation sans adresse : c'est le seul moment où quelqu'un a
   // le client au téléphone. Vérifié AVANT d'écrire l'appel : un refus ne
   // laisse pas de ligne d'historique « Confirmed » qui n'a jamais eu lieu.
   // L'adresse retenue est celle envoyée avec l'appel, sinon celle déjà là.

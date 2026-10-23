@@ -308,11 +308,11 @@ export default function GestionCommandesPage() {
         ? Promise.resolve({ data: [] })
         : supabase.from('entrepots').select('id, nom, pays_id, pays(nom)')
             .eq('tenant_id', tenantKey).order('nom'),
-      // La vue ne rend que des noms de pays, jamais d'entrepôt.
-      estSeller
-        ? supabase.from('v_pays_livrables').select('pays_id, nom')
-            .eq('tenant_id', tenantKey).order('nom')
-        : Promise.resolve({ data: [] }),
+      // La vue ne rend que des noms de pays, jamais d'entrepôt. Chargée pour
+      // tout le monde : le vendeur y choisit le pays de son import, et le
+      // formulaire manuel s'en sert pour griser un pays sans entrepôt.
+      supabase.from('v_pays_livrables').select('pays_id, nom')
+        .eq('tenant_id', tenantKey).order('nom'),
       // Le catalogue, pour tout le monde : la RLS de `produits` le donne déjà
       // au vendeur. Le stock, lui, n'est jamais chargé : voir verdictsImport.
       supabase.from('produits').select('id, code, product').eq('tenant_id', tenantKey),
@@ -370,6 +370,34 @@ export default function GestionCommandesPage() {
     const e = listeEntrepots.find((x) => x.id === importCibleId)
     return e && e.pays_id ? { pays_id: e.pays_id, entrepot_id: e.id, nom: e.nom } : null
   }, [importCibleId, estSeller, paysLivrables, listeEntrepots])
+
+  // PAS DE COMMANDE DANS UN PAYS SANS ENTREPÔT (23/10). Elle ne pourrait
+  // jamais partir : elle n'entre pas. Formulaire manuel et import CSV.
+  //
+  // À l'écran seulement, PAS dans la base, exprès : un trigger refuserait
+  // aussi les leads de l'API. WooCommerce réessaie un webhook refusé et le
+  // désactive après environ cinq échecs : une entreprise qui n'a pas encore
+  // créé son entrepôt perdrait tout le flux d'une boutique sans que personne
+  // ne le voie. L'API sera traitée à part : réponse 200 et refus enregistré,
+  // pas une erreur. Aujourd'hui elle accepte ce lead : commande créée sans
+  // entrepôt, avec la note « Aucun entrepôt dans le pays de la commande… »
+  // (resoudre_entrepot_commande).
+  //
+  // Relu au moment d'enregistrer, pas d'après la liste chargée : l'entrepôt
+  // a pu être supprimé, ou changer de pays, depuis l'ouverture de la page.
+  // Si la vérification elle-même échoue, on refuse : une commande manuelle
+  // peut attendre une minute, une commande qui ne partira jamais, non.
+  async function refusPaysSansEntrepot(paysId) {
+    const { data, error } = await supabase.from('v_pays_livrables')
+      .select('pays_id').eq('tenant_id', tenantKey).eq('pays_id', paysId).limit(1)
+    if (error) return 'Impossible de vérifier que ce pays a un entrepôt. Réessayez.'
+    if (!data || data.length === 0) {
+      const nom = listePays.find((p) => p.id === paysId)?.nom || 'Ce pays'
+      return `${nom} n\u2019a pas d\u2019entrepôt : une commande y serait impossible à expédier. ` +
+        'Un responsable doit d\u2019abord créer l\u2019entrepôt de ce pays dans Paramètres.'
+    }
+    return null
+  }
 
   // LE VERDICT PRODUIT DE L'IMPORT CSV (22/10) — l'API n'est pas concernée.
   // La règle est dans lib/verdictImport.mjs.
@@ -607,6 +635,13 @@ export default function GestionCommandesPage() {
     e.preventDefault()
     setCreationLoading(true)
 
+    const refusPays = await refusPaysSansEntrepot(newCmd.pays_id)
+    if (refusPays) {
+      setCreationLoading(false)
+      alert(refusPays)
+      return
+    }
+
     const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
     const leadIdGeneré = `MAN-${Date.now().toString(36).toUpperCase()}-${randomSuffix}`
 
@@ -839,6 +874,11 @@ export default function GestionCommandesPage() {
     // Sans pays, impossible de savoir quel agent doit recevoir les leads :
     // mieux vaut refuser tout de suite que les faire entrer orphelins.
     if (!cible) { alert(estSeller ? 'Choisissez le pays.' : 'Choisissez l\u2019entrepôt.'); return }
+    // Le filet : les sélecteurs ne proposent déjà qu'un pays qui a un
+    // entrepôt (vendeur : v_pays_livrables ; responsable : un entrepôt qui a
+    // un pays). Relu ici au cas où il aurait changé depuis le chargement.
+    const refusPays = await refusPaysSansEntrepot(cible.pays_id)
+    if (refusPays) { setImportResultat({ erreur: refusPays }); return }
 
     setImportEnCours(true)
     setImportResultat(null)
@@ -1394,7 +1434,11 @@ export default function GestionCommandesPage() {
                       <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Pays <span className="text-[#A35139]">*</span></label>
                       <select required value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
                         <option value="">-- Choisir --</option>
-                        {listePays.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
+                        {/* Un pays sans entrepôt reste visible, pas choisissable : la commande ne pourrait jamais partir. */}
+                        {listePays.map(p => {
+                          const livrable = paysLivrables.some((x) => x.pays_id === p.id)
+                          return <option key={p.id} value={p.id} disabled={!livrable}>{p.nom}{livrable ? '' : ' — sans entrepôt'}</option>
+                        })}
                       </select>
                     </div>
                     <div>
