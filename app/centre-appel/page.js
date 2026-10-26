@@ -6,6 +6,8 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
+import VignetteProduit from '../components/VignetteProduit'
+import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -157,6 +159,10 @@ export default function CentreAppelAgent() {
   const [agentChoisi, setAgentChoisi] = useState({})
   const [agentEnCours, setAgentEnCours] = useState(null)
   const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], pays: [] })
+  // Le catalogue, pour l'image du produit dans le panneau d'appel (26/10) :
+  // l'agent décrit le produit au client (« c'est bien le flacon bleu ? »).
+  // La RLS de `produits` donne tous les produits de l'entreprise à l'agent.
+  const [catalogue, setCatalogue] = useState([])
 
   const [page, setPage] = useState(1)
   const [totalItems, setTotalItems] = useState(0)
@@ -249,11 +255,14 @@ export default function CentreAppelAgent() {
       const [
         { data: options },
         { data: pays },
-        { data: statuts }
+        { data: statuts },
+        { data: produits }
       ] = await Promise.all([
         supabase.from('v_options_filtres').select('champ, valeur').eq('tenant_id', tenantKey),
         supabase.from('pays').select('id, nom').eq('tenant_id', tenantKey).order('nom'),
-        supabase.from('statuts').select('*').eq('tenant_id', tenantKey).order('nom')
+        supabase.from('statuts').select('*').eq('tenant_id', tenantKey).order('nom'),
+        // image_chemin explicitement : sans lui, la vignette n'a rien à afficher.
+        supabase.from('produits').select('id, code, product, image_chemin').eq('tenant_id', tenantKey)
       ])
 
       const valeursDe = (champ) =>
@@ -270,6 +279,7 @@ export default function CentreAppelAgent() {
       })
 
       if (statuts) setListeStatutsDB(statuts)
+      setCatalogue(produits || [])
     }
     chargerOptionsFiltres()
   }, [user, tenantKey])
@@ -1100,12 +1110,19 @@ export default function CentreAppelAgent() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Produit</label>
-                    <input
-                      type="text"
-                      value={formData.produit}
-                      onChange={(e) => setFormData({...formData, produit: e.target.value})}
-                      className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
-                    />
+                    <div className="flex items-center gap-3">
+                      {/* Le texte du champ, retrouvé comme la base (code, puis nom) :
+                          s'il est corrigé pendant l'appel, l'image suit. Non reconnu → rien. */}
+                      <VignetteProduit
+                        chemin={produitDuCatalogue(formData.produit, catalogue).produit?.image_chemin}
+                        taille={48} vide="rien" alt={formData.produit || ''} />
+                      <input
+                        type="text"
+                        value={formData.produit}
+                        onChange={(e) => setFormData({...formData, produit: e.target.value})}
+                        className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
+                      />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Quantité</label>
