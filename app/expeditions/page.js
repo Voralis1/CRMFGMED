@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import { PAYS_MONDE, drapeau, paysParNom } from '../../lib/paysMonde'
+import VignetteProduit from '../components/VignetteProduit'
 
 // Le seller déclare, le responsable tranche. L'écran ne fait que refléter
 // cette règle — c'est la base qui la tient : le trigger remet toute création
@@ -156,7 +157,7 @@ export default function ExpeditionsPage() {
     // reçoit que SES produits (RLS, produits_proprietaire.sql) ; la base
     // refuse aussi une ligne d'expédition avec le produit d'un autre.
     const { data: prodDB } = await supabase
-      .from('produits').select('id, product, code, statut')
+      .from('produits').select('id, product, code, statut, image_chemin')
       .eq('tenant_id', tenantKey).order('product')
     setCatalogue((prodDB || []).filter((p) => (p.statut || 'actif') === 'actif'))
 
@@ -171,6 +172,9 @@ export default function ExpeditionsPage() {
       .eq('tenant_id', tenantKey)
 
     const nomDuProduit = new Map((prodDB || []).map((p) => [p.id, p.product]))
+    // L'image (26/10) : par l'id de la ligne, pas par son nom. Produit
+    // supprimé ou illisible pour ce compte → pas d'image.
+    const imageDuProduit = new Map((prodDB || []).map((p) => [p.id, p.image_chemin]))
     const compte = {}
     for (const l of toutesLignes || []) {
       compte[l.expedition_id] = compte[l.expedition_id] || { articles: 0, pieces: 0, lignes: [] }
@@ -187,6 +191,7 @@ export default function ExpeditionsPage() {
         // `prodDB` et non `catalogue` : un produit passé inactif reste le nom
         // de ce qui a été expédié. Le filtrer ici effacerait l'historique.
         nom: (supprime ? l.produit_nom : (nomDuProduit.get(l.produit_id) || l.produit_nom)) || 'Produit inconnu',
+        image: (l.produit_id && imageDuProduit.get(l.produit_id)) || null,
         quantite: l.quantite || 0,
         recue: l.quantite_recue,
         supprime,
@@ -849,6 +854,7 @@ export default function ExpeditionsPage() {
                           <table className="w-full text-left text-sm border border-[#C9C1B1]/60 rounded-xl overflow-hidden bg-white">
                             <thead>
                               <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
+                                <th className="px-4 py-2.5 w-[60px]">Image</th>
                                 <th className="px-4 py-2.5">Entrepôt</th>
                                 <th className="px-4 py-2.5">Produit</th>
                                 <th className="px-4 py-2.5 text-right">Quantité envoyée</th>
@@ -858,6 +864,7 @@ export default function ExpeditionsPage() {
                             <tbody className="divide-y divide-[#C9C1B1]/30">
                               {contenu.lignes.map((l, i) => (
                                 <tr key={i}>
+                                  <td className="px-4 py-2"><VignetteProduit chemin={l.image} taille={36} vide="rien" alt={l.nom} /></td>
                                   <td className="px-4 py-2.5 text-[#1B2632]/75">{destinationNom(e) || '—'}</td>
                                   <td className="px-4 py-2.5 font-semibold text-[#1B2632]">
                                     {l.nom}
@@ -1167,6 +1174,7 @@ export default function ExpeditionsPage() {
                       <table className="w-full text-left text-sm">
                         <thead>
                           <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-semibold">
+                            <th className="px-4 py-2.5 w-[60px]">Image</th>
                             <th className="px-4 py-2.5">Produit</th>
                             <th className="px-4 py-2.5 w-[130px]">Quantité</th>
                             <th className="px-4 py-2.5 w-[60px] text-right"></th>
@@ -1176,6 +1184,7 @@ export default function ExpeditionsPage() {
                           {lignes.map((l, i) => l.supprime ? (
                             // Produit supprimé : la ligne reste telle quelle.
                             <tr key={`supprime-${i}`}>
+                              <td className="px-4 py-2" />
                               <td className="px-4 py-2.5 font-medium text-[#1B2632]">
                                 {nomProduit(l)}
                                 <div className="text-[11px] font-semibold text-[#A35139] mt-0.5">
@@ -1187,6 +1196,9 @@ export default function ExpeditionsPage() {
                             </tr>
                           ) : (
                             <tr key={l.produit_id}>
+                              <td className="px-4 py-2">
+                                <VignetteProduit chemin={catalogue.find((x) => x.id === l.produit_id)?.image_chemin} taille={36} vide="rien" alt={nomProduit(l)} />
+                              </td>
                               <td className="px-4 py-2.5 font-medium text-[#1B2632]">{nomProduit(l)}</td>
                               <td className="px-4 py-2">
                                 <input

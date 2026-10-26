@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
+import VignetteProduit from '../components/VignetteProduit'
+import { reduireImage, envoyerImage, retirerImage, urlImage } from '../../lib/imageProduit'
 
 // Le catalogue de Paramètres reste en place le temps que cet écran fasse ses
 // preuves. Les deux lisent la même table : ce qui est créé ici apparaît là-bas,
@@ -119,6 +121,14 @@ export default function ProduitsPage() {
   const [enregistrement, setEnregistrement] = useState(false)
   const [formulaire, setFormulaire] = useState(VIDE)
   const [idEnEdition, setIdEnEdition] = useState(null)
+  // L'image (26/10). Choisie dans le formulaire, elle reste dans le navigateur
+  // — réduite, avec son aperçu — jusqu'à « Enregistrer » : le produit doit
+  // exister avant l'envoi (la policy du bucket lit son id dans le chemin).
+  // Un formulaire abandonné n'a donc rien envoyé.
+  const [imageChoisie, setImageChoisie] = useState(null)   // { blob, ext, apercu }
+  const [imageRetiree, setImageRetiree] = useState(false)
+  const [imageActuelle, setImageActuelle] = useState(null) // chemin en base, en modification
+  const [erreurImage, setErreurImage] = useState('')
 
   useEffect(() => {
     if (!authLoading && !permsLoading) {
@@ -287,7 +297,30 @@ export default function ProduitsPage() {
     setMouvements(avecSolde)
   }
 
+  function oublierImage() {
+    setImageChoisie((avant) => { if (avant?.apercu) URL.revokeObjectURL(avant.apercu); return null })
+    setImageRetiree(false)
+    setErreurImage('')
+  }
+
+  async function choisirImage(fichier) {
+    setErreurImage('')
+    if (!fichier) return
+    try {
+      const reduite = await reduireImage(fichier)
+      setImageChoisie((avant) => {
+        if (avant?.apercu) URL.revokeObjectURL(avant.apercu)
+        return { ...reduite, apercu: URL.createObjectURL(reduite.blob) }
+      })
+      setImageRetiree(false)
+    } catch (e) {
+      setErreurImage(e.message)
+    }
+  }
+
   function ouvrirCreation() {
+    oublierImage()
+    setImageActuelle(null)
     setFormulaire(VIDE)
     setEntrepotsChoisis([])
     setPaysChoisis([])
@@ -296,6 +329,8 @@ export default function ProduitsPage() {
   }
 
   async function ouvrirEdition(p) {
+    oublierImage()
+    setImageActuelle(p.image_chemin || null)
     setFormulaire({
       product: p.product || '', code: p.code || '', code_variante: p.code_variante || '',
       vendeur_id: p.vendeur_id || '', type: p.type || 'Standard', price: p.price ?? '',
@@ -323,6 +358,39 @@ export default function ProduitsPage() {
   function annonce(texte, type) {
     setMessage({ texte, type })
     setTimeout(() => setMessage({ texte: '', type: '' }), 6000)
+  }
+
+  // Après l'enregistrement du produit, dans le même clic. Ordre : envoyer la
+  // nouvelle → l'écrire sur le produit → retirer l'ancienne. Un retrait raté
+  // laisse un orphelin (v_images_produits_orphelines), jamais un produit qui
+  // pointe vers un fichier disparu. Rend un message d'erreur, ou null.
+  async function traiterImage(produit) {
+    const ancienne = produit.image_chemin || null
+    if (imageChoisie) {
+      let chemin
+      try {
+        chemin = await envoyerImage(tenantKey, produit.id, imageChoisie)
+      } catch (err) {
+        return `L\u2019image n\u2019a pas été enregistrée (${err.message}). Réessayez avec « Modifier ».`
+      }
+      const { error } = await supabase.from('produits')
+        .update({ image_chemin: chemin }).eq('id', produit.id).eq('tenant_id', tenantKey)
+      if (error) {
+        await retirerImage(chemin)
+        return `L\u2019image n\u2019a pas été enregistrée (${error.message}).`
+      }
+      if (ancienne) await retirerImage(ancienne)
+      oublierImage()
+      return null
+    }
+    if (imageRetiree && ancienne) {
+      const { error } = await supabase.from('produits')
+        .update({ image_chemin: null }).eq('id', produit.id).eq('tenant_id', tenantKey)
+      if (error) return `L\u2019image n\u2019a pas été retirée (${error.message}).`
+      await retirerImage(ancienne)
+      oublierImage()
+    }
+    return null
   }
 
   async function enregistrer(e) {
@@ -391,6 +459,11 @@ export default function ProduitsPage() {
       return annonce("Aucune modification enregistrée : votre rôle ne permet pas de gérer les produits.", 'erreur')
     }
 
+    // L'image, maintenant que le produit existe. Un échec ne défait pas le
+    // produit (il est complet sans image) : il est dit, à la fin.
+    const avisImage = await traiterImage(data[0])
+    const fin = (texte) => (avisImage ? `${texte} ${avisImage}` : texte)
+
     // Le vendeur a choisi des PAYS. La base les traduit en entrepôts et écrit
     // les lignes de stock à sa place : lui n'a le droit ni de lire les
     // entrepôts, ni d'écrire dans `stocks`.
@@ -410,13 +483,13 @@ export default function ProduitsPage() {
       // taire ferait croire à un détachement qui n'a pas eu lieu.
       const r = Array.isArray(bilan) ? bilan[0] : bilan
       if (r?.gardes_pleins > 0) {
-        annonce(
+        annonce(fin(
           `Produit enregistré. ${r.gardes_pleins} entrepôt${r.gardes_pleins > 1 ? 's gardés' : ' gardé'} :`
-          + ' il y reste de la marchandise. Le dépôt doit la sortir avant de retirer le pays.',
+          + ' il y reste de la marchandise. Le dépôt doit la sortir avant de retirer le pays.'),
           'erreur',
         )
       } else {
-        annonce(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.', 'succes')
+        annonce(fin(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.'), avisImage ? 'erreur' : 'succes')
       }
 
       setModaleOuverte(false)
@@ -455,8 +528,8 @@ export default function ProduitsPage() {
     setEnregistrement(false)
 
     if (pleins.length > 0) {
-      annonce(
-        `Produit enregistré. ${pleins.length} entrepôt${pleins.length > 1 ? 's gardés' : ' gardé'} : il y reste de la marchandise. Videz le stock avant de le retirer.`,
+      annonce(fin(
+        `Produit enregistré. ${pleins.length} entrepôt${pleins.length > 1 ? 's gardés' : ' gardé'} : il y reste de la marchandise. Videz le stock avant de le retirer.`),
         'erreur',
       )
       setModaleOuverte(false)
@@ -464,15 +537,26 @@ export default function ProduitsPage() {
       return
     }
 
-    annonce(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.', 'succes')
+    annonce(fin(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.'), avisImage ? 'erreur' : 'succes')
     setModaleOuverte(false)
     charger()
   }
 
   async function supprimer(p) {
     if (!window.confirm(`Supprimer « ${p.product} » ?\n\nSes commandes, ses mouvements de stock et ses lignes d\u2019expédition gardent son nom. Ses lignes de stock disparaissent avec lui.`)) return
+    // L'image d'abord : la base ne sait pas supprimer un fichier, et une fois
+    // le produit parti, plus personne n'a le droit de toucher au sien.
+    if (p.image_chemin) {
+      const err = await retirerImage(p.image_chemin)
+      if (err) return annonce('Suppression annulée : l\u2019image n\u2019a pas pu être retirée (' + err + ').', 'erreur')
+    }
     const { error } = await supabase.from('produits').delete().eq('id', p.id).eq('tenant_id', tenantKey)
-    if (error) return annonce('Suppression refusée : ' + error.message, 'erreur')
+    if (error) {
+      // Le fichier est déjà parti : le produit ne doit plus le désigner.
+      if (p.image_chemin) await supabase.from('produits').update({ image_chemin: null }).eq('id', p.id).eq('tenant_id', tenantKey)
+      charger()
+      return annonce('Suppression refusée : ' + error.message, 'erreur')
+    }
     annonce('Produit supprimé.', 'succes')
     charger()
   }
@@ -749,6 +833,9 @@ export default function ProduitsPage() {
                         {p.code || <span className="font-sans font-normal text-[#1B2632]/40">sans code</span>}
                       </td>
                       <td className="px-5 py-4">
+                        <div className="flex items-center gap-3">
+                        <VignetteProduit chemin={p.image_chemin} alt={p.product} />
+                        <div className="min-w-0">
                         <div className="font-bold text-[#1B2632] max-w-[220px] truncate" title={p.product}>{p.product}</div>
                         {!estSeller && (
                           <div className="text-xs text-[#1B2632]/50 mt-0.5">
@@ -758,6 +845,8 @@ export default function ProduitsPage() {
                         {p.price !== null && p.price !== undefined && (
                           <div className="text-xs font-mono font-semibold text-[#1B2632]/70 mt-0.5">{p.price}</div>
                         )}
+                        </div>
+                        </div>
                       </td>
                       <td className="px-5 py-4">
                         <span className="px-2.5 py-1 rounded-md bg-[#EEE9DF] text-[#1B2632]/70 text-xs font-medium whitespace-nowrap">
@@ -839,6 +928,8 @@ export default function ProduitsPage() {
             <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-8 pop-in">
 
               <div className="flex justify-between items-start px-6 py-5 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-t-2xl">
+                <div className="flex items-start gap-4">
+                <VignetteProduit chemin={ficheOuverte.image_chemin} taille={88} vide="rien" alt={ficheOuverte.product} />
                 <div>
                   <p className="text-xs font-mono text-[#A35139] uppercase tracking-widest mb-1">
                     {ficheOuverte.code || ficheOuverte.id.slice(0, 8)}
@@ -847,6 +938,7 @@ export default function ProduitsPage() {
                   {ficheOuverte.description && (
                     <p className="text-sm text-[#1B2632]/60 mt-1 max-w-[560px]">{ficheOuverte.description}</p>
                   )}
+                </div>
                 </div>
                 <button onClick={() => setFicheOuverte(null)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">✕</button>
               </div>
@@ -1030,15 +1122,40 @@ export default function ProduitsPage() {
                     onChange={(e) => setFormulaire({ ...formulaire, product_page: e.target.value })} />
                 </Champ>
 
-                {/* L'image attend son espace de stockage. Garder la place vide
-                    plutôt qu'un bouton qui ne fait rien : un bouton mort, on
-                    l'essaie, et on croit que c'est cassé. */}
-                <Champ label="Image">
-                  <div className="h-[132px] flex items-center justify-center text-center">
-                    <p className="text-sm text-[#1B2632]/40 px-6">
-                      Bientôt. Il reste à créer l&apos;espace de stockage dans Supabase.
-                    </p>
-                  </div>
+                {/* L'image (26/10). Choisie ici, réduite par le navigateur (800 px,
+                    WebP), envoyée seulement à « Enregistrer » — une fois le produit
+                    créé. Le bucket refuse au-delà de 2 Mo. */}
+                <Champ label="Image" aide="JPG, PNG ou WebP. Réduite automatiquement avant l'envoi.">
+                  {(() => {
+                    const apercu = imageChoisie?.apercu || (!imageRetiree && urlImage(imageActuelle)) || null
+                    return (
+                      <div className="flex items-center gap-4 py-2">
+                        <label className="w-[110px] h-[110px] shrink-0 rounded-lg border-2 border-dashed border-[#C9C1B1] hover:border-[#FFB162] bg-[#faf9f7] flex items-center justify-center cursor-pointer overflow-hidden transition-colors">
+                          {apercu
+                            ? <img src={apercu} alt="" className="w-full h-full object-cover" />
+                            : <span className="text-xs text-[#1B2632]/40 text-center px-2">Choisir une image</span>}
+                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                            onChange={(e) => { choisirImage(e.target.files?.[0]); e.target.value = '' }} />
+                        </label>
+                        <div className="flex flex-col gap-1.5 text-xs">
+                          {imageChoisie && <span className="text-[#1B2632]/60">Nouvelle image, envoyée à l&apos;enregistrement.</span>}
+                          {/* Une nouvelle image choisie s'annule (on revient à l'actuelle) ;
+                              sinon, l'image actuelle se retire à l'enregistrement. */}
+                          {imageChoisie ? (
+                            <button type="button" className="text-left text-[#A35139] hover:underline" onClick={oublierImage}>
+                              Annuler ce choix
+                            </button>
+                          ) : imageActuelle && !imageRetiree && (
+                            <button type="button" className="text-left text-[#A35139] hover:underline" onClick={() => setImageRetiree(true)}>
+                              Retirer l&apos;image
+                            </button>
+                          )}
+                          {imageRetiree && <span className="text-[#1B2632]/60">Image retirée à l&apos;enregistrement.</span>}
+                          {erreurImage && <span className="text-[#A35139]">{erreurImage}</span>}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </Champ>
 
                 {estSeller ? (

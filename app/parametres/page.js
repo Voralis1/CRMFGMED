@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
+import { retirerImage } from "../../lib/imageProduit";
 
 // Les plus récents seulement : la liste sert à retrouver un mouvement, pas à
 // tout recharger à chaque visite.
@@ -255,7 +256,23 @@ export default function ParametresAdmin() {
   // ACTIONS PRODUITS
   // =====================================================================
   // L'erreur n'était pas lue : un refus de la base passait pour un succès muet.
-  async function supprimerProduit(id) { if (!tenantId || !window.confirm("Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.")) return; const { error } = await supabase.from("produits").delete().eq("id", id).eq("tenant_id", tenantId); if (error) afficherMessage("Suppression refusée : " + error.message, "erreur"); else afficherMessage("Produit supprimé.", "succes"); chargerDonnees(); }
+  // L'image d'abord (26/10), comme l'écran Produits : la base ne sait pas
+  // supprimer un fichier, et une fois le produit parti plus personne n'a le
+  // droit de toucher au sien. Sans ça, ce bouton serait la source d'orphelins.
+  async function supprimerProduit(pr) {
+    if (!tenantId || !window.confirm("Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.")) return;
+    if (pr.image_chemin) {
+      const err = await retirerImage(pr.image_chemin);
+      if (err) return afficherMessage("Suppression annulée : l'image n'a pas pu être retirée (" + err + ").", "erreur");
+    }
+    const { error } = await supabase.from("produits").delete().eq("id", pr.id).eq("tenant_id", tenantId);
+    if (error) {
+      // Le fichier est déjà parti : le produit ne doit plus le désigner.
+      if (pr.image_chemin) await supabase.from("produits").update({ image_chemin: null }).eq("id", pr.id).eq("tenant_id", tenantId);
+      afficherMessage("Suppression refusée : " + error.message, "erreur");
+    } else afficherMessage("Produit supprimé.", "succes");
+    chargerDonnees();
+  }
 
   // =====================================================================
   // ACTIONS ENTREPÔTS & MOUVEMENTS
@@ -815,7 +832,7 @@ export default function ParametresAdmin() {
                           <td className="text-center font-semibold text-red-600">{pr.defected_quantity ?? 0}</td>
                           <td><span className="font-bold">{pr.price}</span></td>
                           <td className="text-right">
-                            <button onClick={() => supprimerProduit(pr.id)} className="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 cursor-pointer">Supprimer</button>
+                            <button onClick={() => supprimerProduit(pr)} className="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 cursor-pointer">Supprimer</button>
                           </td>
                         </tr>
                       ))

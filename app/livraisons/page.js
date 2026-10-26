@@ -6,6 +6,8 @@ import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
+import VignetteProduit from '../components/VignetteProduit'
+import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
 
 const TAILLES_PAGE = [10, 25, 50, 100]
 
@@ -94,6 +96,10 @@ export default function LivraisonsPage() {
   const [listeZones, setListeZones] = useState([])
   const [listeLivreurs, setListeLivreurs] = useState([])
   const [listeVendeurs, setListeVendeurs] = useState([])
+  // Le catalogue, pour l'image du produit à livrer (26/10) : le livreur doit
+  // remettre le BON article à la porte. La RLS de `produits` le donne à tous
+  // les rôles de l'entreprise sauf le vendeur (qui ne reçoit que les siens).
+  const [catalogue, setCatalogue] = useState([])
   const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
 
   // Fiche détail + formulaire de traitement
@@ -179,6 +185,10 @@ export default function LivraisonsPage() {
         .from('zones').select('id, nom_zone, frais_livraison, frais_retour')
         .eq('tenant_id', tenantId).order('nom_zone')
       setListeZones(zones || [])
+
+      const { data: produits } = await supabase
+        .from('produits').select('id, code, product, image_chemin').eq('tenant_id', tenantId)
+      setCatalogue(produits || [])
 
       if (estResponsable) {
         const { data: livs } = await supabase
@@ -946,7 +956,16 @@ export default function LivraisonsPage() {
                     </thead>
                     <tbody>
                       <tr className="border-t border-[#C9C1B1]/30">
-                        <td className="px-5 py-3 font-semibold text-[#1B2632]">{detail.commandes?.produit || '—'}</td>
+                        <td className="px-5 py-3 font-semibold text-[#1B2632]">
+                          {/* La commande porte son produit en TEXTE : retrouvé comme la
+                              base (code, puis nom). Non reconnu → pas d'image. */}
+                          <span className="flex items-center gap-3">
+                            <VignetteProduit
+                              chemin={produitDuCatalogue(detail.commandes?.produit, catalogue).produit?.image_chemin}
+                              taille={64} vide="rien" alt={detail.commandes?.produit || ''} />
+                            {detail.commandes?.produit || '—'}
+                          </span>
+                        </td>
                         <td className="px-5 py-3 text-right font-mono">{detail.commandes?.quantite ?? 1}</td>
                         <td className="px-5 py-3 text-right font-mono font-bold">
                           {detail.commandes?.prix ?? '—'}{' '}

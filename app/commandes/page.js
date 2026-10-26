@@ -7,7 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 // Le verdict produit de l'import CSV : une fonction, vendeur et responsable.
-import { verdictProduits, commandesEnRupture } from '../../lib/verdictImport.mjs'
+import { verdictProduits, commandesEnRupture, produitDuCatalogue } from '../../lib/verdictImport.mjs'
+import VignetteProduit from '../components/VignetteProduit'
 // Les noms des colonnes, la même table que l'API.
 import { cleNormalisee, NOMS } from '../../supabase/functions/_shared/champs.ts'
 // Le modèle d'import (colonnes, consignes, exemple) : partagé avec la feuille
@@ -257,7 +258,7 @@ export default function GestionCommandesPage() {
       // Le catalogue, pour tout le monde : la RLS de `produits` fait le tri
       // (un vendeur ne reçoit que les siens). Le stock, lui, n'est jamais
       // chargé : voir verdictsImport.
-      supabase.from('produits').select('id, code, product').eq('tenant_id', tenantKey),
+      supabase.from('produits').select('id, code, product, image_chemin').eq('tenant_id', tenantKey),
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
@@ -396,6 +397,15 @@ export default function GestionCommandesPage() {
   // porte), jamais écrite sur la commande : une note de stock serait fausse
   // dès le premier réassort. Seulement les commandes pas encore livrées, qui
   // ont un entrepôt (sans entrepôt, stock_note dit déjà pourquoi).
+  // L'image du produit d'une commande (26/10). La commande porte son produit
+  // en TEXTE : on le retrouve comme la base (code, puis nom, sans accents —
+  // produitDuCatalogue = produit_de_commande). Non reconnu → pas d'image, et
+  // rien n'est dessiné.
+  const imageDuProduit = useCallback(
+    (texte) => produitDuCatalogue(texte, catalogue).produit?.image_chemin || null,
+    [catalogue],
+  )
+
   const [rupturesCommandes, setRupturesCommandes] = useState(() => new Set())
   useEffect(() => {
     const aSurveiller = commandes.filter((c) => c.entrepot_id &&
@@ -1273,6 +1283,7 @@ export default function GestionCommandesPage() {
                         <table className="w-full text-left text-xs">
                           <thead>
                             <tr className="text-[10px] uppercase tracking-wider text-[#1B2632]/55 font-bold">
+                              <th className="px-3 py-2.5 w-[56px]">Image</th>
                               <th className="px-3 py-2.5 w-[22%]">Entrepôt</th>
                               <th className="px-3 py-2.5">Produit</th>
                               <th className="px-3 py-2.5 w-[14%]">Prix</th>
@@ -1282,6 +1293,9 @@ export default function GestionCommandesPage() {
                           </thead>
                           <tbody>
                             <tr>
+                              <td className="px-3 py-2.5">
+                                <VignetteProduit chemin={imageDuProduit(cmd.produit)} taille={36} vide="rien" alt={cmd.produit || ''} />
+                              </td>
                               <td className="px-3 py-2.5 text-[#1B2632]">
                                 {/* L'entrepôt est fixé par la base (resoudre_entrepot_commande),
                                     le même qui servira au stock à la livraison. Le vendeur ne lit
@@ -1796,7 +1810,12 @@ export default function GestionCommandesPage() {
                     </thead>
                     <tbody>
                       <tr className="border-t border-[#C9C1B1]/30">
-                        <td className="px-5 py-3 font-semibold text-[#1B2632]">{detail.produit || '—'}</td>
+                        <td className="px-5 py-3 font-semibold text-[#1B2632]">
+                          <span className="flex items-center gap-3">
+                            <VignetteProduit chemin={imageDuProduit(detail.produit)} taille={48} vide="rien" alt={detail.produit || ''} />
+                            {detail.produit || '—'}
+                          </span>
+                        </td>
                         <td className="px-5 py-3 text-right font-mono">{detail.quantite ?? 1}</td>
                         <td className="px-5 py-3 text-right font-mono font-bold">
                           {detail.prix ?? '—'} <span className="text-xs font-normal text-[#1B2632]/50">{detail.pays?.devise || ''}</span>
