@@ -21,7 +21,7 @@ const LIBELLE_MOUVEMENT = {
   ajustement: 'Ajustement',
 }
 const VIDE = {
-  product: '', code: '', code_variante: '', seller: '', type: 'Standard',
+  product: '', code: '', code_variante: '', vendeur_id: '', type: 'Standard',
   price: '', current_quantity: '', quantite_totale: '', defected_quantity: '',
   upsell_produit_id: '', crosssell_produit_id: '',
   description: '', product_page: '', statut: 'actif',
@@ -90,6 +90,11 @@ export default function ProduitsPage() {
   const estSeller = String(roleNom || '').toLowerCase() === 'seller'
 
   const [produits, setProduits] = useState([])
+  // Les vendeurs de l'entreprise, pour le responsable qui choisit à qui est
+  // un produit (comme « Nouvelle source » dans Mon API). Le vendeur n'en a
+  // pas besoin : ce qu'il crée est à lui, la base l'écrit
+  // (produits_proprietaire.sql).
+  const [vendeurs, setVendeurs] = useState([])
   const [stocksParProduit, setStocksParProduit] = useState({})
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
@@ -171,6 +176,11 @@ export default function ProduitsPage() {
       .from('entrepots').select('id, nom, pays_id, pays(nom)').eq('tenant_id', tenantKey).order('nom')
     setEntrepots(entrepotsDB || [])
 
+    const { data: vendeursDB } = await supabase
+      .from('user_roles').select('user_id, nom, email')
+      .eq('tenant_id', tenantKey).eq('role', 'seller')
+    setVendeurs(vendeursDB || [])
+
 
     const regroupe = {}
     for (const s of stocks || []) {
@@ -192,19 +202,27 @@ export default function ProduitsPage() {
     return Object.entries(d).map(([nom, quantite]) => ({ nom, quantite }))
   }
 
+  // Le propriétaire, par son compte. L'ancien texte libre `seller` n'est plus
+  // lu : il ne correspondait même pas au compte qu'il nommait.
+  const nomVendeur = useCallback((id) => {
+    if (!id) return null
+    const v = vendeurs.find((x) => x.user_id === id)
+    return v ? (v.nom || v.email) : 'Compte vendeur introuvable'
+  }, [vendeurs])
+
   // Le filtrage se fait sur la liste déjà chargée : un catalogue tient en
   // quelques dizaines de lignes, inutile d'aller-retour sur le serveur.
   const affiches = useMemo(() => {
     const r = recherche.trim().toLowerCase()
     return produits.filter((p) => {
-      if (r && !`${p.product || ''} ${p.code || ''} ${p.seller || ''}`.toLowerCase().includes(r)) return false
+      if (r && !`${p.product || ''} ${p.code || ''} ${nomVendeur(p.vendeur_id) || ''}`.toLowerCase().includes(r)) return false
       if (filtreType && (p.type || 'Standard') !== filtreType) return false
       if (filtreStatut && (p.statut || 'actif') !== filtreStatut) return false
       if (filtreUpsell === 'oui' && !p.upsell) return false
       if (filtreUpsell === 'non' && p.upsell) return false
       return true
     })
-  }, [produits, recherche, filtreType, filtreStatut, filtreUpsell])
+  }, [produits, recherche, filtreType, filtreStatut, filtreUpsell, nomVendeur])
 
   const analyse = useMemo(() => {
     const total = affiches.length
@@ -280,7 +298,7 @@ export default function ProduitsPage() {
   async function ouvrirEdition(p) {
     setFormulaire({
       product: p.product || '', code: p.code || '', code_variante: p.code_variante || '',
-      seller: p.seller || '', type: p.type || 'Standard', price: p.price ?? '',
+      vendeur_id: p.vendeur_id || '', type: p.type || 'Standard', price: p.price ?? '',
       current_quantity: p.current_quantity ?? '', quantite_totale: p.quantite_totale ?? '',
       defected_quantity: p.defected_quantity ?? '',
       upsell_produit_id: p.upsell_produit_id || '', crosssell_produit_id: p.crosssell_produit_id || '',
@@ -316,6 +334,12 @@ export default function ProduitsPage() {
     // casse sur un accent ou un espace. Obligatoire à la création ; un
     // produit ancien sans code reste modifiable.
     if (!idEnEdition && !formulaire.code.trim()) return annonce('Le code du produit est obligatoire.', 'erreur')
+    // Le responsable dit à quel vendeur est le produit. Un produit sans
+    // vendeur n'est visible d'aucun vendeur : c'est le cas hérité, pas un
+    // choix qu'on propose. (La base l'accepte encore d'un responsable — rien
+    // ne lui a été retiré —, c'est l'écran qui l'impose, à la création ; un
+    // ancien produit sans vendeur reste modifiable tel quel.)
+    if (!idEnEdition && !estSeller && !formulaire.vendeur_id) return annonce('Choisissez le vendeur à qui est ce produit.', 'erreur')
     if (formulaire.price === '' || Number.isNaN(Number(formulaire.price))) {
       return annonce('Le prix est obligatoire.', 'erreur')
     }
@@ -331,7 +355,8 @@ export default function ProduitsPage() {
       product: formulaire.product.trim(),
       code: formulaire.code.trim() || null,
       code_variante: formulaire.code_variante.trim() || null,
-      seller: formulaire.seller.trim() || null,
+      // Le vendeur n'envoie pas de propriétaire : la base écrit le sien.
+      ...(estSeller ? {} : { vendeur_id: formulaire.vendeur_id || null }),
       type: formulaire.type || 'Standard',
       price: Number(formulaire.price),
       current_quantity: enStock,
@@ -355,7 +380,9 @@ export default function ProduitsPage() {
       setEnregistrement(false)
       // idx_produits_code_unique : un code par entreprise (casse et espaces ignorés).
       if (error.code === '23505' && String(error.message).includes('idx_produits_code_unique')) {
-        return annonce('Ce code est déjà celui d\u2019un autre produit de l\u2019entreprise.', 'erreur')
+        // Rien sur l'autre produit : un vendeur ne voit que les siens, et le
+        // code peut être celui d'un produit qu'il n'a pas le droit de voir.
+        return annonce('Ce code est déjà utilisé dans l\u2019entreprise. Choisissez-en un autre.', 'erreur')
       }
       return annonce('Enregistrement refusé : ' + error.message, 'erreur')
     }
@@ -707,7 +734,7 @@ export default function ProduitsPage() {
                 <tr>
                   <td colSpan="11" className="px-6 py-12 text-center text-[#1B2632]/60">
                     {produits.length === 0
-                      ? 'Aucun produit dans le catalogue.'
+                      ? (estSeller ? 'Vous n\u2019avez encore aucun produit.' : 'Aucun produit dans le catalogue.')
                       : 'Aucun produit ne correspond à cette recherche.'}
                   </td>
                 </tr>
@@ -723,7 +750,11 @@ export default function ProduitsPage() {
                       </td>
                       <td className="px-5 py-4">
                         <div className="font-bold text-[#1B2632] max-w-[220px] truncate" title={p.product}>{p.product}</div>
-                        {p.seller && <div className="text-xs text-[#1B2632]/50 mt-0.5">{p.seller}</div>}
+                        {!estSeller && (
+                          <div className="text-xs text-[#1B2632]/50 mt-0.5">
+                            {nomVendeur(p.vendeur_id) || <span className="italic">sans vendeur</span>}
+                          </div>
+                        )}
                         {p.price !== null && p.price !== undefined && (
                           <div className="text-xs font-mono font-semibold text-[#1B2632]/70 mt-0.5">{p.price}</div>
                         )}
@@ -833,7 +864,7 @@ export default function ProduitsPage() {
                 <div className="flex flex-wrap gap-6 text-sm border-t border-[#C9C1B1]/50 pt-5">
                   <Info label="Statut" valeur={(ficheOuverte.statut || 'actif') === 'actif' ? 'Actif' : 'Inactif'} />
                   <Info label="Code variante" valeur={ficheOuverte.code_variante} />
-                  <Info label="Vendeur" valeur={ficheOuverte.seller} />
+                  {!estSeller && <Info label="Vendeur" valeur={nomVendeur(ficheOuverte.vendeur_id) || 'Sans vendeur'} />}
                   <Info label="Up-sell" valeur={nomLie(ficheOuverte.upsell_produit_id) || ficheOuverte.upsell} />
                   <Info label="Cross-sell" valeur={nomLie(ficheOuverte.crosssell_produit_id) || ficheOuverte.crosssell} />
                   <Info label="Ajouté le" valeur={ficheOuverte.created_at ? new Date(ficheOuverte.created_at).toLocaleDateString('fr-FR') : null} />
@@ -1119,10 +1150,22 @@ export default function ProduitsPage() {
                     onChange={(e) => setFormulaire({ ...formulaire, price: e.target.value })} />
                 </Champ>
 
-                <Champ label="Vendeur">
-                  <input className="ch-input" value={formulaire.seller}
-                    onChange={(e) => setFormulaire({ ...formulaire, seller: e.target.value })} />
-                </Champ>
+                {/* Le vendeur ne choisit pas : ce qu'il crée est à lui. */}
+                {!estSeller && (
+                  <Champ label="Vendeur" requis={!idEnEdition}
+                    aide="Le vendeur à qui est ce produit : lui seul le verra parmi les vendeurs.">
+                    <select className="ch-input" required={!idEnEdition} value={formulaire.vendeur_id}
+                      onChange={(e) => setFormulaire({ ...formulaire, vendeur_id: e.target.value })}>
+                      <option value="">{idEnEdition ? 'Sans vendeur (ancien produit)' : 'Choisir un vendeur...'}</option>
+                      {vendeurs.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
+                    </select>
+                    {vendeurs.length === 0 && (
+                      <p className="text-[11px] text-[#A35139] mt-1">
+                        Aucun compte vendeur dans cette entreprise. À créer dans Utilisateurs.
+                      </p>
+                    )}
+                  </Champ>
+                )}
               </div>
 
               <div className="px-8 py-8 flex justify-center">

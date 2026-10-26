@@ -152,7 +152,9 @@ export default function ExpeditionsPage() {
     }
 
     // Seuls les produits encore en vente sont proposés : en expédier un retiré
-    // du catalogue est presque toujours une erreur de saisie.
+    // du catalogue est presque toujours une erreur de saisie. Un vendeur ne
+    // reçoit que SES produits (RLS, produits_proprietaire.sql) ; la base
+    // refuse aussi une ligne d'expédition avec le produit d'un autre.
     const { data: prodDB } = await supabase
       .from('produits').select('id, product, code, statut')
       .eq('tenant_id', tenantKey).order('product')
@@ -176,11 +178,15 @@ export default function ExpeditionsPage() {
       compte[l.expedition_id].pieces += l.quantite || 0
       // Produit supprimé : produit_id est NULL, la base a gardé son nom
       // (produits_historique_nom.sql).
-      const supprime = !l.produit_id || !nomDuProduit.has(l.produit_id)
+      // Seul un produit_id NULL veut dire « supprimé ». Un produit qui existe
+      // mais que ce compte ne lit pas (un vendeur ne lit que SES produits,
+      // produits_proprietaire.sql — ex. un ancien produit sans vendeur) n'est
+      // pas supprimé : il garde son nom écrit sur la ligne, sans l'alerte.
+      const supprime = !l.produit_id
       compte[l.expedition_id].lignes.push({
         // `prodDB` et non `catalogue` : un produit passé inactif reste le nom
         // de ce qui a été expédié. Le filtrer ici effacerait l'historique.
-        nom: (supprime ? l.produit_nom : nomDuProduit.get(l.produit_id)) || 'Produit inconnu',
+        nom: (supprime ? l.produit_nom : (nomDuProduit.get(l.produit_id) || l.produit_nom)) || 'Produit inconnu',
         quantite: l.quantite || 0,
         recue: l.quantite_recue,
         supprime,
@@ -305,7 +311,8 @@ export default function ExpeditionsPage() {
   function nomProduit(l) {
     if (l.supprime) return l.nom || 'Produit inconnu'
     const p = catalogue.find((x) => x.id === l.produit_id)
-    return p ? p.product : 'Produit retiré du catalogue'
+    // Pas dans le catalogue de ce compte : le nom écrit sur la ligne d'abord.
+    return p ? p.product : (l.nom || 'Produit retiré du catalogue')
   }
 
   async function enregistrer(ev) {

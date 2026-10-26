@@ -186,8 +186,9 @@ export default function GestionCommandesPage() {
   // pays — il déposerait des commandes là où rien ne peut partir — et aucun
   // nom d'entrepôt, qui ne le regarde pas.
   const [paysLivrables, setPaysLivrables] = useState([])
-  // Le catalogue de l'entreprise (lisible par tous ses comptes, vendeur
-  // compris) : sert au verdict produit de l'aperçu (voir verdictsImport).
+  // Le catalogue tel que la RLS le rend : toute l'entreprise pour un
+  // responsable, SES produits pour un vendeur (26/10). Sert au verdict
+  // produit de l'aperçu (voir verdictsImport).
   const [catalogue, setCatalogue] = useState([])
   // Le verdict produit du fichier pour le choix du haut :
   // { etat: 'en_cours' | 'pret' | 'erreur', liste }.
@@ -253,8 +254,9 @@ export default function GestionCommandesPage() {
       // formulaire manuel s'en sert pour griser un pays sans entrepôt.
       supabase.from('v_pays_livrables').select('pays_id, nom')
         .eq('tenant_id', tenantKey).order('nom'),
-      // Le catalogue, pour tout le monde : la RLS de `produits` le donne déjà
-      // au vendeur. Le stock, lui, n'est jamais chargé : voir verdictsImport.
+      // Le catalogue, pour tout le monde : la RLS de `produits` fait le tri
+      // (un vendeur ne reçoit que les siens). Le stock, lui, n'est jamais
+      // chargé : voir verdictsImport.
       supabase.from('produits').select('id, code, product').eq('tenant_id', tenantKey),
     ])
     if (agentsData) setAgents(agentsData)
@@ -372,11 +374,12 @@ export default function GestionCommandesPage() {
       paysId: cibleImport.pays_id,
       nomEntrepot: cibleImport.nom,
       enStock,
+      duVendeur: estSeller,
     })
       .then((liste) => { if (!annule) setVerdictsImport({ etat: 'pret', liste }) })
       .catch(() => { if (!annule) setVerdictsImport({ etat: 'erreur', liste: [] }) })
     return () => { annule = true }
-  }, [apercu, cibleImport, catalogue, enStock])
+  }, [apercu, cibleImport, catalogue, enStock, estSeller])
 
   const produitsRefuses = (verdictsImport?.liste || []).filter((v) => !v.ok)
   const produitsEnRupture = (verdictsImport?.liste || []).filter((v) => v.cas === 'rupture')
