@@ -69,16 +69,6 @@ export default function ParametresAdmin() {
 
   // --- États Produits ---
   const [listeProduits, setListeProduits] = useState([]);
-  const [nouveauProduit, setNouveauProduit] = useState({
-    seller: "",
-    product: "",
-    code: "",
-    current_quantity: 0,
-    defected_quantity: 0,
-    price: "",
-    upsell: "",
-    product_page: ""
-  });
 
   // --- États Entrepôts ---
   const [listeEntrepots, setListeEntrepots] = useState([]);
@@ -264,30 +254,6 @@ export default function ParametresAdmin() {
   // =====================================================================
   // ACTIONS PRODUITS
   // =====================================================================
-  async function ajouterProduit(e) {
-    e.preventDefault();
-    if (!tenantId) return;
-    if (!nouveauProduit.product || !nouveauProduit.price) return afficherMessage("Nom et prix obligatoires.", "erreur");
-
-    const { error } = await supabase.from("produits").insert([{
-      seller: nouveauProduit.seller.trim(),
-      product: nouveauProduit.product.trim(),
-      code: nouveauProduit.code.trim(),
-      current_quantity: parseInt(nouveauProduit.current_quantity) || 0,
-      defected_quantity: parseInt(nouveauProduit.defected_quantity) || 0,
-      price: parseFloat(nouveauProduit.price) || 0,
-      upsell: nouveauProduit.upsell.trim(),
-      product_page: nouveauProduit.product_page.trim(),
-      tenant_id: tenantId
-    }]);
-
-    if (error) afficherMessage("Erreur : " + error.message, "erreur");
-    else {
-      afficherMessage("Produit ajouté.", "succes");
-      setNouveauProduit({ seller: "", product: "", code: "", current_quantity: 0, defected_quantity: 0, price: "", upsell: "", product_page: "" });
-      chargerDonnees();
-    }
-  }
   // L'erreur n'était pas lue : un refus de la base passait pour un succès muet.
   async function supprimerProduit(id) { if (!tenantId || !window.confirm("Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.")) return; const { error } = await supabase.from("produits").delete().eq("id", id).eq("tenant_id", tenantId); if (error) afficherMessage("Suppression refusée : " + error.message, "erreur"); else afficherMessage("Produit supprimé.", "succes"); chargerDonnees(); }
 
@@ -812,49 +778,16 @@ export default function ParametresAdmin() {
                 <p className="text-sm text-[#1B2632]/60 mt-1">Gérez vos produits. Les stocks globaux s'actualiseront via vos déclarations de mouvements.</p>
               </div>
 
-              <form onSubmit={ajouterProduit} className="flex flex-col gap-4 mb-8 p-6 bg-[#faf9f7] rounded-xl border border-dashed border-[#C9C1B1]">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Product Name *</label>
-                    <input type="text" value={nouveauProduit.product} onChange={(e) => setNouveauProduit({...nouveauProduit, product: e.target.value})} className="fg-input" required />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Seller</label>
-                    <input type="text" value={nouveauProduit.seller} onChange={(e) => setNouveauProduit({...nouveauProduit, seller: e.target.value})} className="fg-input" />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Code (SKU)</label>
-                    <input type="text" value={nouveauProduit.code} onChange={(e) => setNouveauProduit({...nouveauProduit, code: e.target.value})} className="fg-input font-mono" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Initial Qty</label>
-                    <input type="number" value={nouveauProduit.current_quantity || ''} onChange={(e) => setNouveauProduit({...nouveauProduit, current_quantity: e.target.value})} className="fg-input" />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Defected Qty</label>
-                    <input type="number" value={nouveauProduit.defected_quantity || ''} onChange={(e) => setNouveauProduit({...nouveauProduit, defected_quantity: e.target.value})} className="fg-input" />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Price *</label>
-                    <input type="number" step="0.01" value={nouveauProduit.price} onChange={(e) => setNouveauProduit({...nouveauProduit, price: e.target.value})} className="fg-input" required />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Upsell</label>
-                    <input type="text" value={nouveauProduit.upsell} onChange={(e) => setNouveauProduit({...nouveauProduit, upsell: e.target.value})} className="fg-input" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                  <div className="flex flex-col gap-1.5 md:col-span-2">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Product Page URL</label>
-                    <input type="text" value={nouveauProduit.product_page} onChange={(e) => setNouveauProduit({...nouveauProduit, product_page: e.target.value})} className="fg-input" />
-                  </div>
-                  <div>
-                    <button type="submit" className="fg-btn-primary w-full">Ajouter le produit</button>
-                  </div>
-                </div>
-              </form>
+              {/* On ne crée plus de produit ici (26/10) : ce formulaire n'avait pas de
+                  vendeur, et un produit sans vendeur n'est visible d'aucun vendeur
+                  (produits_proprietaire.sql). Personne n'aurait fait le lien. L'écran
+                  Produits demande le vendeur ; cet onglet disparaîtra avec lui. */}
+              <div className="mb-8 p-5 bg-[#faf9f7] rounded-xl border border-dashed border-[#C9C1B1] flex flex-col sm:flex-row sm:items-center gap-3">
+                <p className="text-sm text-[#1B2632]/70 flex-1">
+                  Les produits se créent dans le menu <b>Produits</b>, qui demande à quel vendeur est le produit.
+                </p>
+                <a href="/produits" className="fg-btn-primary text-center">Aller à Produits</a>
+              </div>
 
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full whitespace-nowrap">
