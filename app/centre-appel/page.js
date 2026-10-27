@@ -185,6 +185,13 @@ export default function CentreAppelAgent() {
   const [catalogue, setCatalogue] = useState([])
 
   const [page, setPage] = useState(1)
+  // « Mes leads » : le bas a SA pagination (27/10). Avant, les deux groupes
+  // étaient une seule liste paginée : avec 82 leads en haut, le bas commençait
+  // en page 2 et un responsable ne le voyait jamais. `page` pagine le haut (et
+  // « Clôturés »), `pageBas` le bas ; l'un ne déplace pas l'autre.
+  const [pageBas, setPageBas] = useState(1)
+  // Un filtre, une recherche, un onglet : les deux groupes repartent page 1.
+  const allerPage1 = () => { setPage(1); setPageBas(1) }
   const [totalItems, setTotalItems] = useState(0)
   // « Mes leads » : combien à traiter, combien traités (le séparateur et
   // l'en-tête). null sur « Clôturés ».
@@ -245,7 +252,7 @@ export default function CentreAppelAgent() {
   useEffect(() => {
     const t = setTimeout(() => {
       setRechercheActive(recherche.trim())
-      setPage(1)
+      allerPage1()
     }, 400)
     return () => clearTimeout(t)
   }, [recherche])
@@ -346,7 +353,7 @@ export default function CentreAppelAgent() {
   // le premier chargement part avec une liste vide — donc sans les leads à
   // rappeler — et rien ne le relancerait quand les statuts arrivent.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
+  }, [page, pageBas, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
   // La requête des commandes ne ramène que `agent_id` ; le nom vient de la liste
@@ -537,7 +544,7 @@ export default function CentreAppelAgent() {
       alert('Erreur : ' + (e?.message || e))
     }
     setRemonteeEnCours(false)
-    setPage(1)
+    allerPage1()
     await chargerCommandes(1, ongletActif, null)
   }
 
@@ -583,18 +590,23 @@ export default function CentreAppelAgent() {
       const nbHaut = nA || 0
       const nbBas = nB || 0
 
-      // Une seule pagination sur les deux groupes mis bout à bout : la page
-      // lit dans le premier tant qu'il en reste, puis dans le second, à partir
-      // de ce que les pages précédentes ont déjà montré.
+      // DEUX paginations indépendantes (27/10) : chaque groupe lit sa page, et
+      // le séparateur du bas est sur CHAQUE page, juste après le haut. Une
+      // page demandée au-delà de la dernière (le groupe a rétréci) est
+      // ramenée à la dernière.
+      const pagesHaut = Math.max(1, Math.ceil(nbHaut / ITEMS_PER_PAGE))
+      const pagesBas = Math.max(1, Math.ceil(nbBas / ITEMS_PER_PAGE))
+      const pH = Math.min(pageActuelle, pagesHaut)
+      const pB = Math.min(pageBas, pagesBas)
       const lectures = []
-      if (debut < nbHaut) {
+      if (nbHaut > 0) {
         lectures.push(groupeHaut(supabase.from('commandes').select(COLONNES), agentId, maintenant)
           .order('remonte_le', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: false }).order('id', { ascending: false })
-          .range(debut, Math.min(fin, nbHaut - 1))
+          .range((pH - 1) * ITEMS_PER_PAGE, pH * ITEMS_PER_PAGE - 1)
           .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'a_traiter' }))))
       }
-      if (fin >= nbHaut && nbBas > 0) {
+      if (nbBas > 0) {
         // Les rappels d'abord, le plus proche en premier (ce qui va bientôt
         // remonter) ; puis le reste par dernière mise à jour. Seuls les
         // rappels portent une heure : confirmer-appel l'efface sur tout autre
@@ -602,15 +614,12 @@ export default function CentreAppelAgent() {
         lectures.push(groupeBas(supabase.from('commandes').select(COLONNES), agentId, maintenant)
           .order('date_rappel', { ascending: true, nullsFirst: false })
           .order('updated_at', { ascending: false }).order('id', { ascending: false })
-          .range(Math.max(0, debut - nbHaut), fin - nbHaut)
+          .range((pB - 1) * ITEMS_PER_PAGE, pB * ITEMS_PER_PAGE - 1)
           .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'traite' }))))
       }
       data = (await Promise.all(lectures)).flat()
       total = nbHaut + nbBas
-      // Le séparateur ne se dessine qu'une fois : sur la page où le bas
-      // commence, à la place où il commence (-1 : pas sur cette page).
-      const separateur = debut <= nbHaut && nbHaut <= fin && nbBas > 0 ? nbHaut - debut : -1
-      setComptes({ aTraiter: nbHaut, traites: nbBas, separateur })
+      setComptes({ aTraiter: nbHaut, traites: nbBas, pageHaut: pH, pagesHaut, pageBas: pB, pagesBas })
     } else {
       // « CLÔTURÉS » : exactement ce qui a quitté « Mes leads » — statut qui
       // ferme sans livreur, ou livraison finie. Pas de chevauchement avec le
@@ -798,12 +807,12 @@ export default function CentreAppelAgent() {
     await chargerCommandes(page, ongletActif, agentActuel ? agentActuel.id : null)
   }
 
-  const appliquer = (setter) => (v) => { setter(v); setPage(1) }
+  const appliquer = (setter) => (v) => { setter(v); allerPage1() }
 
   function reinitialiserFiltres() {
     setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut('')
     setFiltreProduit(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays('')
-    setPage(1)
+    allerPage1()
   }
 
   // Un statut appartient soit à tous les pays (pays_id vide), soit à un seul.
@@ -881,7 +890,7 @@ export default function CentreAppelAgent() {
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full lg:w-auto">
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => { setOngletActif('a_traiter'); setPage(1); setCommandeSelectionnee(null); setFiltreStatut(''); }}
+                onClick={() => { setOngletActif('a_traiter'); allerPage1(); setCommandeSelectionnee(null); setFiltreStatut(''); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
                   ongletActif === 'a_traiter' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
@@ -889,7 +898,7 @@ export default function CentreAppelAgent() {
                 Mes leads
               </button>
               <button
-                onClick={() => { setOngletActif('historique'); setPage(1); setCommandeSelectionnee(null); }}
+                onClick={() => { setOngletActif('historique'); allerPage1(); setCommandeSelectionnee(null); }}
                 className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
                   ongletActif === 'historique' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
@@ -906,7 +915,11 @@ export default function CentreAppelAgent() {
               {comptes ? (
                 <>
                   <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{comptes.aTraiter} à traiter</span>
-                  {' · '}{comptes.traites} en suivi
+                  {' · '}
+                  <button type="button" className="underline decoration-dotted underline-offset-2 hover:text-[#1B2632]"
+                    onClick={() => document.getElementById('separateur-suivi')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                    {comptes.traites} en suivi
+                  </button>
                 </>
               ) : (
                 <>{totalItems} commande{totalItems > 1 ? 's' : ''} clôturée{totalItems > 1 ? 's' : ''}</>
@@ -1025,12 +1038,12 @@ export default function CentreAppelAgent() {
             <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm w-full sm:w-auto">
               <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
                 <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest shrink-0">Du</span>
-                <input type="date" value={dateDebut} onChange={(e) => { setDateDebut(e.target.value); setPage(1); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
+                <input type="date" value={dateDebut} onChange={(e) => { setDateDebut(e.target.value); allerPage1(); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
               </div>
               <div className="hidden sm:block w-[1px] h-6 bg-[#C9C1B1]/40"></div>
               <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
                 <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest shrink-0">Au</span>
-                <input type="date" value={dateFin} onChange={(e) => { setDateFin(e.target.value); setPage(1); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
+                <input type="date" value={dateFin} onChange={(e) => { setDateFin(e.target.value); allerPage1(); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
               </div>
             </div>
 
@@ -1082,17 +1095,22 @@ export default function CentreAppelAgent() {
                   // son groupe), un lead à traiter par son arrivée.
                   const traite = cmd.groupe !== 'a_traiter'
                   const dateAffichage = traite ? (cmd.updated_at ? new Date(cmd.updated_at) : null) : (cmd.created_at ? new Date(cmd.created_at) : null)
-                  // Le séparateur : avant le premier lead traité de « Mes leads ».
-                  const separateur = comptes && i === comptes.separateur
+                  // Le séparateur : avant le premier lead du bas, sur chaque page.
+                  const separateur = comptes && cmd.groupe === 'traite' && commandes[i - 1]?.groupe !== 'traite'
+                  // Le pager de chaque groupe, après sa dernière ligne, s'il a plusieurs pages.
+                  const finDeGroupe = comptes && cmd.groupe !== commandes[i + 1]?.groupe
+                  const pager = finDeGroupe && (cmd.groupe === 'a_traiter'
+                    ? comptes.pagesHaut > 1 && { libelle: 'À traiter', page: comptes.pageHaut, pages: comptes.pagesHaut, total: comptes.aTraiter, aller: setPage }
+                    : comptes.pagesBas > 1 && { libelle: 'En suivi', page: comptes.pageBas, pages: comptes.pagesBas, total: comptes.traites, aller: setPageBas })
 
                   return (
                     <Fragment key={cmd.id}>
                     {separateur && (
-                      <tr className="bg-[#F4F0E6]">
+                      <tr id="separateur-suivi" className="bg-[#F4F0E6] scroll-mt-14">
                         <td colSpan={nbColonnes} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 border-y border-[#C9C1B1]/60">
-                          {comptes.aTraiter === 0 ? 'Rien à traiter' : `Fin des ${comptes.aTraiter} à traiter`}
+                          {comptes.aTraiter === 0 ? 'Rien à traiter' : `${comptes.aTraiter} à traiter au-dessus`}
                           <span className="text-[#1B2632]/30 mx-2">•</span>
-                          {comptes.traites} en suivi : injoignables, confirmées pas encore livrées
+                          {comptes.traites} en suivi : injoignables, rappels à venir, confirmées pas encore livrées
                         </td>
                       </tr>
                     )}
@@ -1186,6 +1204,23 @@ export default function CentreAppelAgent() {
                         </button>
                       </td>
                     </tr>
+                    {pager && (
+                      <tr className="bg-[#EEE9DF]/30">
+                        <td colSpan={nbColonnes} className="px-6 py-2.5">
+                          <div className="flex items-center justify-between gap-3 text-xs text-[#1B2632]/60">
+                            <span>
+                              <b className="text-[#1B2632]/80">{pager.libelle}</b> : {(pager.page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(pager.page * ITEMS_PER_PAGE, pager.total)} sur {pager.total}
+                            </span>
+                            <span className="flex gap-2">
+                              <button onClick={() => pager.aller(pager.page - 1)} disabled={pager.page <= 1 || loading}
+                                className="px-3 py-1.5 rounded-lg font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50">Précédent</button>
+                              <button onClick={() => pager.aller(pager.page + 1)} disabled={pager.page >= pager.pages || loading}
+                                className="px-3 py-1.5 rounded-lg font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50">Suivant</button>
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                     </Fragment>
                   )
                 })
@@ -1194,6 +1229,7 @@ export default function CentreAppelAgent() {
           </table>
         </div>
 
+        {ongletActif === 'historique' && (
         <div className="bg-[#EEE9DF]/20 border-t border-[#C9C1B1]/50 px-6 py-4 flex items-center justify-between">
           <span className="text-sm text-[#1B2632]/60">Page {page} sur {totalPages || 1}</span>
           <div className="flex gap-2">
@@ -1201,6 +1237,7 @@ export default function CentreAppelAgent() {
             <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages || totalPages === 0 || loading} className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors">Suivant</button>
           </div>
         </div>
+        )}
       </div>
 
       {commandeSelectionnee && (
