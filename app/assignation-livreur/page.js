@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
+import { texteNormalise } from '../../lib/texteNormalise.mjs'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 
@@ -17,6 +18,9 @@ export default function AssignationLivreurPage() {
 
   const [commandes, setCommandes] = useState([])
   const [livreurs, setLivreurs] = useState([])
+  // Les zones de l'entreprise : le ✓ d'un livreur se décide sur la zone de la
+  // commande, comme dans la base (livreur_pour_commande).
+  const [zones, setZones] = useState([])
   const [totalCommandes, setTotalCommandes] = useState(0)
   const [pageActuelle, setPageActuelle] = useState(0)
   const [chargement, setChargement] = useState(true)
@@ -45,14 +49,18 @@ export default function AssignationLivreurPage() {
   async function chargerLivreurs() {
     if (!tenantKey) return
 
-    const { data, error } = await supabase
-      .from('livreurs')
-      .select('id, nom, zone, pays_id')
-      .eq('tenant_id', tenantKey)
-      .eq('actif', true)
-      .order('nom')
+    const [{ data, error }, { data: zonesData }] = await Promise.all([
+      supabase
+        .from('livreurs')
+        .select('id, nom, zone, pays_id, user_id')
+        .eq('tenant_id', tenantKey)
+        .eq('actif', true)
+        .order('nom'),
+      supabase.from('zones').select('id, nom_zone, pays_id').eq('tenant_id', tenantKey),
+    ])
 
     if (!error) setLivreurs(data || [])
+    setZones(zonesData || [])
   }
 
   async function chargerCommandes(page, onglet) {
@@ -238,13 +246,16 @@ export default function AssignationLivreurPage() {
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
                   {commandes.map((cmd) => {
-                    // Hard rule: same country. The automatic routing already tried the
-                    // livreurs of the order's zone; when it found nobody (or the manager
-                    // wants to override), any livreur of the country can be chosen —
-                    // those of the matching zone come first.
-                    const memeZone = (l) =>
-                      !!cmd.ville_zone && !!l.zone &&
-                      cmd.ville_zone.toLowerCase().includes(l.zone.trim().toLowerCase());
+                    // Règle dure : même pays. Le ✓ (et la première place) va au livreur que
+                    // la BASE choisirait (livreur_pour_commande, 27/10) — jamais à un autre :
+                    //   · la commande a une zone (de son pays) : le livreur de CETTE zone ;
+                    //   · sinon : le livreur dont la zone EST la ville, aux accents, à la
+                    //     casse et aux espaces près (texteNormalise = texte_normalise).
+                    // Plus de « contient » : « Ben » ne vaut pas « Benguela ». Le choix à la
+                    // main reste libre parmi tous les livreurs du pays.
+                    const zoneCmd = cmd.zone_id ? zones.find((z) => z.id === cmd.zone_id && z.pays_id === cmd.pays_id) : null
+                    const cible = zoneCmd ? texteNormalise(zoneCmd.nom_zone) : texteNormalise(cmd.ville_zone)
+                    const memeZone = (l) => !!l.user_id && cible !== null && texteNormalise(l.zone) === cible;
                     const livreursFiltres = livreurs
                       .filter((l) => l.pays_id === cmd.pays_id)
                       .sort((a, b) => Number(memeZone(b)) - Number(memeZone(a)));
