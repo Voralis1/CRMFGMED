@@ -15,6 +15,8 @@ import { cleNormalisee } from '../../supabase/functions/_shared/champs.ts'
 // Google de « Mon API ».
 import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/modeleImport.mjs'
 import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichierImport.mjs'
+import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
+import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRappel.mjs'
 
 const TAILLE_PAGE = 50
 
@@ -140,6 +142,9 @@ export default function GestionCommandesPage() {
   // sans adresse le laissait devant un refus qu'il ne pouvait pas lever.
   const [adresseCorrigee, setAdresseCorrigee] = useState('')
   const [erreurStatut, setErreurStatut] = useState('')
+  // L'heure du rappel quand le statut choisi en demande un (necessite_rappel) :
+  // confirmer-appel l'exige, depuis Commandes comme depuis le Centre d'appel.
+  const [rappelCorrige, setRappelCorrige] = useState('')
   const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
 
   // Import : on choisit D'ABORD d'où partent les leads. Tant que ce n'est
@@ -484,6 +489,7 @@ export default function GestionCommandesPage() {
     // Centre d'appel). La base le refuse de toute façon.
     setNouveauStatut(cmd.statut_confirmation && cmd.statut_confirmation !== 'Pending' ? cmd.statut_confirmation : '')
     setAdresseCorrigee(cmd.adresse || '')
+    setRappelCorrige(cmd.date_rappel && new Date(cmd.date_rappel) > new Date() ? versChampLocal(cmd.date_rappel) : '')
     setErreurStatut('')
 
     const { data } = await supabase
@@ -494,6 +500,9 @@ export default function GestionCommandesPage() {
 
     setHistorique(data || [])
   }
+
+  // Le statut choisi dans le tiroir demande-t-il un rappel ? Le drapeau, pas le mot.
+  const rappelDemandeDrawer = listeStatutsDB.some((s) => s.nom === nouveauStatut && s.necessite_rappel)
 
   // Remettre une commande dans un autre statut.
   //
@@ -506,7 +515,12 @@ export default function GestionCommandesPage() {
     if (!detail || !nouveauStatut) return
     const statutChange = nouveauStatut !== detail.statut_confirmation
     const adresseChange = adresseCorrigee.trim() !== String(detail.adresse || '').trim()
-    if (!statutChange && !adresseChange) return
+    const rappelIso = depuisChampLocal(rappelCorrige)
+    const rappelChange = rappelDemandeDrawer && rappelIso !== (detail.date_rappel ? new Date(detail.date_rappel).toISOString() : '')
+    if (!statutChange && !adresseChange && !rappelChange) return
+    // Même règle que confirmer-appel (_shared/appel.ts), dite avant l'envoi.
+    const refusRappel = rappelRefuse(listeStatutsDB, nouveauStatut, detail.pays_id || null, rappelIso)
+    if (refusRappel) { setErreurStatut(refusRappel); return }
     setErreurStatut('')
 
     setChangementEnCours(true)
@@ -525,6 +539,8 @@ export default function GestionCommandesPage() {
           // Envoyée avec le statut : la règle « pas de confirmation sans
           // adresse » juge l'adresse qu'on est en train d'écrire.
           adresse: adresseCorrigee,
+          // L'instant (UTC), jamais l'heure brute du champ (lib/heureRappel.mjs).
+          date_rappel: rappelDemandeDrawer ? rappelIso : null,
           // Une correction de bureau n'est pas un appel : pas de durée, et une
           // note qui dit ce que c'est. Sans elle, l'historique laisserait
           // croire que quelqu'un a eu le client au téléphone.
@@ -537,7 +553,8 @@ export default function GestionCommandesPage() {
     setChangementEnCours(false)
     if (resultat.error) { setErreurStatut(resultat.error); return }
 
-    const maj = { ...detail, statut_confirmation: nouveauStatut, adresse: adresseCorrigee.trim() || null }
+    const maj = { ...detail, statut_confirmation: nouveauStatut, adresse: adresseCorrigee.trim() || null,
+      date_rappel: rappelDemandeDrawer ? rappelIso : null }
     setDetail(maj)
     await ouvrirDetail(maj)
     chargerCommandes(pageActuelle)
@@ -1234,7 +1251,7 @@ export default function GestionCommandesPage() {
 
                     <td className="px-4 py-3.5 align-top">
                       <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
-                      {cmd.date_rappel && (
+                      {cmd.date_rappel && listeStatutsDB.some((st) => st.nom === cmd.statut_confirmation && st.necessite_rappel) && (
                         <span className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-1 w-fit">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
                           À rappeler · {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
@@ -1896,11 +1913,28 @@ export default function GestionCommandesPage() {
                             .map((s) => <option key={s.id} value={s.nom}>{s.nom}</option>)}
                         </select>
                       </div>
+                      {rappelDemandeDrawer && (
+                        <div className="flex-1 min-w-[200px]">
+                          <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
+                            Rappel <span className="text-[#A35139]">*</span>
+                          </label>
+                          <input
+                            type="datetime-local"
+                            required
+                            min={bornesChamp(RAPPEL_MAX_JOURS).min}
+                            max={bornesChamp(RAPPEL_MAX_JOURS).max}
+                            className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
+                            value={rappelCorrige}
+                            onChange={(e) => { setRappelCorrige(e.target.value); setErreurStatut('') }}
+                          />
+                        </div>
+                      )}
                       <button
                         onClick={changerStatut}
                         disabled={changementEnCours || !nouveauStatut
                           || (nouveauStatut === detail.statut_confirmation
-                              && adresseCorrigee.trim() === String(detail.adresse || '').trim())}
+                              && adresseCorrigee.trim() === String(detail.adresse || '').trim()
+                              && !(rappelDemandeDrawer && depuisChampLocal(rappelCorrige) !== (detail.date_rappel ? new Date(detail.date_rappel).toISOString() : '')))}
                         className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40 transition-colors cursor-pointer"
                       >
                         {changementEnCours ? 'Enregistrement...' : 'Appliquer'}

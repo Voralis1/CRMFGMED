@@ -8,6 +8,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import VignetteProduit from '../components/VignetteProduit'
 import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
+import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
+import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -397,9 +399,9 @@ export default function CentreAppelAgent() {
 
   // Les statuts rangés par ce qu'ils FONT (drapeaux de Paramètres), jamais par
   // des noms écrits ici : un statut ajouté plus tard trouve sa place seul.
-  //   · rappels : ouverts, necessite_rappel — Reminder. En HAUT, avec Pending,
-  //     tant que la fonctionnalité C (l'heure du rappel) n'existe pas : en bas
-  //     sans minuterie, un rappel coulerait et rien ne le ferait remonter.
+  //   · rappels : ouverts, necessite_rappel — Reminder. EN BAS jusqu'à son
+  //     heure (commandes.date_rappel), EN HAUT dès qu'elle est passée. Un
+  //     rappel sans heure (d'avant le 27/10) est en haut : il ne coule pas.
   //   · bas     : ouverts, ni Pending ni rappel — Unreached.
   //   · suivis  : ferment ET envoient au livreur — Confirmed.
   //   · fermes  : ferment SANS envoyer au livreur — Cancelled, Spam, Double, Test.
@@ -449,15 +451,29 @@ export default function CentreAppelAgent() {
     return q
   }
 
-  // « Mes leads », en haut : Pending, les rappels, et ce qu'un manager a
-  // remonté (quel que soit son statut — un Unreached remonté reste Unreached).
-  const groupeHaut = (q, agentId) => appliquerFiltres(q, agentId, 'created_at')
-    .or(`statut_confirmation.is.null,statut_confirmation.in.(${listeNoms([PENDING, ...statutsRappel.map((s) => s.nom)])}),remonte_le.not.is.null`)
+  // « Mes leads », en haut : Pending, ce qu'un manager a remonté (quel que
+  // soit son statut — un Unreached remonté reste Unreached), et les rappels
+  // dont l'heure est passée. `maintenant` est figé au chargement : un rappel
+  // qui arrive à échéance pendant que l'écran est ouvert remonte au
+  // rechargement suivant (voir le minuteur plus bas).
+  const nomsRappel = listeNoms(statutsRappel.map((s) => s.nom))
+  const groupeHaut = (q, agentId, maintenant) => appliquerFiltres(q, agentId, 'created_at')
+    .or([
+      'statut_confirmation.is.null', `statut_confirmation.eq.${PENDING}`, 'remonte_le.not.is.null',
+      ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),or(date_rappel.is.null,date_rappel.lte."${maintenant}"))`] : []),
+    ].join(','))
     .or(LIVRAISON_EN_COURS)
-  // « Mes leads », en bas : Unreached et Confirmed non livré, non remontés.
-  // Pas verrouillés : l'agent les ouvre et les traite comme avant.
-  const groupeBas = (q, agentId) => appliquerFiltres(q, agentId, 'created_at')
-    .in('statut_confirmation', [...statutsBas, ...statutsSuivis].map((s) => s.nom))
+  // « Mes leads », en bas : Unreached, Confirmed non livré, et les rappels pas
+  // encore dus — non remontés. Pas verrouillés : l'agent les ouvre et les
+  // traite comme avant.
+  const nomsBas = [...statutsBas, ...statutsSuivis].map((s) => s.nom)
+  const groupeBas = (q, agentId, maintenant) => appliquerFiltres(q, agentId, 'created_at')
+    .or([
+      ...(nomsBas.length ? [`statut_confirmation.in.(${listeNoms(nomsBas)})`] : []),
+      ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),date_rappel.gt."${maintenant}")`] : []),
+      // aucun statut connu : une condition qui ne retient rien plutôt qu'un or() vide
+      'id.is.null',
+    ].join(','))
     .is('remonte_le', null)
     .or(LIVRAISON_EN_COURS)
   // Ce que le bouton remonte : les « Unreached » (statuts du bas, ouverts)
@@ -468,6 +484,24 @@ export default function CentreAppelAgent() {
     .or(LIVRAISON_EN_COURS)
 
   const [remonteeEnCours, setRemonteeEnCours] = useState(false)
+
+  // Le temps qui passe : « dans 2 h » se met à jour chaque minute, et un
+  // rappel du bas dont l'heure arrive remonte dans la file sans que l'agent
+  // recharge la page. Jamais pendant qu'un lead est ouvert dans le panneau.
+  const [maintenantAffiche, setMaintenantAffiche] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setMaintenantAffiche(Date.now()), 60000)
+    return () => clearInterval(t)
+  }, [])
+  useEffect(() => {
+    if (ongletActif !== 'a_traiter' || loading || commandeSelectionnee) return
+    const vueGlobale = ROLES_VUE_GLOBALE.includes((roleNom || '').toLowerCase())
+    if (!agentActuel && !vueGlobale) return
+    const echu = commandes.some((c) => c.groupe === 'traite' && c.date_rappel
+      && new Date(c.date_rappel).getTime() <= maintenantAffiche)
+    if (echu) chargerCommandes(page, ongletActif, agentActuel ? agentActuel.id : null)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maintenantAffiche])
 
   // Le bouton « Remonter » (manager, admin) : TOUS les Unreached que les
   // filtres retiennent, pas seulement les 50 de l'écran — et la confirmation
@@ -521,7 +555,7 @@ export default function CentreAppelAgent() {
     const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantKey)
     setListeZones(zonesListDB || [])
 
-    const COLONNES = `id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, statut_livraison, remonte_le, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`
+    const COLONNES = `id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, statut_livraison, remonte_le, date_rappel, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`
 
     let data = []
     let total = 0
@@ -541,9 +575,10 @@ export default function CentreAppelAgent() {
       // ajouté plus tard), ou quand sa livraison est finie (livrée, retournée,
       // annulée — un retour est définitif : confirmer-livraison refuse de
       // rouvrir une livraison close). Il est alors dans « Clôturés ».
+      const maintenant = new Date().toISOString()
       const [{ count: nA }, { count: nB }] = await Promise.all([
-        groupeHaut(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId),
-        groupeBas(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId),
+        groupeHaut(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
+        groupeBas(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
       ])
       const nbHaut = nA || 0
       const nbBas = nB || 0
@@ -553,14 +588,19 @@ export default function CentreAppelAgent() {
       // de ce que les pages précédentes ont déjà montré.
       const lectures = []
       if (debut < nbHaut) {
-        lectures.push(groupeHaut(supabase.from('commandes').select(COLONNES), agentId)
+        lectures.push(groupeHaut(supabase.from('commandes').select(COLONNES), agentId, maintenant)
           .order('remonte_le', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: false }).order('id', { ascending: false })
           .range(debut, Math.min(fin, nbHaut - 1))
           .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'a_traiter' }))))
       }
       if (fin >= nbHaut && nbBas > 0) {
-        lectures.push(groupeBas(supabase.from('commandes').select(COLONNES), agentId)
+        // Les rappels d'abord, le plus proche en premier (ce qui va bientôt
+        // remonter) ; puis le reste par dernière mise à jour. Seuls les
+        // rappels portent une heure : confirmer-appel l'efface sur tout autre
+        // statut.
+        lectures.push(groupeBas(supabase.from('commandes').select(COLONNES), agentId, maintenant)
+          .order('date_rappel', { ascending: true, nullsFirst: false })
           .order('updated_at', { ascending: false }).order('id', { ascending: false })
           .range(Math.max(0, debut - nbHaut), fin - nbHaut)
           .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'traite' }))))
@@ -682,7 +722,9 @@ export default function CentreAppelAgent() {
       // pas sur la commande. La pré-remplir avec la note du lead recopierait
       // la même phrase sur chaque appel, et on ne saurait plus qui a dit quoi.
       notes: '',
-      date_rappel: '',
+      // Le rappel en cours, s'il est encore à venir : l'agent le garde ou le
+      // déplace. Dans le fuseau de SON navigateur (lib/heureRappel.mjs).
+      date_rappel: commande.date_rappel && new Date(commande.date_rappel) > new Date() ? versChampLocal(commande.date_rappel) : '',
       prixUnitaire: prixUnit
     })
   }
@@ -696,6 +738,14 @@ export default function CentreAppelAgent() {
     // celui qui décide ; ici on évite seulement l'aller-retour.
     if (adresseExigee) {
       setErreurEnvoi(MESSAGE_ADRESSE)
+      return
+    }
+    // L'heure du rappel : l'heure locale du champ devient un instant UTC ici,
+    // jamais envoyée brute. Même règle que confirmer-appel (_shared/appel.ts).
+    const dateRappelIso = depuisChampLocal(formData.date_rappel)
+    const refusRappel = rappelRefuse(statutsDeLaCommande, statutChoisi, formData.pays_id || null, dateRappelIso)
+    if (refusRappel) {
+      setErreurEnvoi(refusRappel)
       return
     }
     setErreurEnvoi('')
@@ -723,7 +773,8 @@ export default function CentreAppelAgent() {
           // Mesurée, pas saisie : l'agent a autre chose à faire que de
           // chronométrer son propre appel.
           duree_secondes: tempsEcoule,
-          ...formData
+          ...formData,
+          date_rappel: rappelDemande ? dateRappelIso : null,
         }),
       }
     )
@@ -742,7 +793,9 @@ export default function CentreAppelAgent() {
     // mesuré pour cet appel commençait pendant qu'il soufflait.
     setCommandeSelectionnee(null)
 
-    await chargerCommandes(page, ongletActif, agentActuel?.id)
+    // agentActuel est null pour un responsable : `?.id` donnait undefined, et
+    // chargerCommandes ne rechargeait rien après son enregistrement.
+    await chargerCommandes(page, ongletActif, agentActuel ? agentActuel.id : null)
   }
 
   const appliquer = (setter) => (v) => { setter(v); setPage(1) }
@@ -767,6 +820,10 @@ export default function CentreAppelAgent() {
     (s) => s.nom === statutChoisi && s.declenche_assignation
   )
   const adresseExigee = statutEnvoieAuLivreur && !String(formData.adresse || '').trim()
+  // Le statut choisi demande-t-il un rappel ? Le drapeau `necessite_rappel`,
+  // pas le mot « Reminder ».
+  const rappelDemande = statutsDeLaCommande.some((s) => s.nom === statutChoisi && s.necessite_rappel)
+  const bornesRappel = bornesChamp(RAPPEL_MAX_JOURS)
 
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
   const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
@@ -1103,6 +1160,14 @@ export default function CentreAppelAgent() {
                       )}
                       <td className="px-6 py-4">
                         <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                        {cmd.date_rappel && statutsRappel.some((st) => st.nom === cmd.statut_confirmation) && (() => {
+                          const r = libelleRappel(cmd.date_rappel, maintenantAffiche)
+                          return r && (
+                            <div className={`text-[11px] mt-1 whitespace-nowrap ${r.du ? 'font-bold text-[#A35139]' : 'text-[#8a5a1f]'}`}>
+                              {r.texte} · {r.relatif}
+                            </div>
+                          )
+                        })()}
                         {cmd.remonte_le && (
                           <div className="text-[11px] font-bold text-[#A35139] mt-1 whitespace-nowrap">
                             ↑ Remonté le {new Date(cmd.remonte_le).toLocaleDateString('fr-FR')}
@@ -1365,15 +1430,23 @@ export default function CentreAppelAgent() {
                   ))}
                 </select>
 
-                {(statutChoisi.toLowerCase().includes('rappel') || statutChoisi.toLowerCase().includes('reminder')) && (
+                {rappelDemande && (
                   <div className="mt-3">
-                    <label className="block text-[11px] font-bold text-[#8a5a1f] uppercase mb-1">Date et heure de rappel</label>
+                    <label className="block text-[11px] font-bold text-[#8a5a1f] uppercase mb-1">
+                      Date et heure de rappel <span className="text-[#A35139]">*</span>
+                    </label>
                     <input
                       type="datetime-local"
+                      required
+                      min={bornesRappel.min}
+                      max={bornesRappel.max}
                       value={formData.date_rappel}
-                      onChange={(e) => setFormData({...formData, date_rappel: e.target.value})}
+                      onChange={(e) => { setFormData({...formData, date_rappel: e.target.value}); setErreurEnvoi('') }}
                       className="w-full border border-[#FFB162]/50 rounded-lg px-3 py-2 text-sm text-[#8a5a1f] bg-white outline-none"
                     />
+                    <p className="mt-1 text-[11px] text-[#8a5a1f]/80">
+                      À votre heure. Le lead reste en bas de la liste jusque-là, puis remonte seul dans la file.
+                    </p>
                   </div>
                 )}
 

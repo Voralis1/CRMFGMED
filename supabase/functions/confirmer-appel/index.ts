@@ -4,7 +4,7 @@
 import {
   adminClient, assertTenant, getCaller, handle, HttpError, json, myAgentId, readJson, requireAny,
 } from '../_shared/auth.ts'
-import { adresseManquante, MESSAGE_ADRESSE_MANQUANTE } from '../_shared/appel.ts'
+import { adresseManquante, demandeRappel, MESSAGE_ADRESSE_MANQUANTE, rappelRefuse } from '../_shared/appel.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -62,7 +62,7 @@ Deno.serve(handle(async (req) => {
   // L'adresse retenue est celle envoyée avec l'appel, sinon celle déjà là.
   const { data: statuts } = await sb
     .from('statuts')
-    .select('nom, code, pays_id, declenche_assignation')
+    .select('nom, code, pays_id, declenche_assignation, necessite_rappel')
     .eq('tenant_id', commande.tenant_id)
   const paysFinal = pays_id || commande.pays_id
   const adresseFinale = adresse !== undefined ? adresse : commande.adresse
@@ -70,7 +70,17 @@ Deno.serve(handle(async (req) => {
     throw new HttpError(400, MESSAGE_ADRESSE_MANQUANTE)
   }
 
-  const estRappel = statut.toLowerCase().includes('rappel') || statut.toLowerCase().includes('reminder')
+  // 0 ter. Un statut qui demande un rappel exige une heure à venir, à 30 jours
+  // au plus (_shared/appel.ts). Lu sur le drapeau `necessite_rappel`, plus sur
+  // le mot. Vérifié AVANT d'écrire l'appel, comme l'adresse.
+  const refusRappel = rappelRefuse(statuts ?? [], statut, paysFinal, date_rappel)
+  if (refusRappel) throw new HttpError(400, refusRappel)
+  // L'instant, en UTC. L'appel garde ce qui a été convenu à CET appel ; la
+  // commande porte le rappel en cours — et le perd dès qu'un autre statut est
+  // posé (sinon un Unreached garderait l'heure d'un ancien rappel).
+  const dateRappel = demandeRappel(statuts ?? [], statut, paysFinal)
+    ? new Date(String(date_rappel)).toISOString()
+    : null
 
   // 1. Log the call
   const { data: appel, error: erreurAppel } = await sb
@@ -93,7 +103,7 @@ Deno.serve(handle(async (req) => {
         && Number(duree_secondes) <= 3600
           ? Math.round(Number(duree_secondes))
           : null,
-      date_rappel: estRappel ? (date_rappel || null) : null,
+      date_rappel: dateRappel,
     })
     .select()
     .single()
@@ -103,6 +113,7 @@ Deno.serve(handle(async (req) => {
   // deno-lint-ignore no-explicit-any
   const maj: Record<string, any> = {
     statut_confirmation: statut,
+    date_rappel: dateRappel,
     updated_at: new Date().toISOString(),
   }
   if (source !== undefined) maj.source = source || null
