@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -120,6 +120,24 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
 const MESSAGE_ADRESSE = 'Ajoutez l\'adresse avant de confirmer. Un repère suffit (« près du marché, maison bleue ») : écrivez ce que le client a dit.'
 
 const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
+
+// Les livraisons encore en cours (les seules qu'on voit dans « Mes leads » :
+// livré, retour et annulé quittent la liste).
+const LIVRAISON_LIBELLES = { a_preparer: 'à préparer', expedie: 'expédiée' }
+const LIVRAISON_EN_COURS = 'statut_livraison.is.null,statut_livraison.not.in.(livre,retour,annule)'
+const LIVRAISONS_FINIES = ['livre', 'retour', 'annule']
+
+// Un lead que personne n'a touché (27/10, statut_pending.sql). Le TEXTE est
+// posé par la base : il ne dépend pas de la ligne « Pending » de `statuts`.
+// Tant que le rattrapage n'est pas passé, des leads anciens sont encore à
+// NULL : on lit les deux.
+const PENDING = 'Pending'
+const estPending = (statut) => !statut || statut === PENDING
+const FILTRE_PENDING = `statut_confirmation.is.null,statut_confirmation.eq.${PENDING}`
+
+// Les guillemets sont obligatoires : un nom contenant une virgule ou un
+// espace casserait la liste `in.()` de PostgREST.
+const listeNoms = (noms) => noms.map((n) => `"${String(n).replace(/"/g, '')}"`).join(',')
 // Changer l'agent d'un lead, c'est arbitrer la charge de travail : le CEO lit,
 // il n'arbitre pas.
 const ROLES_ASSIGNATION_AGENT = ['admin', 'manager', 'super_admin']
@@ -166,6 +184,9 @@ export default function CentreAppelAgent() {
 
   const [page, setPage] = useState(1)
   const [totalItems, setTotalItems] = useState(0)
+  // « Mes leads » : combien à traiter, combien traités (le séparateur et
+  // l'en-tête). null sur « Clôturés ».
+  const [comptes, setComptes] = useState(null)
   const ITEMS_PER_PAGE = 50
 
   const [agentActuel, setAgentActuel] = useState(null)
@@ -359,7 +380,7 @@ export default function CentreAppelAgent() {
       .update({ agent_id: agentId })
       .eq('id', commandeId)
       .eq('tenant_id', tenantKey)
-      .is('statut_confirmation', null)
+      .or(FILTRE_PENDING)
       .select('id')
 
     setAgentEnCours(null)
@@ -372,6 +393,118 @@ export default function CentreAppelAgent() {
 
     setCommandes((prec) => prec.map((c) => (c.id === commandeId ? { ...c, agent_id: agentId } : c)))
     setAgentChoisi((prec) => ({ ...prec, [commandeId]: '' }))
+  }
+
+  // Les statuts rangés par ce qu'ils FONT (drapeaux de Paramètres), jamais par
+  // des noms écrits ici : un statut ajouté plus tard trouve sa place seul.
+  //   · rappels : ouverts, necessite_rappel — Reminder. En HAUT, avec Pending,
+  //     tant que la fonctionnalité C (l'heure du rappel) n'existe pas : en bas
+  //     sans minuterie, un rappel coulerait et rien ne le ferait remonter.
+  //   · bas     : ouverts, ni Pending ni rappel — Unreached.
+  //   · suivis  : ferment ET envoient au livreur — Confirmed.
+  //   · fermes  : ferment SANS envoyer au livreur — Cancelled, Spam, Double, Test.
+  const sansPending = listeStatutsDB.filter((s) => s.code !== 'pending' && s.nom !== PENDING)
+  const statutsRappel = sansPending.filter((s) => !s.ferme_le_lead && s.necessite_rappel)
+  const statutsBas = sansPending.filter((s) => !s.ferme_le_lead && !s.necessite_rappel)
+  const statutsSuivis = sansPending.filter((s) => s.ferme_le_lead && s.declenche_assignation)
+  const statutsFermes = sansPending.filter((s) => s.ferme_le_lead && !s.declenche_assignation)
+
+  // Les filtres de l'écran, posés sur une requête neuve. La liste, ses
+  // comptes ET le bouton « Remonter » passent par ici : le bouton remonte
+  // exactement ce que la liste montre.
+  function appliquerFiltres(q, agentId, dateField) {
+    // Le cloisonnement vaut POUR TOUT LE MONDE, super_admin compris.
+    //
+    // Avant, le super_admin était exempté de ce filtre : le centre d'appel lui
+    // montrait les commandes de toutes les entreprises mélangées, sans rien
+    // pour dire laquelle était laquelle. Deux clients différents dans la même
+    // file d'appel, c'est une fuite entre entreprises, et c'est intenable à
+    // l'écran.
+    //
+    // Ce n'est pas une perte d'accès : `tenantId` renvoie déjà l'entreprise
+    // que le super_admin a CHOISIE (`tenantChoisi`, AuthContext). Il voit donc
+    // tout, une entreprise à la fois, et change d'entreprise par le sélecteur.
+    q = q.eq('tenant_id', tenantKey)
+
+    // 🔒 An agent only sees HIS orders
+    if (agentId) q = q.eq('agent_id', agentId)
+
+    if (dateDebut) q = q.gte(dateField, dateDebut)
+    if (dateFin) q = q.lte(dateField, `${dateFin}T23:59:59`)
+
+    if (rechercheActive) {
+      const r = rechercheActive.replace(/[%,()#]/g, '')
+      const rTel = r.replace(/[\s.\-]/g, '')
+      const conditions = [`client_nom.ilike.%${r}%`, `client_telephone.ilike.%${r}%`, `lead_id.ilike.%${r}%`]
+      if (rTel && rTel !== r) conditions.push(`client_telephone.ilike.%${rTel}%`)
+      q = q.or(conditions.join(','))
+    }
+
+    // Le pays est désormais obligatoire et verrouillé en base, donc on filtre
+    // dessus côté serveur : plus besoin de rapatrier 5000 lignes pour trier ici.
+    if (filtrePays) q = q.eq('pays_id', filtrePays)
+    if (filtreProduit) q = q.eq('produit', filtreProduit)
+    if (filtreVille) q = q.eq('ville_zone', filtreVille)
+    if (filtreSource) q = q.eq('source', filtreSource)
+    return q
+  }
+
+  // « Mes leads », en haut : Pending, les rappels, et ce qu'un manager a
+  // remonté (quel que soit son statut — un Unreached remonté reste Unreached).
+  const groupeHaut = (q, agentId) => appliquerFiltres(q, agentId, 'created_at')
+    .or(`statut_confirmation.is.null,statut_confirmation.in.(${listeNoms([PENDING, ...statutsRappel.map((s) => s.nom)])}),remonte_le.not.is.null`)
+    .or(LIVRAISON_EN_COURS)
+  // « Mes leads », en bas : Unreached et Confirmed non livré, non remontés.
+  // Pas verrouillés : l'agent les ouvre et les traite comme avant.
+  const groupeBas = (q, agentId) => appliquerFiltres(q, agentId, 'created_at')
+    .in('statut_confirmation', [...statutsBas, ...statutsSuivis].map((s) => s.nom))
+    .is('remonte_le', null)
+    .or(LIVRAISON_EN_COURS)
+  // Ce que le bouton remonte : les « Unreached » (statuts du bas, ouverts)
+  // que les filtres retiennent, pas encore remontés.
+  const groupeARemonter = (q) => appliquerFiltres(q, null, 'created_at')
+    .in('statut_confirmation', statutsBas.map((s) => s.nom))
+    .is('remonte_le', null)
+    .or(LIVRAISON_EN_COURS)
+
+  const [remonteeEnCours, setRemonteeEnCours] = useState(false)
+
+  // Le bouton « Remonter » (manager, admin) : TOUS les Unreached que les
+  // filtres retiennent, pas seulement les 50 de l'écran — et la confirmation
+  // dit combien, pour qu'un « 340 » fasse réfléchir. La base revérifie tout
+  // (remonter_leads : rôle, entreprise, statut) et rend le nombre réel.
+  async function remonterLeads() {
+    if (statutsBas.length === 0) return
+    const { count, error: erreurCompte } = await groupeARemonter(supabase.from('commandes').select('id', { count: 'exact', head: true }))
+    if (erreurCompte) { alert('Erreur : ' + erreurCompte.message); return }
+    if (!count) { alert('Aucun lead en attente de rappel ne correspond aux filtres.'); return }
+    if (!confirm(`Remonter ${count} lead${count > 1 ? 's' : ''} en attente de rappel ?\n\nIls passent en tête de la file de leur agent. Leur statut ne change pas.`)) return
+
+    setRemonteeEnCours(true)
+    try {
+      // D'abord TOUS les ids (par paquets de 1000, la limite de lecture),
+      // ensuite seulement on remonte : remonter en lisant ferait glisser les
+      // paquets suivants.
+      const ids = []
+      for (let i = 0; ; i += 1000) {
+        const { data, error } = await groupeARemonter(supabase.from('commandes').select('id')).order('id').range(i, i + 999)
+        if (error) throw error
+        ids.push(...(data || []).map((x) => x.id))
+        if (!data || data.length < 1000) break
+      }
+      let remontes = 0
+      for (let i = 0; i < ids.length; i += 500) {
+        const { data, error } = await supabase.rpc('remonter_leads', { p_tenant: tenantKey, p_ids: ids.slice(i, i + 500) })
+        if (error) throw error
+        remontes += data || 0
+      }
+      alert(`${remontes} lead${remontes > 1 ? 's' : ''} remonté${remontes > 1 ? 's' : ''}.`)
+    } catch (e) {
+      alert('Erreur : ' + (e?.message || e))
+    }
+    setRemonteeEnCours(false)
+    setPage(1)
+    await chargerCommandes(1, ongletActif, null)
   }
 
   // 🚀 CHARGEMENT STRICTEMENT CLOISONNÉ
@@ -388,102 +521,78 @@ export default function CentreAppelAgent() {
     const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantKey)
     setListeZones(zonesListDB || [])
 
-    let requeteBase = supabase.from('commandes').select('*', { count: 'exact', head: true })
-    let requeteData = supabase.from('commandes').select(`id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`)
+    const COLONNES = `id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, statut_livraison, remonte_le, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`
 
-    // Le cloisonnement vaut POUR TOUT LE MONDE, super_admin compris.
-    //
-    // Avant, le super_admin était exempté de ce filtre : le centre d'appel lui
-    // montrait les commandes de toutes les entreprises mélangées, sans rien
-    // pour dire laquelle était laquelle. Deux clients différents dans la même
-    // file d'appel, c'est une fuite entre entreprises, et c'est intenable à
-    // l'écran.
-    //
-    // Ce n'est pas une perte d'accès : `tenantId` renvoie déjà l'entreprise
-    // que le super_admin a CHOISIE (`tenantChoisi`, AuthContext). Il voit donc
-    // tout, une entreprise à la fois, et change d'entreprise par le sélecteur.
-    // Les autres écrans fonctionnent ainsi depuis le début — celui-ci était le
-    // seul à part.
-    requeteBase = requeteBase.eq('tenant_id', tenantKey)
-    requeteData = requeteData.eq('tenant_id', tenantKey)
-
-    // 🔒 An agent only sees HIS orders
-    if (agentId) {
-      requeteBase = requeteBase.eq('agent_id', agentId)
-      requeteData = requeteData.eq('agent_id', agentId)
-    }
+    let data = []
+    let total = 0
 
     if (onglet === 'a_traiter') {
-      // « À traiter », ce n'est pas « jamais touché ».
+      // « MES LEADS » : UNE liste, deux groupes, une seule pagination.
       //
-      // Un lead marqué « Ne répond pas » ou « Hors ligne » n'est PAS fini : il
-      // doit revenir chez son agent jusqu'à ce qu'il soit confirmé ou annulé.
-      // Avant, le moindre statut le faisait disparaître de la file — et
-      // personne ne rappelait jamais ce client.
+      //   1. EN HAUT, la file de l'agent : ce qu'un manager a remonté (le plus
+      //      anciennement remonté d'abord), puis Pending et les rappels, par
+      //      arrivée.
+      //   2. EN BAS : Unreached et Confirmed pas encore livré, par dernière mise
+      //      à jour. Pas verrouillés : « pas dans ma file maintenant », jamais
+      //      « je ne peux pas y toucher ».
       //
-      // Ce qui ferme le dossier est un réglage (`statuts.ferme_le_lead`), pas
-      // une liste de noms écrite ici : les statuts changent d'un pays à
-      // l'autre.
-      const ouverts = listeStatutsDB
-        .filter((s) => !s.ferme_le_lead)
-        .map((s) => `"${String(s.nom).replace(/"/g, '')}"`)
+      // Un lead QUITTE la liste quand son statut ferme le lead SANS l'envoyer
+      // au livreur (Cancelled, Spam, Double, Test, et tout statut de ce genre
+      // ajouté plus tard), ou quand sa livraison est finie (livrée, retournée,
+      // annulée — un retour est définitif : confirmer-livraison refuse de
+      // rouvrir une livraison close). Il est alors dans « Clôturés ».
+      const [{ count: nA }, { count: nB }] = await Promise.all([
+        groupeHaut(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId),
+        groupeBas(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId),
+      ])
+      const nbHaut = nA || 0
+      const nbBas = nB || 0
 
-      // Les guillemets sont obligatoires : un nom contenant une virgule ou un
-      // espace casserait la liste `in.()` de PostgREST.
-      const filtre = ouverts.length > 0
-        ? `statut_confirmation.is.null,statut_confirmation.in.(${ouverts.join(',')})`
-        : 'statut_confirmation.is.null'
-
-      requeteBase = requeteBase.or(filtre)
-      requeteData = requeteData.or(filtre)
-    } else {
-      if (filtreStatut) {
-        requeteBase = requeteBase.eq('statut_confirmation', filtreStatut)
-        requeteData = requeteData.eq('statut_confirmation', filtreStatut)
-      } else {
-        requeteBase = requeteBase.not('statut_confirmation', 'is', null)
-        requeteData = requeteData.not('statut_confirmation', 'is', null)
+      // Une seule pagination sur les deux groupes mis bout à bout : la page
+      // lit dans le premier tant qu'il en reste, puis dans le second, à partir
+      // de ce que les pages précédentes ont déjà montré.
+      const lectures = []
+      if (debut < nbHaut) {
+        lectures.push(groupeHaut(supabase.from('commandes').select(COLONNES), agentId)
+          .order('remonte_le', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: false }).order('id', { ascending: false })
+          .range(debut, Math.min(fin, nbHaut - 1))
+          .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'a_traiter' }))))
       }
-    }
-
-    const dateField = onglet === 'historique' ? 'updated_at' : 'created_at'
-
-    if (dateDebut) {
-      requeteBase = requeteBase.gte(dateField, dateDebut)
-      requeteData = requeteData.gte(dateField, dateDebut)
-    }
-    if (dateFin) {
-      requeteBase = requeteBase.lte(dateField, `${dateFin}T23:59:59`)
-      requeteData = requeteData.lte(dateField, `${dateFin}T23:59:59`)
-    }
-
-    if (rechercheActive) {
-      const r = rechercheActive.replace(/[%,()#]/g, '')
-      const rTel = r.replace(/[\s.\-]/g, '')
-      const conditions = [`client_nom.ilike.%${r}%`, `client_telephone.ilike.%${r}%`, `lead_id.ilike.%${r}%`]
-      if (rTel && rTel !== r) conditions.push(`client_telephone.ilike.%${rTel}%`)
-      const filtre = conditions.join(',')
-      requeteBase = requeteBase.or(filtre)
-      requeteData = requeteData.or(filtre)
-    }
-
-    // Le pays est désormais obligatoire et verrouillé en base, donc on filtre
-    // dessus côté serveur : plus besoin de rapatrier 5000 lignes pour trier ici.
-    if (filtrePays) { requeteBase = requeteBase.eq('pays_id', filtrePays); requeteData = requeteData.eq('pays_id', filtrePays); }
-    if (filtreProduit) { requeteBase = requeteBase.eq('produit', filtreProduit); requeteData = requeteData.eq('produit', filtreProduit); }
-    if (filtreVille) { requeteBase = requeteBase.eq('ville_zone', filtreVille); requeteData = requeteData.eq('ville_zone', filtreVille); }
-    if (filtreSource) { requeteBase = requeteBase.eq('source', filtreSource); requeteData = requeteData.eq('source', filtreSource); }
-
-    if (onglet === 'historique') {
-      requeteData = requeteData.order('updated_at', { ascending: false }).order('id', { ascending: false })
+      if (fin >= nbHaut && nbBas > 0) {
+        lectures.push(groupeBas(supabase.from('commandes').select(COLONNES), agentId)
+          .order('updated_at', { ascending: false }).order('id', { ascending: false })
+          .range(Math.max(0, debut - nbHaut), fin - nbHaut)
+          .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'traite' }))))
+      }
+      data = (await Promise.all(lectures)).flat()
+      total = nbHaut + nbBas
+      // Le séparateur ne se dessine qu'une fois : sur la page où le bas
+      // commence, à la place où il commence (-1 : pas sur cette page).
+      const separateur = debut <= nbHaut && nbHaut <= fin && nbBas > 0 ? nbHaut - debut : -1
+      setComptes({ aTraiter: nbHaut, traites: nbBas, separateur })
     } else {
-      requeteData = requeteData.order('created_at', { ascending: false }).order('id', { ascending: false })
+      // « CLÔTURÉS » : exactement ce qui a quitté « Mes leads » — statut qui
+      // ferme sans livreur, ou livraison finie. Pas de chevauchement avec le
+      // premier onglet. C'est là qu'on retrouve une annulation faite par
+      // erreur : « Modifier », un statut ouvert, et le manager la remonte.
+      const clotures = (q) => {
+        q = appliquerFiltres(q, agentId, 'updated_at')
+        q = statutsFermes.length > 0
+          ? q.or(`statut_confirmation.in.(${listeNoms(statutsFermes.map((s) => s.nom))}),statut_livraison.in.(${LIVRAISONS_FINIES.join(',')})`)
+          : q.in('statut_livraison', LIVRAISONS_FINIES)
+        return filtreStatut ? q.eq('statut_confirmation', filtreStatut) : q
+      }
+      const [{ count }, { data: d }] = await Promise.all([
+        clotures(supabase.from('commandes').select('id', { count: 'exact', head: true })),
+        clotures(supabase.from('commandes').select(COLONNES))
+          .order('updated_at', { ascending: false }).order('id', { ascending: false })
+          .range(debut, fin),
+      ])
+      data = (d || []).map((c) => ({ ...c, groupe: 'historique' }))
+      total = count || 0
+      setComptes(null)
     }
-
-    requeteData = requeteData.range(debut, fin)
-
-    const { count } = await requeteBase
-    const { data } = await requeteData
 
     const commandesIntelligentes = (data || []).map(cmd => {
       const { appels, ...cmdSansJointure } = cmd
@@ -506,7 +615,7 @@ export default function CentreAppelAgent() {
       return { ...cmdSansJointure, pays: paysFinal }
     })
 
-    setTotalItems(count || 0)
+    setTotalItems(total)
     setCommandes(commandesIntelligentes)
     
     setLoading(false)
@@ -526,10 +635,12 @@ export default function CentreAppelAgent() {
       .order('created_at', { ascending: false })
       .then(({ data }) => setAppelsPrecedents(data || []))
 
-    if (commande.statut_confirmation) {
+    // « Pending » est l'état de départ, pas un résultat d'appel : jamais
+    // présélectionné, jamais proposé.
+    if (!estPending(commande.statut_confirmation)) {
       setStatutChoisi(commande.statut_confirmation)
-    } else if (listeStatutsDB.length > 0) {
-      setStatutChoisi(listeStatutsDB[0].nom)
+    } else if (sansPending.length > 0) {
+      setStatutChoisi(sansPending[0].nom)
     } else {
       setStatutChoisi('')
     }
@@ -646,7 +757,7 @@ export default function CentreAppelAgent() {
   // L'agent ne doit voir que ceux qui valent pour le pays de SA commande : sinon
   // il enregistre un statut d'un autre pays, et la base refuse d'y accrocher
   // l'assignation automatique du livreur (le statut ne correspond pas au pays).
-  const statutsDeLaCommande = listeStatutsDB.filter(
+  const statutsDeLaCommande = sansPending.filter(
     (s) => !s.pays_id || !commandeSelectionnee?.pays_id || s.pays_id === commandeSelectionnee.pays_id
   )
 
@@ -718,7 +829,7 @@ export default function CentreAppelAgent() {
                   ongletActif === 'a_traiter' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                Mes Leads à traiter
+                Mes leads
               </button>
               <button
                 onClick={() => { setOngletActif('historique'); setPage(1); setCommandeSelectionnee(null); }}
@@ -726,14 +837,23 @@ export default function CentreAppelAgent() {
                   ongletActif === 'historique' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                Mon Historique
+                Clôturés
               </button>
             </div>
 
             <div className="hidden sm:block h-6 w-px bg-[#C9C1B1]/50"></div>
 
+            {/* Sur « Mes leads », ce qui reste à faire se lit d'un coup d'œil,
+                même quand le séparateur est trois pages plus loin. */}
             <div className="text-sm text-[#1B2632]/60 font-medium">
-              {totalItems} commande{totalItems > 1 ? 's' : ''} affectée{totalItems > 1 ? 's' : ''}
+              {comptes ? (
+                <>
+                  <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{comptes.aTraiter} à traiter</span>
+                  {' · '}{comptes.traites} en suivi
+                </>
+              ) : (
+                <>{totalItems} commande{totalItems > 1 ? 's' : ''} clôturée{totalItems > 1 ? 's' : ''}</>
+              )}
             </div>
           </div>
 
@@ -753,6 +873,20 @@ export default function CentreAppelAgent() {
                 <button onClick={() => setRecherche('')} className="text-[#1B2632]/40 hover:text-[#A35139] text-xs">✕</button>
               )}
             </div>
+
+            {peutChangerAgent && ongletActif === 'a_traiter' && statutsBas.length > 0 && (
+              <button
+                onClick={remonterLeads}
+                disabled={remonteeEnCours}
+                title="Remonter en tête de file tous les leads en attente de rappel que les filtres retiennent"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50 disabled:opacity-50 transition-all"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
+                  <path d="M12 19V5" /><path d="m5 12 7-7 7 7" />
+                </svg>
+                {remonteeEnCours ? 'Remontée…' : 'Remonter'}
+              </button>
+            )}
 
             {peutChangerAgent && (
               <button
@@ -812,7 +946,7 @@ export default function CentreAppelAgent() {
                           label="Statut" 
                           value={filtreStatut} 
                           onChange={appliquer(setFiltreStatut)} 
-                          options={listeStatutsDB.map(s => ({ value: s.nom, label: s.nom }))} 
+                          options={sansPending.map(s => ({ value: s.nom, label: s.nom }))} 
                           placeholder="Tous les statuts" 
                         />
                       )}
@@ -868,7 +1002,7 @@ export default function CentreAppelAgent() {
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
                 <th className="px-6 py-4">Lead ID</th>
-                <th className="px-6 py-4">{ongletActif === 'historique' ? 'Date de Traitement' : 'Date d\'Arrivée'}</th>
+                <th className="px-6 py-4">{ongletActif === 'historique' ? 'Date de Traitement' : 'Date'}</th>
                 <th className="px-6 py-4">Client</th>
                 <th className="px-6 py-4">Pays</th>
                 <th className="px-6 py-4">Ville / Zone</th>
@@ -885,18 +1019,33 @@ export default function CentreAppelAgent() {
               ) : commandes.length === 0 ? (
                 <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.' : 'Aucune commande pour ce filtre.'}</td></tr>
               ) : (
-                commandes.map((cmd) => {
+                commandes.map((cmd, i) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
-                  const dateAffichage = ongletActif === 'historique' ? (cmd.updated_at ? new Date(cmd.updated_at) : null) : (cmd.created_at ? new Date(cmd.created_at) : null)
+                  // Un lead traité se date par son traitement (c'est l'ordre de
+                  // son groupe), un lead à traiter par son arrivée.
+                  const traite = cmd.groupe !== 'a_traiter'
+                  const dateAffichage = traite ? (cmd.updated_at ? new Date(cmd.updated_at) : null) : (cmd.created_at ? new Date(cmd.created_at) : null)
+                  // Le séparateur : avant le premier lead traité de « Mes leads ».
+                  const separateur = comptes && i === comptes.separateur
 
                   return (
+                    <Fragment key={cmd.id}>
+                    {separateur && (
+                      <tr className="bg-[#F4F0E6]">
+                        <td colSpan={nbColonnes} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 border-y border-[#C9C1B1]/60">
+                          {comptes.aTraiter === 0 ? 'Rien à traiter' : `Fin des ${comptes.aTraiter} à traiter`}
+                          <span className="text-[#1B2632]/30 mx-2">•</span>
+                          {comptes.traites} en suivi : injoignables, confirmées pas encore livrées
+                        </td>
+                      </tr>
+                    )}
                     <tr
-                      key={cmd.id}
                       onClick={() => ouvrirPanneau(cmd)}
                       className={`cursor-pointer transition-colors ${estSelectionne ? 'bg-[#FFB162]/10' : 'hover:bg-[#EEE9DF]/40'}`}
                     >
                       <td className="px-6 py-4 font-mono text-xs text-[#1B2632]/80 whitespace-nowrap">#{cmd.lead_id || 'N/A'}</td>
                       <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
+                        {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">traité le</span>}
                         {dateAffichage ? dateAffichage.toLocaleDateString('fr-FR') : '-'}
                         {ongletActif === 'historique' && dateAffichage && <span className="block text-xs text-[#1B2632]/50">{dateAffichage.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})}</span>}
                       </td>
@@ -921,7 +1070,7 @@ export default function CentreAppelAgent() {
                             {nomAgent(cmd.agent_id) || <span className="text-[#A35139]">Non affecté</span>}
                           </div>
 
-                          {cmd.statut_confirmation ? (
+                          {!estPending(cmd.statut_confirmation) ? (
                             <div className="text-[11px] text-[#1B2632]/40">Lead traité — agent figé</div>
                           ) : (
                             <div className="flex items-center gap-1.5">
@@ -954,13 +1103,25 @@ export default function CentreAppelAgent() {
                       )}
                       <td className="px-6 py-4">
                         <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                        {cmd.remonte_le && (
+                          <div className="text-[11px] font-bold text-[#A35139] mt-1 whitespace-nowrap">
+                            ↑ Remonté le {new Date(cmd.remonte_le).toLocaleDateString('fr-FR')}
+                          </div>
+                        )}
+                        {/* Le suivi : où en est la livraison de ce qu'il a confirmé. */}
+                        {cmd.groupe === 'traite' && statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) && (
+                          <div className="text-[11px] text-[#1B2632]/50 mt-1 whitespace-nowrap">
+                            Livraison : {LIVRAISON_LIBELLES[cmd.statut_livraison] || 'pas encore assignée'}
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${estSelectionne ? 'bg-[#1B2632] text-white' : 'bg-[#EEE9DF] text-[#1B2632] border border-[#C9C1B1] hover:bg-[#C9C1B1]'}`}>
-                          {ongletActif === 'a_traiter' ? 'Traiter' : 'Modifier'}
+                          {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) || cmd.groupe === 'historique' ? 'Modifier' : 'Traiter'}
                         </button>
                       </td>
                     </tr>
+                    </Fragment>
                   )
                 })
               )}

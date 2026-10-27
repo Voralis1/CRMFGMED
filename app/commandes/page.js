@@ -441,7 +441,9 @@ export default function GestionCommandesPage() {
       const t = f.texte.replace(/[%,()]/g, '').trim()
       if (t) requete = requete.ilike(f.champ, `%${t}%`)
     }
-    if (f.statut === 'aucun') requete = requete.is('statut_confirmation', null)
+    // « Pending » (27/10) : un vrai statut, posé par la base. Les leads
+    // d'avant le rattrapage sont encore à NULL : on lit les deux.
+    if (f.statut === 'aucun') requete = requete.or('statut_confirmation.is.null,statut_confirmation.eq.Pending')
     else if (f.statut) requete = requete.eq('statut_confirmation', f.statut)
     if (f.produit) requete = requete.eq('produit', f.produit)
     if (f.agent === 'aucun') requete = requete.is('agent_id', null)
@@ -477,7 +479,10 @@ export default function GestionCommandesPage() {
   async function ouvrirDetail(cmd) {
     setDetail(cmd)
     setHistorique([])
-    setNouveauStatut(cmd.statut_confirmation || '')
+    // « Pending » n'est pas un choix : on ne renvoie pas un lead traité dans
+    // la file par ce chemin (un statut ouvert, puis « Remonter », dans le
+    // Centre d'appel). La base le refuse de toute façon.
+    setNouveauStatut(cmd.statut_confirmation && cmd.statut_confirmation !== 'Pending' ? cmd.statut_confirmation : '')
     setAdresseCorrigee(cmd.adresse || '')
     setErreurStatut('')
 
@@ -1080,8 +1085,9 @@ export default function GestionCommandesPage() {
                 <select className="cm-input" value={filtres.statut}
                   onChange={(e) => setFiltres({ ...filtres, statut: e.target.value })}>
                   <option value="">Tous</option>
-                  <option value="aucun">Pas encore traité</option>
-                  {listeStatutsDB.map((st) => <option key={st.id} value={st.nom}>{st.nom}</option>)}
+                  <option value="aucun">Pending (pas encore traité)</option>
+                  {listeStatutsDB.filter((st) => st.code !== 'pending' && st.nom !== 'Pending')
+                    .map((st) => <option key={st.id} value={st.nom}>{st.nom}</option>)}
                 </select>
               </div>
 
@@ -1885,6 +1891,7 @@ export default function GestionCommandesPage() {
                         >
                           <option value="">Choisir...</option>
                           {listeStatutsDB
+                            .filter((s) => s.code !== 'pending' && s.nom !== 'Pending')
                             .filter((s) => !s.pays_id || !detail.pays_id || s.pays_id === detail.pays_id)
                             .map((s) => <option key={s.id} value={s.nom}>{s.nom}</option>)}
                         </select>
