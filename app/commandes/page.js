@@ -10,10 +10,11 @@ import * as XLSX from 'xlsx'
 import { verdictProduits, commandesEnRupture, produitDuCatalogue } from '../../lib/verdictImport.mjs'
 import VignetteProduit from '../components/VignetteProduit'
 // Les noms des colonnes, la même table que l'API.
-import { cleNormalisee, NOMS } from '../../supabase/functions/_shared/champs.ts'
+import { cleNormalisee } from '../../supabase/functions/_shared/champs.ts'
 // Le modèle d'import (colonnes, consignes, exemple) : partagé avec la feuille
 // Google de « Mon API ».
 import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/modeleImport.mjs'
+import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichierImport.mjs'
 
 const TAILLE_PAGE = 50
 
@@ -81,37 +82,7 @@ function IconPlus(props) {
 // Une parenthèse ou un accent ne fait plus rater une colonne.
 const normaliserCle = cleNormalisee
 
-// Quelle en-tête du fichier correspond à ce champ — ou null.
-function enteteDe(entetes, cle) {
-  const champ = CHAMPS_IMPORT.find((c) => c.cle === cle)
-  if (!champ) return null
-  for (const nom of NOMS[champ.champ]) {
-    const trouve = entetes.find((e) => normaliserCle(e) === nom)
-    if (trouve) return trouve
-  }
-  for (const mot of champ.mots) {
-    const trouve = entetes.find((e) => normaliserCle(e).includes(mot))
-    if (trouve) return trouve
-  }
-  return null
-}
-
-function lireChamp(L, cle) {
-  const champ = CHAMPS_IMPORT.find((c) => c.cle === cle)
-  if (!champ) return ''
-  for (const nom of NOMS[champ.champ]) {
-    const v = L[nom]
-    if (v !== undefined && v !== null && String(v).trim() !== '') return v
-  }
-  for (const mot of champ.mots) {
-    for (const k of Object.keys(L)) {
-      if (!k.includes(mot)) continue
-      const v = L[k]
-      if (v !== undefined && v !== null && String(v).trim() !== '') return v
-    }
-  }
-  return ''
-}
+// enteteDe / lireChamp : lib/lireFichierImport.mjs (testés hors navigateur).
 
 export default function GestionCommandesPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
@@ -794,7 +765,9 @@ export default function GestionCommandesPage() {
         l.onerror = () => reject(new Error('Fichier illisible'))
         l.readAsArrayBuffer(fichier)
       })
-      const classeur = XLSX.read(data, { type: 'array' })
+      // UTF-8 sans BOM décodé avant SheetJS : sinon « Téléphone » n'est pas reconnu.
+      const { data: contenu, type } = preparerFichierImport(data)
+      const classeur = XLSX.read(contenu, { type })
       const feuille = classeur.Sheets[classeur.SheetNames[0]]
       const lignes = XLSX.utils.sheet_to_json(feuille, { header: 1, defval: '' })
       const entetes = (lignes[0] || []).map((x) => String(x).trim()).filter(Boolean)
@@ -844,7 +817,8 @@ export default function GestionCommandesPage() {
     })
 
     try {
-      const classeur = XLSX.read(await lire(), { type: 'array' })
+      const { data: contenu, type } = preparerFichierImport(await lire())
+      const classeur = XLSX.read(contenu, { type })
       const lignes = XLSX.utils.sheet_to_json(classeur.Sheets[classeur.SheetNames[0]], { defval: '' })
 
       if (lignes.length === 0) {
@@ -902,7 +876,7 @@ export default function GestionCommandesPage() {
           quantite: art.quantite,
           prix: art.prix,
           source: 'csv',
-          // « Store » : la boutique du vendeur d'où vient la commande.
+          // « Boutique » : la boutique du vendeur d'où vient la commande.
           source_sheet: lireChamp(L, 'store') || null,
           notes,
           commentaire_1: L['commentaire_1'] || '',
@@ -1556,10 +1530,10 @@ export default function GestionCommandesPage() {
                             </table>
                           </div>
                           <p className="px-4 py-2.5 text-[11px] text-[#1B2632]/55 border-t border-[#C9C1B1]/50">
-                            Les en-têtes françaises sont acceptées aussi (<code className="font-mono">nom</code>,
-                            <code className="font-mono"> téléphone</code>, <code className="font-mono">ville</code>,
-                            <code className="font-mono"> adresse</code>, <code className="font-mono">quantité</code>,
-                            <code className="font-mono"> prix</code>…), et les portugaises (<code className="font-mono">cidade</code>,
+                            Majuscules et accents ne comptent pas (<code className="font-mono">Telephone</code> vaut
+                            <code className="font-mono"> Téléphone</code>). Les en-têtes de l&apos;ancien modèle, en anglais, restent
+                            acceptées (<code className="font-mono">Order ID</code>, <code className="font-mono">Phone number</code>,
+                            <code className="font-mono"> City</code>, <code className="font-mono">Quantities</code>…), et les portugaises (<code className="font-mono">cidade</code>,
                             <code className="font-mono"> telefone</code>, <code className="font-mono">quantidade</code>,
                             <code className="font-mono"> valor</code>…). Pas de colonne pays : toutes les
                             lignes prennent le pays {estSeller ? 'choisi' : 'de l\u2019entrepôt choisi'} en haut. La colonne <b>vendeur</b> du fichier

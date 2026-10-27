@@ -8,7 +8,7 @@ import { usePermissions } from '../context/PermissionsContext'
 // Google Sheets : le code Apps Script généré, et le modèle de colonnes de
 // l'import CSV (la même liste, le même exemple).
 import { genererScriptSheets, colonnesSheets, COLONNE_STATUT, PREFIXE_SHEETS, MAX_LIGNES_SHEETS } from '../../lib/scriptGoogleSheets.mjs'
-import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/modeleImport.mjs'
+import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT, nomColonne } from '../../lib/modeleImport.mjs'
 
 // « Mon API » : un seul écran — les identifiants de la source, puis comment
 // s'en servir. Une source à la fois ; un sélecteur apparaît dès qu'il y en a
@@ -58,18 +58,19 @@ const REPONSES = [
 
 // Google Sheets : ce que le vendeur doit savoir de SA feuille. Pas les
 // consignes de l'import CSV : ici pas d'aperçu (un produit inconnu entre
-// quand même) et l'Order ID est obligatoire. Seul le montant est repris tel
+// quand même) et le n° de commande est obligatoire. Seul le montant est repris tel
 // quel. `pays` : le nom du pays de la source, ou null.
 const consignesSheets = (pays) => [
+  'Les en-têtes de l\u2019ancien modèle, en anglais (Order ID, Phone number…), restent reconnues : une feuille déjà en place n\u2019a rien à changer. Majuscules et accents ne comptent pas.',
   'Une ligne part dès qu\u2019elle est complète : toutes les colonnes obligatoires remplies. Tant qu\u2019il en manque une, rien ne part, et la colonne « Statut CRM » dit laquelle.',
-  `Order ID : votre numéro de commande, un par ligne, jamais réutilisé. C\u2019est lui qui empêche une commande d\u2019entrer deux fois. Il arrive dans le CRM précédé de ${PREFIXE_SHEETS} (727 devient ${PREFIXE_SHEETS}727).`,
+  `${nomColonne('order_id')} : votre numéro de commande, un par ligne, jamais réutilisé. C\u2019est lui qui empêche une commande d\u2019entrer deux fois. Il arrive dans le CRM précédé de ${PREFIXE_SHEETS} (727 devient ${PREFIXE_SHEETS}727).`,
   'Une correction après l\u2019envoi se fait dans le CRM, pas dans la feuille.',
-  'Product : le code du produit au catalogue. Il n\u2019y a pas d\u2019aperçu comme pour l\u2019import de fichier : un produit inconnu entre quand même, sans mouvement de stock.',
+  `${nomColonne('produit')} : le code du produit au catalogue. Il n\u2019y a pas d\u2019aperçu comme pour l\u2019import de fichier : un produit inconnu entre quand même, sans mouvement de stock.`,
   CONSIGNES_IMPORT.find((c) => c.titre === 'Montant à encaisser')?.texte,
   pays
     ? `Pas de colonne pays : toutes les commandes de cette feuille arrivent en ${pays}.`
     : 'Pas de colonne pays : les commandes prennent le pays de la source, et cette source n\u2019en a pas. Tant qu\u2019un responsable ne l\u2019a pas fixé, chaque ligne est refusée (« pays manquant »).',
-  'Un Google Form relié à la feuille marche aussi : donnez à ses questions les noms des colonnes (Product, Customer, Phone number…). L\u2019Order ID est fait tout seul avec la date de la réponse ; ajoutez une colonne « Order ID » à droite des réponses pour le voir.',
+  `Un Google Form relié à la feuille marche aussi : donnez à ses questions les noms des colonnes (${['produit', 'client', 'telephone'].map(nomColonne).join(', ')}…). Le ${nomColonne('order_id')} est fait tout seul avec la date de la réponse ; ajoutez une colonne « ${nomColonne('order_id')} » à droite des réponses pour le voir.`,
   'Zapier, Make, AppSheet ou toute autre application qui écrit dans la feuille : Google ne prévient pas le script, ces lignes ne partiraient pas. Branchez plutôt cette application directement sur votre API (onglet « API directe » ci-dessus).',
   `Coller plusieurs lignes : ${MAX_LIGNES_SHEETS} au plus à la fois.`,
   'Statut CRM « trop de requêtes, réessayez » ou « erreur réseau, réessayez » : retapez une case de la ligne (le téléphone, par exemple), elle repart. Une ligne déjà reçue répond « déjà importé » : rien n\u2019est créé deux fois.',

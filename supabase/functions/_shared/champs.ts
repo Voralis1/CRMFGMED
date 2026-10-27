@@ -13,8 +13,14 @@
 //   · l'écran ne lit pas de vendeur dans le fichier (c'est qui importe) ;
 //     l'API lit en plus pays_code, code, notes, commentaires, url. Ces champs
 //     n'ont qu'un lecteur : ils restent dans _shared/import.ts.
-//   · le PAYS a les mêmes noms des deux côtés (colonne « Country » depuis le
-//     21/10) et la même règle : pays.ts.
+//   · le PAYS a les mêmes noms des deux côtés et la même règle : pays.ts.
+//     (Le fichier d'import n'a plus de colonne pays depuis le 22/10 : l'API
+//     seule s'en sert.)
+//
+// Le modèle MONTRE les noms français (modeleImport.mjs, 27/10) ; l'anglais
+// et le portugais restent ici, acceptés. Chaque nom montré par le modèle
+// doit être dans cette table, sous sa forme cleNormalisee : vérifié par
+// tests/test_import_generique.mjs.
 //
 // L'ORDRE compte : le premier nom qui répond gagne. Les listes commencent par
 // les noms historiques de l'API, dans son ordre (un payload plat répond
@@ -37,7 +43,11 @@ export type ChampCommun =
 
 export const NOMS: Record<ChampCommun, string[]> = {
   lead_id:          ['lead_id', 'leadid', 'id', 'numero_commande', 'order_id', 'reference', 'ref',
-                     'pedido', 'numero_do_pedido', 'id_do_pedido'],
+                     'pedido', 'numero_do_pedido', 'id_do_pedido',
+                     // « N° de commande » (le nom du modèle depuis le 27/10), « Nº »,
+                     // « No », « Numéro de commande »…
+                     'n_de_commande', 'no_de_commande', 'n_commande', 'no_commande',
+                     'numero_de_commande', 'num_commande'],
   client_nom:       ['client_nom', 'nom', 'name', 'customer_name', 'full_name', 'nom_client', 'client',
                      'customer', 'consumer_name',
                      'cliente', 'nome', 'nome_do_cliente', 'nome_cliente'],
