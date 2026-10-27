@@ -20,7 +20,7 @@
 // Le modèle MONTRE les noms français (modeleImport.mjs, 27/10) ; l'anglais
 // et le portugais restent ici, acceptés. Chaque nom montré par le modèle
 // doit être dans cette table, sous sa forme cleNormalisee : vérifié par
-// tests/test_import_generique.mjs.
+// supabase/tests/test_entetes_import.mjs.
 //
 // L'ORDRE compte : le premier nom qui répond gagne. Les listes commencent par
 // les noms historiques de l'API, dans son ordre (un payload plat répond

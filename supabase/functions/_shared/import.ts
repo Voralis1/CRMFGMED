@@ -502,9 +502,10 @@ export function resoudreArticles(
 // quand le lead arrive par une source : "SHOP1-727". Deux boutiques d'une même
 // entreprise numérotent chacune depuis 1 ; sans préfixe, la commande 727 de la
 // seconde était prise pour un doublon de la première et perdue sans bruit.
-// L'unicité est `unique (tenant_id, lead_id)` (lead_id_par_entreprise.sql) ;
-// on ne met pas source_id dedans parce qu'il est NULL pour la saisie et
-// l'Excel, et que deux NULL ne se heurtent pas. Un identifiant qui porte déjà
+// L'unicité est `unique (tenant_id, vendeur, source, lead_id)` depuis le 27/10
+// (lead_id_par_vendeur_source.sql, coalesce sur les deux colonnes qui peuvent
+// être NULL) ; « déjà vu ? » dans importerLigne cherche avec la même portée
+// pour un numéro de boutique. Un identifiant qui porte déjà
 // le préfixe (la boutique renvoie le nôtre) n'est pas préfixé deux fois.
 //
 // Sans identifiant, on en fabrique un
@@ -664,8 +665,33 @@ export async function importerLigne(
   }
 
   // --- déjà vu ? -------------------------------------------------------------
-  const { data: existant } = await sb.from('commandes')
-    .select('id').eq('lead_id', cle).eq('tenant_id', ctx.tenantId).maybeSingle()
+  // DEUX PORTÉES, et c'est voulu — ça a l'air incohérent, ça ne l'est pas :
+  //
+  //   · numéro donné par la boutique (« PREFIXE-1042 ») : cherché EXACTEMENT
+  //     comme l'index unique le juge — entreprise + vendeur + source + numéro
+  //     (commandes_lead_id_vendeur_source_key, lead_id_par_vendeur_source.sql).
+  //     Plus large, la 1042 d'un autre vendeur ou d'une autre boutique
+  //     pourrait répondre « déjà importé » : la vraie commande ne serait
+  //     jamais créée, et personne ne le verrait. Une commande perdue en
+  //     silence est pire qu'un 400.
+  //   · clé fabriquée « AUTO-<empreinte> » (aucun numéro reçu) : cherchée dans
+  //     TOUTE l'entreprise. Là, le but EST d'attraper le même client qui
+  //     commande le même produit le même jour sur deux boutiques ; l'empreinte
+  //     contient déjà l'entreprise, le téléphone, le produit et le jour.
+  //
+  // Jamais maybeSingle() : sur deux lignes il renvoie une erreur, lue comme
+  // « pas encore vu » ; le ré-essai de WooCommerce finissait alors en 400 sur
+  // l'index, et WooCommerce coupe un webhook après ~5 refus. limit(1) : une
+  // ligne suffit à dire « déjà vu » — et pour un numéro de boutique, la
+  // portée exacte garantit qu'il ne peut y en avoir qu'une.
+  let dejaVu = sb.from('commandes')
+    .select('id').eq('tenant_id', ctx.tenantId).eq('lead_id', cle)
+  if (lead.lead_id) {
+    dejaVu = vendeurId ? dejaVu.eq('vendeur_id', vendeurId) : dejaVu.is('vendeur_id', null)
+    dejaVu = ctx.sourceId ? dejaVu.eq('source_id', ctx.sourceId) : dejaVu.is('source_id', null)
+  }
+  const { data: dejaVus } = await dejaVu.limit(1)
+  const existant = dejaVus?.[0] ?? null
   if (existant) {
     return conclure({ statut: 'doublon', lead_id: cle }, existant.id)
   }
