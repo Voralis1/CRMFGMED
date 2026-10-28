@@ -128,7 +128,6 @@ const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
 // livré, retour et annulé quittent la liste).
 const LIVRAISON_LIBELLES = { a_preparer: 'à préparer', expedie: 'expédiée' }
 const LIVRAISON_EN_COURS = 'statut_livraison.is.null,statut_livraison.not.in.(livre,retour,annule)'
-const LIVRAISONS_FINIES = ['livre', 'retour', 'annule']
 
 // Un lead que personne n'a touché (27/10, statut_pending.sql). Le TEXTE est
 // posé par la base : il ne dépend pas de la ligne « Pending » de `statuts`.
@@ -157,14 +156,12 @@ export default function CentreAppelAgent() {
   const [listeZones, setListeZones] = useState([])
   const [listeStatutsDB, setListeStatutsDB] = useState([]) 
   const [loading, setLoading] = useState(true)
-  const [ongletActif, setOngletActif] = useState('a_traiter')
 
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
   const [recherche, setRecherche] = useState('')
   const [rechercheActive, setRechercheActive] = useState('')
   
-  const [filtreStatut, setFiltreStatut] = useState('')
   const [filtreProduit, setFiltreProduit] = useState('')
   const [filtreVille, setFiltreVille] = useState('')
   const [filtreSource, setFiltreSource] = useState('')
@@ -186,16 +183,14 @@ export default function CentreAppelAgent() {
   const [catalogue, setCatalogue] = useState([])
 
   const [page, setPage] = useState(1)
-  // « Mes leads » : le bas a SA pagination (27/10). Avant, les deux groupes
-  // étaient une seule liste paginée : avec 82 leads en haut, le bas commençait
-  // en page 2 et un responsable ne le voyait jamais. `page` pagine le haut (et
-  // « Clôturés »), `pageBas` le bas ; l'un ne déplace pas l'autre.
+  // Le bas a SA pagination (27/10). Avant, les deux groupes étaient une seule
+  // liste paginée : avec 82 leads en haut, le bas commençait en page 2 et un
+  // responsable ne le voyait jamais. `page` pagine le haut, `pageBas` le bas ;
+  // l'un ne déplace pas l'autre.
   const [pageBas, setPageBas] = useState(1)
-  // Un filtre, une recherche, un onglet : les deux groupes repartent page 1.
+  // Un filtre, une recherche : les deux groupes repartent page 1.
   const allerPage1 = () => { setPage(1); setPageBas(1) }
-  const [totalItems, setTotalItems] = useState(0)
-  // « Mes leads » : combien à traiter, combien traités (le séparateur et
-  // l'en-tête). null sur « Clôturés ».
+  // Combien à traiter, combien en suivi (le séparateur et l'en-tête).
   const [comptes, setComptes] = useState(null)
   const ITEMS_PER_PAGE = 50
 
@@ -216,6 +211,10 @@ export default function CentreAppelAgent() {
   // Le refus du serveur, affiché dans le panneau : une alerte se ferme sans
   // être lue, et l'agent ne sait plus pourquoi il est bloqué.
   const [erreurEnvoi, setErreurEnvoi] = useState('')
+  // Une lecture de la liste ratée le DIT (28/10) : sans ça, une colonne
+  // manquante ou un droit refusé s'affichait « Aucun lead ne vous est
+  // assigné », et un écran cassé passait pour une file vide.
+  const [erreurChargement, setErreurChargement] = useState('')
 
   const [formData, setFormData] = useState({
     source: '', client_nom: '', client_telephone: '', ville_zone: '', adresse: '',
@@ -325,7 +324,7 @@ export default function CentreAppelAgent() {
       if (ROLES_VUE_GLOBALE.includes((roleNom || '').toLowerCase())) {
         setAgentActuel(null)
         setAgentIntrouvable(false)
-        await chargerCommandes(page, ongletActif, null)
+        await chargerCommandes(page, null)
         return
       }
 
@@ -339,7 +338,7 @@ export default function CentreAppelAgent() {
       if (agentData) {
         setAgentActuel(agentData)
         setAgentIntrouvable(false)
-        await chargerCommandes(page, ongletActif, agentData.id)
+        await chargerCommandes(page, agentData.id)
       } else {
         // L'utilisateur n'est pas reconnu comme agent dans ce tenant
         setAgentIntrouvable(true)
@@ -354,7 +353,7 @@ export default function CentreAppelAgent() {
   // le premier chargement part avec une liste vide — donc sans les leads à
   // rappeler — et rien ne le relancerait quand les statuts arrivent.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageBas, ongletActif, dateDebut, dateFin, rechercheActive, filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
+  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
   // La requête des commandes ne ramène que `agent_id` ; le nom vient de la liste
@@ -364,7 +363,20 @@ export default function CentreAppelAgent() {
     if (listeAgents.length === 0) return '…' // liste pas encore chargée
     return listeAgents.find((a) => a.id === id)?.nom || 'Agent supprimé'
   }
-  const nbColonnes = modeAgents ? 10 : 9
+  // LA VUE DE L'AGENT (28/10). On mesure s'il appelle vraiment : rien sur son
+  // écran ne doit lui dire qu'un lead a déjà été essayé.
+  //   · un lead qu'il a mis « Non joint » sort de sa liste (groupeBas) ;
+  //   · remonté par un responsable, il revient « En attente » : c'est ce que
+  //     montre `statutVu`. La base garde « Non joint » (Remonter n'efface pas
+  //     le statut), et le responsable voit le vrai statut ;
+  //   · pas de date (la création trahit un vieux lead), pas de « Remonté le »,
+  //     pas d'appels précédents, pas de « Appel n° 3 » ;
+  //   · trié parmi les nouveaux par l'heure de sa remontée (entree_file).
+  // La base ferme `appels` à l'agent (renvoyer_en_attente.sql §2) : la console
+  // du navigateur ne les lui rend pas non plus.
+  const vueAgent = !!agentActuel
+  const statutVu = (cmd) => (vueAgent && cmd.remonte_le ? PENDING : cmd.statut_confirmation)
+  const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0)
 
   useEffect(() => {
     if (!tenantKey || !peutChangerAgent) return
@@ -412,12 +424,12 @@ export default function CentreAppelAgent() {
   //     rappel sans heure (d'avant le 27/10) est en haut : il ne coule pas.
   //   · bas     : ouverts, ni Pending ni rappel — Unreached.
   //   · suivis  : ferment ET envoient au livreur — Confirmed.
-  //   · fermes  : ferment SANS envoyer au livreur — Cancelled, Spam, Double, Test.
+  //   · les statuts qui ferment SANS envoyer au livreur (Cancelled, Spam,
+  //     Double, Test) font QUITTER la liste ; ils se retrouvent dans Commandes.
   const sansPending = listeStatutsDB.filter((s) => s.code !== 'pending' && s.nom !== PENDING)
   const statutsRappel = sansPending.filter((s) => !s.ferme_le_lead && s.necessite_rappel)
   const statutsBas = sansPending.filter((s) => !s.ferme_le_lead && !s.necessite_rappel)
   const statutsSuivis = sansPending.filter((s) => s.ferme_le_lead && s.declenche_assignation)
-  const statutsFermes = sansPending.filter((s) => s.ferme_le_lead && !s.declenche_assignation)
 
   // Les filtres de l'écran, posés sur une requête neuve. La liste, ses
   // comptes ET le bouton « Remonter » passent par ici : le bouton remonte
@@ -472,10 +484,15 @@ export default function CentreAppelAgent() {
     ].join(','))
     .or(LIVRAISON_EN_COURS)
   // « Mes leads », en bas : Unreached, Confirmed non livré, et les rappels pas
-  // encore dus — non remontés. Pas verrouillés : l'agent les ouvre et les
+  // encore dus — non remontés. Pas verrouillés : on les ouvre et on les
   // traite comme avant.
-  const nomsBas = [...statutsBas, ...statutsSuivis].map((s) => s.nom)
-  const groupeBas = (q, agentId, maintenant) => appliquerFiltres(q, agentId, 'created_at')
+  // L'AGENT n'y voit pas les Unreached : un lead qu'il n'a pas joint sort de
+  // sa liste jusqu'à ce qu'un responsable le remonte. Ses rappels et ses
+  // confirmées pas encore livrées restent.
+  const nomsBasPour = (agentId) => [...(agentId ? [] : statutsBas), ...statutsSuivis].map((s) => s.nom)
+  const groupeBas = (q, agentId, maintenant) => {
+    const nomsBas = nomsBasPour(agentId)
+    return appliquerFiltres(q, agentId, 'created_at')
     .or([
       ...(nomsBas.length ? [`statut_confirmation.in.(${listeNoms(nomsBas)})`] : []),
       ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),date_rappel.gt."${maintenant}")`] : []),
@@ -484,6 +501,7 @@ export default function CentreAppelAgent() {
     ].join(','))
     .is('remonte_le', null)
     .or(LIVRAISON_EN_COURS)
+  }
   // Ce que le bouton remonte : les « Unreached » (statuts du bas, ouverts)
   // que les filtres retiennent, pas encore remontés.
   const groupeARemonter = (q) => appliquerFiltres(q, null, 'created_at')
@@ -502,12 +520,12 @@ export default function CentreAppelAgent() {
     return () => clearInterval(t)
   }, [])
   useEffect(() => {
-    if (ongletActif !== 'a_traiter' || loading || commandeSelectionnee) return
+    if (loading || commandeSelectionnee) return
     const vueGlobale = ROLES_VUE_GLOBALE.includes((roleNom || '').toLowerCase())
     if (!agentActuel && !vueGlobale) return
     const echu = commandes.some((c) => c.groupe === 'traite' && c.date_rappel
       && new Date(c.date_rappel).getTime() <= maintenantAffiche)
-    if (echu) chargerCommandes(page, ongletActif, agentActuel ? agentActuel.id : null)
+    if (echu) chargerCommandes(page, agentActuel ? agentActuel.id : null)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [maintenantAffiche])
 
@@ -546,16 +564,14 @@ export default function CentreAppelAgent() {
     }
     setRemonteeEnCours(false)
     allerPage1()
-    await chargerCommandes(1, ongletActif, null)
+    await chargerCommandes(1, null)
   }
 
   // 🚀 CHARGEMENT STRICTEMENT CLOISONNÉ
   // agentId = null  -> global view (admin / manager / ceo / super_admin)
-  async function chargerCommandes(pageActuelle, onglet, agentId) {
+  async function chargerCommandes(pageActuelle, agentId) {
     if (!tenantKey || agentId === undefined) return
     setLoading(true)
-    const debut = (pageActuelle - 1) * ITEMS_PER_PAGE
-    const fin = debut + ITEMS_PER_PAGE - 1
 
     const { data: paysListDB } = await supabase.from('pays').select('id, nom, code, devise').eq('tenant_id', tenantKey)
     setListePays(paysListDB || [])
@@ -565,84 +581,81 @@ export default function CentreAppelAgent() {
 
     const COLONNES = `id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, statut_livraison, remonte_le, date_rappel, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`
 
-    let data = []
-    let total = 0
-
-    if (onglet === 'a_traiter') {
-      // « MES LEADS » : UNE liste, deux groupes, une seule pagination.
-      //
-      //   1. EN HAUT, la file de l'agent : ce qu'un manager a remonté (le plus
-      //      anciennement remonté d'abord), puis Pending et les rappels, par
-      //      arrivée.
-      //   2. EN BAS : Unreached et Confirmed pas encore livré, par dernière mise
-      //      à jour. Pas verrouillés : « pas dans ma file maintenant », jamais
-      //      « je ne peux pas y toucher ».
-      //
-      // Un lead QUITTE la liste quand son statut ferme le lead SANS l'envoyer
-      // au livreur (Cancelled, Spam, Double, Test, et tout statut de ce genre
-      // ajouté plus tard), ou quand sa livraison est finie (livrée, retournée,
-      // annulée — un retour est définitif : confirmer-livraison refuse de
-      // rouvrir une livraison close). Il est alors dans « Clôturés ».
-      const maintenant = new Date().toISOString()
-      const [{ count: nA }, { count: nB }] = await Promise.all([
-        groupeHaut(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
-        groupeBas(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
-      ])
-      const nbHaut = nA || 0
-      const nbBas = nB || 0
-
-      // DEUX paginations indépendantes (27/10) : chaque groupe lit sa page, et
-      // le séparateur du bas est sur CHAQUE page, juste après le haut. Une
-      // page demandée au-delà de la dernière (le groupe a rétréci) est
-      // ramenée à la dernière.
-      const pagesHaut = Math.max(1, Math.ceil(nbHaut / ITEMS_PER_PAGE))
-      const pagesBas = Math.max(1, Math.ceil(nbBas / ITEMS_PER_PAGE))
-      const pH = Math.min(pageActuelle, pagesHaut)
-      const pB = Math.min(pageBas, pagesBas)
-      const lectures = []
-      if (nbHaut > 0) {
-        lectures.push(groupeHaut(supabase.from('commandes').select(COLONNES), agentId, maintenant)
-          .order('remonte_le', { ascending: true, nullsFirst: false })
-          .order('created_at', { ascending: false }).order('id', { ascending: false })
-          .range((pH - 1) * ITEMS_PER_PAGE, pH * ITEMS_PER_PAGE - 1)
-          .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'a_traiter' }))))
-      }
-      if (nbBas > 0) {
-        // Les rappels d'abord, le plus proche en premier (ce qui va bientôt
-        // remonter) ; puis le reste par dernière mise à jour. Seuls les
-        // rappels portent une heure : confirmer-appel l'efface sur tout autre
-        // statut.
-        lectures.push(groupeBas(supabase.from('commandes').select(COLONNES), agentId, maintenant)
-          .order('date_rappel', { ascending: true, nullsFirst: false })
-          .order('updated_at', { ascending: false }).order('id', { ascending: false })
-          .range((pB - 1) * ITEMS_PER_PAGE, pB * ITEMS_PER_PAGE - 1)
-          .then(({ data: d }) => (d || []).map((c) => ({ ...c, groupe: 'traite' }))))
-      }
-      data = (await Promise.all(lectures)).flat()
-      total = nbHaut + nbBas
-      setComptes({ aTraiter: nbHaut, traites: nbBas, pageHaut: pH, pagesHaut, pageBas: pB, pagesBas })
-    } else {
-      // « CLÔTURÉS » : exactement ce qui a quitté « Mes leads » — statut qui
-      // ferme sans livreur, ou livraison finie. Pas de chevauchement avec le
-      // premier onglet. C'est là qu'on retrouve une annulation faite par
-      // erreur : « Modifier », un statut ouvert, et le manager la remonte.
-      const clotures = (q) => {
-        q = appliquerFiltres(q, agentId, 'updated_at')
-        q = statutsFermes.length > 0
-          ? q.or(`statut_confirmation.in.(${listeNoms(statutsFermes.map((s) => s.nom))}),statut_livraison.in.(${LIVRAISONS_FINIES.join(',')})`)
-          : q.in('statut_livraison', LIVRAISONS_FINIES)
-        return filtreStatut ? q.eq('statut_confirmation', filtreStatut) : q
-      }
-      const [{ count }, { data: d }] = await Promise.all([
-        clotures(supabase.from('commandes').select('id', { count: 'exact', head: true })),
-        clotures(supabase.from('commandes').select(COLONNES))
-          .order('updated_at', { ascending: false }).order('id', { ascending: false })
-          .range(debut, fin),
-      ])
-      data = (d || []).map((c) => ({ ...c, groupe: 'historique' }))
-      total = count || 0
-      setComptes(null)
+    // UNE liste, deux groupes, chacun sa pagination.
+    //
+    //   1. EN HAUT, la file de l'agent : ce qu'un manager a remonté (le plus
+    //      anciennement remonté d'abord), puis Pending et les rappels, par
+    //      arrivée.
+    //   2. EN BAS : Unreached et Confirmed pas encore livré, par dernière mise
+    //      à jour. Pas verrouillés : « pas dans ma file maintenant », jamais
+    //      « je ne peux pas y toucher ».
+    //
+    // Un lead QUITTE la liste quand son statut ferme le lead SANS l'envoyer
+    // au livreur (Cancelled, Spam, Double, Test, et tout statut de ce genre
+    // ajouté plus tard), ou quand sa livraison est finie (livrée, retournée,
+    // annulée — un retour est définitif : confirmer-livraison refuse de
+    // rouvrir une livraison close). On le retrouve dans Commandes.
+    const maintenant = new Date().toISOString()
+    setErreurChargement('')
+    const [{ count: nA, error: eA }, { count: nB, error: eB }] = await Promise.all([
+      groupeHaut(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
+      groupeBas(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
+    ])
+    if (eA || eB) {
+      setErreurChargement((eA || eB).message)
+      setCommandes([]); setComptes(null); setLoading(false)
+      return
     }
+    const nbHaut = nA || 0
+    const nbBas = nB || 0
+
+    // DEUX paginations indépendantes (27/10) : chaque groupe lit sa page, et
+    // le séparateur du bas est sur CHAQUE page, juste après le haut. Une
+    // page demandée au-delà de la dernière (le groupe a rétréci) est
+    // ramenée à la dernière.
+    const pagesHaut = Math.max(1, Math.ceil(nbHaut / ITEMS_PER_PAGE))
+    const pagesBas = Math.max(1, Math.ceil(nbBas / ITEMS_PER_PAGE))
+    const pH = Math.min(pageActuelle, pagesHaut)
+    const pB = Math.min(pageBas, pagesBas)
+    const lectures = []
+    // Une lecture ratée lève : elle est dite à l'écran, jamais lue comme vide.
+    const lignes = (groupe) => ({ data: d, error }) => {
+      if (error) throw error
+      return (d || []).map((c) => ({ ...c, groupe }))
+    }
+    if (nbHaut > 0) {
+      let q = groupeHaut(supabase.from('commandes').select(COLONNES), agentId, maintenant)
+      // L'agent : un lead remonté est trié comme un nouveau, à l'heure de sa
+      // remontée (entree_file = remonte_le, sinon created_at). Les
+      // responsables : les remontés d'abord, le plus anciennement remonté en
+      // tête.
+      q = agentId
+        ? q.order('entree_file', { ascending: false })
+        : q.order('remonte_le', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false })
+      lectures.push(q.order('id', { ascending: false })
+        .range((pH - 1) * ITEMS_PER_PAGE, pH * ITEMS_PER_PAGE - 1)
+        .then(lignes('a_traiter')))
+    }
+    if (nbBas > 0) {
+      // Les rappels d'abord, le plus proche en premier (ce qui va bientôt
+      // remonter) ; puis le reste par dernière mise à jour. Seuls les
+      // rappels portent une heure : confirmer-appel l'efface sur tout autre
+      // statut.
+      lectures.push(groupeBas(supabase.from('commandes').select(COLONNES), agentId, maintenant)
+        .order('date_rappel', { ascending: true, nullsFirst: false })
+        .order('updated_at', { ascending: false }).order('id', { ascending: false })
+        .range((pB - 1) * ITEMS_PER_PAGE, pB * ITEMS_PER_PAGE - 1)
+        .then(lignes('traite')))
+    }
+    let data
+    try {
+      data = (await Promise.all(lectures)).flat()
+    } catch (e) {
+      setErreurChargement(e?.message || String(e))
+      setCommandes([]); setComptes(null); setLoading(false)
+      return
+    }
+    setComptes({ aTraiter: nbHaut, traites: nbBas, pageHaut: pH, pagesHaut, pageBas: pB, pagesBas })
 
     const commandesIntelligentes = (data || []).map(cmd => {
       const { appels, ...cmdSansJointure } = cmd
@@ -665,7 +678,6 @@ export default function CentreAppelAgent() {
       return { ...cmdSansJointure, pays: paysFinal }
     })
 
-    setTotalItems(total)
     setCommandes(commandesIntelligentes)
     
     setLoading(false)
@@ -676,18 +688,23 @@ export default function CentreAppelAgent() {
     setErreurEnvoi('')
     setAppelsPrecedents([])
 
-    // L'historique des appels de CETTE commande. Il arrive après l'ouverture :
-    // le panneau doit s'afficher tout de suite, l'agent a le client en ligne.
-    supabase
-      .from('appels')
-      .select('id, statut, notes, duree_secondes, created_at')
-      .eq('commande_id', commande.id)
-      .order('created_at', { ascending: false })
-      .then(({ data }) => setAppelsPrecedents(data || []))
+    // Les appels déjà passés sur CETTE commande, pour un responsable. Jamais
+    // pour l'agent (vue de l'agent, plus haut) — et la base les lui refuse
+    // de toute façon. Ils arrivent après l'ouverture : le panneau doit
+    // s'afficher tout de suite, on a le client en ligne.
+    if (!vueAgent) {
+      supabase
+        .from('appels')
+        .select('id, statut, notes, duree_secondes, created_at')
+        .eq('commande_id', commande.id)
+        .order('created_at', { ascending: false })
+        .then(({ data }) => setAppelsPrecedents(data || []))
+    }
 
     // « Pending » est l'état de départ, pas un résultat d'appel : jamais
-    // présélectionné, jamais proposé.
-    if (!estPending(commande.statut_confirmation)) {
+    // présélectionné, jamais proposé. Un lead remonté se présente à l'agent
+    // comme un nouveau (statutVu).
+    if (!estPending(statutVu(commande))) {
       setStatutChoisi(commande.statut_confirmation)
     } else if (sansPending.length > 0) {
       setStatutChoisi(sansPending[0].nom)
@@ -805,13 +822,13 @@ export default function CentreAppelAgent() {
 
     // agentActuel est null pour un responsable : `?.id` donnait undefined, et
     // chargerCommandes ne rechargeait rien après son enregistrement.
-    await chargerCommandes(page, ongletActif, agentActuel ? agentActuel.id : null)
+    await chargerCommandes(page, agentActuel ? agentActuel.id : null)
   }
 
   const appliquer = (setter) => (v) => { setter(v); allerPage1() }
 
   function reinitialiserFiltres() {
-    setDateDebut(''); setDateFin(''); setRecherche(''); setFiltreStatut('')
+    setDateDebut(''); setDateFin(''); setRecherche('')
     setFiltreProduit(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays('')
     allerPage1()
   }
@@ -835,17 +852,11 @@ export default function CentreAppelAgent() {
   const rappelDemande = statutsDeLaCommande.some((s) => s.nom === statutChoisi && s.necessite_rappel)
   const bornesRappel = bornesChamp(RAPPEL_MAX_JOURS)
 
-  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
-  const nombreFiltresActifs = [filtreStatut, filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
+  const nombreFiltresActifs = [filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
   const filtresActifs = dateDebut || dateFin || recherche || nombreFiltresActifs > 0
 
   const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
-
-  const labelStatut = (v) => {
-    const s = listeStatutsDB.find(st => st.nom === v || st.id === v)
-    return s ? s.nom : v
-  }
 
   if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
@@ -889,31 +900,11 @@ export default function CentreAppelAgent() {
 
         <div className="flex justify-between items-start mt-2 flex-wrap gap-3 sm:gap-4">
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full lg:w-auto">
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => { setOngletActif('a_traiter'); allerPage1(); setCommandeSelectionnee(null); setFiltreStatut(''); }}
-                className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
-                  ongletActif === 'a_traiter' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
-                }`}
-              >
-                Mes leads
-              </button>
-              <button
-                onClick={() => { setOngletActif('historique'); allerPage1(); setCommandeSelectionnee(null); }}
-                className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
-                  ongletActif === 'historique' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
-                }`}
-              >
-                Clôturés
-              </button>
-            </div>
-
-            <div className="hidden sm:block h-6 w-px bg-[#C9C1B1]/50"></div>
-
-            {/* Sur « Mes leads », ce qui reste à faire se lit d'un coup d'œil,
-                même quand le séparateur est trois pages plus loin. */}
+            {/* Ce qui reste à faire se lit d'un coup d'œil, même quand le
+                séparateur est loin en bas de la page. Une seule liste (28/10) :
+                les leads clôturés se lisent dans Commandes. */}
             <div className="text-sm text-[#1B2632]/60 font-medium">
-              {comptes ? (
+              {comptes && (
                 <>
                   <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{comptes.aTraiter} à traiter</span>
                   {' · '}
@@ -922,8 +913,6 @@ export default function CentreAppelAgent() {
                     {comptes.traites} en suivi
                   </button>
                 </>
-              ) : (
-                <>{totalItems} commande{totalItems > 1 ? 's' : ''} clôturée{totalItems > 1 ? 's' : ''}</>
               )}
             </div>
           </div>
@@ -945,7 +934,7 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
-            {peutChangerAgent && ongletActif === 'a_traiter' && statutsBas.length > 0 && (
+            {peutChangerAgent && statutsBas.length > 0 && (
               <button
                 onClick={remonterLeads}
                 disabled={remonteeEnCours}
@@ -1012,16 +1001,6 @@ export default function CentreAppelAgent() {
                     </div>
 
                     <div className="flex flex-col gap-4">
-                      {ongletActif === 'historique' && (
-                        <SelectFiltre 
-                          label="Statut" 
-                          value={filtreStatut} 
-                          onChange={appliquer(setFiltreStatut)} 
-                          options={sansPending.map(s => ({ value: s.nom, label: libelleStatut(s.nom) }))} 
-                          placeholder="Tous les statuts" 
-                        />
-                      )}
-                      
                       <SelectFiltre label="Pays" value={filtrePays} onChange={appliquer(setFiltrePays)} options={optionsFiltres.pays.map(p => ({ value: p.id, label: p.nom }))} placeholder="Tous les pays" />
                       <SelectFiltre label="Produit" value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={optionsFiltres.produits.map(p => ({ value: p, label: p }))} placeholder="Tous les produits" />
                       <SelectFiltre label="Ville" value={filtreVille} onChange={appliquer(setFiltreVille)} options={optionsFiltres.villes.map(v => ({ value: v, label: v }))} placeholder="Toutes les villes" />
@@ -1058,7 +1037,6 @@ export default function CentreAppelAgent() {
 
         {nombreFiltresActifs > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            {filtreStatut && <ChipFiltre label={`Statut : ${labelStatut(filtreStatut)}`} onClear={() => appliquer(setFiltreStatut)('')} />}
             {filtrePays && <ChipFiltre label={`Pays : ${optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || ''}`} onClear={() => appliquer(setFiltrePays)('')} />}
             {filtreProduit && <ChipFiltre label={`Produit : ${filtreProduit}`} onClear={() => appliquer(setFiltreProduit)('')} />}
             {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
@@ -1073,7 +1051,7 @@ export default function CentreAppelAgent() {
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
                 <th className="px-6 py-4">Lead ID</th>
-                <th className="px-6 py-4">{ongletActif === 'historique' ? 'Date de Traitement' : 'Date'}</th>
+                {!vueAgent && <th className="px-6 py-4">Date</th>}
                 <th className="px-6 py-4">Client</th>
                 <th className="px-6 py-4">Pays</th>
                 <th className="px-6 py-4">Ville / Zone</th>
@@ -1087,6 +1065,8 @@ export default function CentreAppelAgent() {
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {loading ? (
                 <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+              ) : erreurChargement ? (
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-sm font-medium text-[#A35139]">Impossible de charger les leads : {erreurChargement}</td></tr>
               ) : commandes.length === 0 ? (
                 <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.' : 'Aucune commande pour ce filtre.'}</td></tr>
               ) : (
@@ -1111,7 +1091,7 @@ export default function CentreAppelAgent() {
                         <td colSpan={nbColonnes} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 border-y border-[#C9C1B1]/60">
                           {comptes.aTraiter === 0 ? 'Rien à traiter' : `${comptes.aTraiter} à traiter au-dessus`}
                           <span className="text-[#1B2632]/30 mx-2">•</span>
-                          {comptes.traites} en suivi : non joints, rappels à venir, confirmées pas encore livrées
+                          {comptes.traites} en suivi : {vueAgent ? 'rappels à venir, confirmées pas encore livrées' : 'non joints, rappels à venir, confirmées pas encore livrées'}
                         </td>
                       </tr>
                     )}
@@ -1120,11 +1100,12 @@ export default function CentreAppelAgent() {
                       className={`cursor-pointer transition-colors ${estSelectionne ? 'bg-[#FFB162]/10' : 'hover:bg-[#EEE9DF]/40'}`}
                     >
                       <td className="px-6 py-4 font-mono text-xs text-[#1B2632]/80 whitespace-nowrap">#{cmd.lead_id || 'N/A'}</td>
-                      <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
-                        {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">traité le</span>}
-                        {dateAffichage ? dateAffichage.toLocaleDateString('fr-FR') : '-'}
-                        {ongletActif === 'historique' && dateAffichage && <span className="block text-xs text-[#1B2632]/50">{dateAffichage.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'})}</span>}
-                      </td>
+                      {!vueAgent && (
+                        <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
+                          {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">traité le</span>}
+                          {dateAffichage ? dateAffichage.toLocaleDateString('fr-FR') : '-'}
+                        </td>
+                      )}
                       <td className="px-6 py-4">
                         <div className="font-bold text-[#1B2632] whitespace-nowrap">{cmd.client_nom || 'Client inconnu'}</div>
                         <div className="font-mono text-xs text-[#A35139] font-semibold mt-1 whitespace-nowrap">{cmd.client_telephone || 'Aucun numéro'}</div>
@@ -1178,7 +1159,7 @@ export default function CentreAppelAgent() {
                         </td>
                       )}
                       <td className="px-6 py-4">
-                        <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                        <StatutPill statut={statutVu(cmd)} listeStatutsDB={listeStatutsDB} />
                         {cmd.date_rappel && statutsRappel.some((st) => st.nom === cmd.statut_confirmation) && (() => {
                           const r = libelleRappel(cmd.date_rappel, maintenantAffiche)
                           return r && (
@@ -1187,7 +1168,7 @@ export default function CentreAppelAgent() {
                             </div>
                           )
                         })()}
-                        {cmd.remonte_le && (
+                        {cmd.remonte_le && !vueAgent && (
                           <div className="text-[11px] font-bold text-[#A35139] mt-1 whitespace-nowrap">
                             ↑ Remonté le {new Date(cmd.remonte_le).toLocaleDateString('fr-FR')}
                           </div>
@@ -1201,7 +1182,7 @@ export default function CentreAppelAgent() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${estSelectionne ? 'bg-[#1B2632] text-white' : 'bg-[#EEE9DF] text-[#1B2632] border border-[#C9C1B1] hover:bg-[#C9C1B1]'}`}>
-                          {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) || cmd.groupe === 'historique' ? 'Modifier' : 'Traiter'}
+                          {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) ? 'Modifier' : 'Traiter'}
                         </button>
                       </td>
                     </tr>
@@ -1230,15 +1211,6 @@ export default function CentreAppelAgent() {
           </table>
         </div>
 
-        {ongletActif === 'historique' && (
-        <div className="bg-[#EEE9DF]/20 border-t border-[#C9C1B1]/50 px-6 py-4 flex items-center justify-between">
-          <span className="text-sm text-[#1B2632]/60">Page {page} sur {totalPages || 1}</span>
-          <div className="flex gap-2">
-            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1 || loading} className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors">Précédent</button>
-            <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages || totalPages === 0 || loading} className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors">Suivant</button>
-          </div>
-        </div>
-        )}
       </div>
 
       {commandeSelectionnee && (
@@ -1249,12 +1221,12 @@ export default function CentreAppelAgent() {
             <div className="flex justify-between items-start px-6 py-5 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
               <div>
                 <h2 className="text-lg font-bold text-[#1B2632] mb-1">
-                  {ongletActif === 'a_traiter' ? 'Traiter la commande' : 'Modifier la commande'}
+                  {statutsSuivis.some((st) => st.nom === commandeSelectionnee.statut_confirmation) ? 'Modifier la commande' : 'Traiter la commande'}
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-mono text-[#A35139]">#{commandeSelectionnee.lead_id || 'N/A'}</span>
-                  {commandeSelectionnee.statut_confirmation && (
-                    <StatutPill statut={commandeSelectionnee.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                  {statutVu(commandeSelectionnee) && (
+                    <StatutPill statut={statutVu(commandeSelectionnee)} listeStatutsDB={listeStatutsDB} />
                   )}
                 </div>
               </div>
@@ -1264,9 +1236,13 @@ export default function CentreAppelAgent() {
                   <span className="block font-mono font-bold text-sm text-[#1B2632]/70">
                     {formatTemps(tempsEcoule)}
                   </span>
-                  <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">
-                    Appel n° {appelsPrecedents.length + 1}
-                  </span>
+                  {/* Le numéro d'appel dit combien de fois on a déjà essayé : pas
+                      pour l'agent. */}
+                  {!vueAgent && (
+                    <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">
+                      Appel n° {appelsPrecedents.length + 1}
+                    </span>
+                  )}
                 </div>
                 <button onClick={() => setCommandeSelectionnee(null)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">
                   ✕

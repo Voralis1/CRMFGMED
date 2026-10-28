@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
@@ -18,8 +18,11 @@ import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichie
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRappel.mjs'
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
+import { estTentative, resumeTentatives, statutPrincipal } from '../../lib/affichageStatut.mjs'
 
 const TAILLE_PAGE = 50
+// Les cinq statuts de livraison (contrainte livraisons_statut_valide), en français.
+const LIVRAISON_LIBELLES = { a_preparer: 'à préparer', expedie: 'expédiée', livre: 'livrée', retour: 'retournée', annule: 'annulée' }
 
 // 🚀 Fonction StatutPill universelle pour les différents statuts
 function StatutPill({ statut, listeStatutsDB, type = 'confirmation' }) {
@@ -135,7 +138,17 @@ export default function GestionCommandesPage() {
   const [detail, setDetail] = useState(null)
   // L'historique des statuts de la commande ouverte : qui a appelé, quand,
   // d'où venait la commande, combien de temps ça a duré, ce qui a été dit.
-  const [historique, setHistorique] = useState([])
+  // null = en cours de lecture (jamais confondu avec « aucune ligne »).
+  const [historique, setHistorique] = useState(null)
+  // Une lecture ratée le DIT : sans ça, une vue absente ou un droit manquant
+  // s'affichait « Aucun changement de statut », et un écran cassé passait
+  // pour une commande sans histoire.
+  const [erreurHistorique, setErreurHistorique] = useState('')
+  // Colonne Statut (28/10) : les tentatives de chaque commande affichée,
+  // lues dans l'historique. { [commande_id]: { n, statut, date } }
+  const [tentatives, setTentatives] = useState({})
+  const [erreurTentatives, setErreurTentatives] = useState('')
+  const lectureTentatives = useRef(0)
   const [nouveauStatut, setNouveauStatut] = useState('')
   const [changementEnCours, setChangementEnCours] = useState(false)
   // L'adresse, corrigeable ici par qui corrige le statut : c'est souvent lui
@@ -146,6 +159,15 @@ export default function GestionCommandesPage() {
   // L'heure du rappel quand le statut choisi en demande un (necessite_rappel) :
   // confirmer-appel l'exige, depuis Commandes comme depuis le Centre d'appel.
   const [rappelCorrige, setRappelCorrige] = useState('')
+  // « Renvoyer en attente » (28/10) : manager, admin, super admin, tant
+  // qu'aucun livreur n'a la commande. La livraison est lue elle-même :
+  // commandes.statut_livraison n'est pas un reflet fiable (vide ou différent
+  // sur 8 des 14 commandes livrées ou à livrer, relevé le 28/10).
+  //   undefined = en cours de lecture, null = aucune livraison,
+  //   { statut, livreur } = un livreur l'a, { erreur } = lecture ratée.
+  const [livraisonDetail, setLivraisonDetail] = useState(undefined)
+  const [renvoiOuvert, setRenvoiOuvert] = useState(false)
+  const [motifRenvoi, setMotifRenvoi] = useState('')
   const [lignesOuvertes, setLignesOuvertes] = useState(() => new Set())
 
   // Import : on choisit D'ABORD d'où partent les leads. Tant que ce n'est
@@ -484,10 +506,26 @@ export default function GestionCommandesPage() {
   // s'affiche tout de suite, l'historique se remplit une seconde plus tard.
   async function ouvrirDetail(cmd) {
     setDetail(cmd)
-    setHistorique([])
-    // « Pending » n'est pas un choix : on ne renvoie pas un lead traité dans
-    // la file par ce chemin (un statut ouvert, puis « Remonter », dans le
-    // Centre d'appel). La base le refuse de toute façon.
+    setHistorique(null)
+    setErreurHistorique('')
+    setRenvoiOuvert(false)
+    setMotifRenvoi('')
+    setLivraisonDetail(undefined)
+    if (peutChangerStatut) {
+      supabase
+        .from('livraisons')
+        .select('statut, livreurs(nom)')
+        .eq('commande_id', cmd.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .then(({ data, error }) => {
+          if (error) { setLivraisonDetail({ erreur: error.message }); return }
+          const l = (data || [])[0]
+          setLivraisonDetail(l ? { statut: l.statut, livreur: l.livreurs?.nom || 'sans nom' } : null)
+        })
+    }
+    // « Pending » n'est pas un choix de la liste : le retour au début a son
+    // propre bouton, « Renvoyer en attente », avec un motif obligatoire.
     setNouveauStatut(cmd.statut_confirmation && cmd.statut_confirmation !== 'Pending' ? cmd.statut_confirmation : '')
     setAdresseCorrigee(cmd.adresse || '')
     setRappelCorrige(cmd.date_rappel && new Date(cmd.date_rappel) > new Date() ? versChampLocal(cmd.date_rappel) : '')
@@ -496,14 +534,40 @@ export default function GestionCommandesPage() {
     // v_historique_statuts (historique_statuts.sql) : le SEUL chemin de
     // lecture. C'est la vue qui décide : un vendeur reçoit fait_par_nom vide
     // (il voit quoi et quand, pas qui), un agent ne reçoit aucune ligne.
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('v_historique_statuts')
       .select('id, statut, statut_precedent, note, duree_secondes, via, cree_le, fait_par_nom')
       .eq('commande_id', cmd.id)
       .order('cree_le', { ascending: false })
 
+    if (error) { setErreurHistorique(error.message); setHistorique([]); return }
     setHistorique(data || [])
   }
+
+  // Les tentatives des commandes affichées (colonne Statut). Une lecture par
+  // page, limitée aux commandes visibles et aux statuts « tentative » (ouverts,
+  // sauf Pending). Une réponse arrivée après une autre page est ignorée.
+  useEffect(() => {
+    const ids = commandes.map((c) => c.id)
+    const nomsTentatives = listeStatutsDB.filter((st) => estTentative(st.nom, listeStatutsDB)).map((st) => st.nom)
+    const numero = ++lectureTentatives.current
+    if (ids.length === 0 || nomsTentatives.length === 0) { setTentatives({}); setErreurTentatives(''); return }
+    supabase
+      .from('v_historique_statuts')
+      .select('commande_id, statut, cree_le')
+      .in('commande_id', ids)
+      .in('statut', nomsTentatives)
+      .then(({ data, error }) => {
+        if (numero !== lectureTentatives.current) return
+        if (error) { setTentatives({}); setErreurTentatives(error.message); return }
+        const parCommande = {}
+        for (const l of data || []) (parCommande[l.commande_id] ||= []).push(l)
+        const resume = {}
+        for (const [id, lignes] of Object.entries(parCommande)) resume[id] = resumeTentatives(lignes, listeStatutsDB)
+        setTentatives(resume)
+        setErreurTentatives('')
+      })
+  }, [commandes, listeStatutsDB])
 
   // Le statut choisi dans le tiroir demande-t-il un rappel ? Le drapeau, pas le mot.
   const rappelDemandeDrawer = listeStatutsDB.some((s) => s.nom === nouveauStatut && s.necessite_rappel)
@@ -559,6 +623,33 @@ export default function GestionCommandesPage() {
 
     const maj = { ...detail, statut_confirmation: nouveauStatut, adresse: adresseCorrigee.trim() || null,
       date_rappel: rappelDemandeDrawer ? rappelIso : null }
+    setDetail(maj)
+    await ouvrirDetail(maj)
+    chargerCommandes(pageActuelle)
+  }
+
+  // Renvoyer en attente : par confirmer-appel, comme toute correction de
+  // statut. La fonction vérifie le rôle, le motif et le livreur ; la base
+  // revérifie le rôle et le livreur (renvoyer_en_attente.sql §4), pour tous
+  // les chemins. Le motif finit dans l'historique (« Renvoyé en attente : … »).
+  async function renvoyerEnAttente() {
+    if (!detail || !motifRenvoi.trim()) return
+    setErreurStatut('')
+    setChangementEnCours(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) { setChangementEnCours(false); return }
+    const reponse = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-appel`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ commande_id: detail.id, statut: 'Pending', tenant_id: tenantKey, notes: motifRenvoi.trim() }),
+      },
+    )
+    const resultat = await reponse.json().catch(() => ({ error: `Réponse illisible (HTTP ${reponse.status})` }))
+    setChangementEnCours(false)
+    if (resultat.error) { setErreurStatut(resultat.error); return }
+    const maj = { ...detail, statut_confirmation: 'Pending', date_rappel: null }
     setDetail(maj)
     await ouvrirDetail(maj)
     chargerCommandes(pageActuelle)
@@ -1167,6 +1258,12 @@ export default function GestionCommandesPage() {
         )}
       </div>
 
+      {erreurTentatives && (
+        <p className="mb-3 px-4 py-2.5 rounded-xl border border-[#A35139]/40 bg-[#A35139]/5 text-sm text-[#A35139]">
+          Tentatives d&apos;appel non lues : {erreurTentatives}. La colonne Statut affiche « En attente » sans le détail des appels.
+        </p>
+      )}
+
       {/* Tableau ultra-enrichi affichant le max de colonnes de la DB */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
         <div className="overflow-auto min-h-[500px] max-h-[72vh]">
@@ -1254,11 +1351,29 @@ export default function GestionCommandesPage() {
                     </td>
 
                     <td className="px-4 py-3.5 align-top">
-                      <StatutPill statut={cmd.statut_confirmation} listeStatutsDB={listeStatutsDB} />
+                      {/* Règle d'AFFICHAGE de cette page seulement (28/10) : un statut
+                          ouvert (Non joint, Rappel…) se lit « En attente », et le
+                          détail des appels passe en deuxième ligne. La base garde le
+                          vrai statut ; le tiroir, le filtre et l'export aussi, et le
+                          Centre d'appel le montre aux responsables. */}
+                      <StatutPill statut={statutPrincipal(cmd.statut_confirmation, listeStatutsDB)} listeStatutsDB={listeStatutsDB} />
+                      {estTentative(cmd.statut_confirmation, listeStatutsDB) && (() => {
+                        const t = tentatives[cmd.id]
+                        return (
+                          <span className="flex items-center gap-1 mt-1.5 text-[10px] text-[#1B2632]/70 whitespace-nowrap">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" /></svg>
+                            {/* Le mot = le dernier résultat ; le nombre = toutes les
+                                tentatives (Non joint et Rappel ensemble). */}
+                            {t
+                              ? <>{libelleStatut(t.statut)} — {t.n} tentative{t.n > 1 ? 's' : ''} — {new Date(t.date).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</>
+                              : libelleStatut(cmd.statut_confirmation)}
+                          </span>
+                        )
+                      })()}
                       {cmd.date_rappel && listeStatutsDB.some((st) => st.nom === cmd.statut_confirmation && st.necessite_rappel) && (
                         <span className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-1 w-fit">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
-                          {libelleStatut(cmd.statut_confirmation)} · {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                          Rappel prévu le {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
                         </span>
                       )}
                       {(cmd.statut_livraison || cmd.statut_paiement) && (
@@ -1835,14 +1950,20 @@ export default function GestionCommandesPage() {
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-bold text-[#1B2632]">Historique des statuts</h3>
-                    {historique.length > 0 && (
+                    {historique?.length > 0 && (
                       <span className="text-xs text-[#1B2632]/55">
                         {historique.length} action{historique.length > 1 ? 's' : ''}
                       </span>
                     )}
                   </div>
 
-                  {historique.length === 0 ? (
+                  {erreurHistorique ? (
+                    <p className="px-5 py-6 text-sm font-medium text-[#A35139] text-center">
+                      Impossible de lire l&apos;historique : {erreurHistorique}
+                    </p>
+                  ) : historique === null ? (
+                    <p className="px-5 py-6 text-sm text-[#1B2632]/40 text-center">Lecture de l&apos;historique…</p>
+                  ) : historique.length === 0 ? (
                     <p className="px-5 py-6 text-sm text-[#1B2632]/50 text-center">
                       Aucun changement de statut enregistré pour cette commande.
                     </p>
@@ -1954,6 +2075,56 @@ export default function GestionCommandesPage() {
                       </button>
                       {erreurStatut && (
                         <p className="w-full text-xs font-medium text-[#A35139]">{erreurStatut}</p>
+                      )}
+
+                      {/* RENVOYER EN ATTENTE (28/10). Remet la commande au début :
+                          elle revient chez son agent comme un nouveau lead. Pas
+                          quand un livreur l'a : un litige sur la livraison se règle
+                          dans Livraisons. Le motif est obligatoire : il est la seule
+                          explication que gardera l'historique. */}
+                      {detail.statut_confirmation && detail.statut_confirmation !== 'Pending' && (
+                        <div className="w-full pt-3 mt-1 border-t border-[#C9C1B1]/40">
+                          {livraisonDetail === undefined ? (
+                            <p className="text-xs text-[#1B2632]/40">Vérification de la livraison…</p>
+                          ) : livraisonDetail?.erreur ? (
+                            <p className="text-xs font-medium text-[#A35139]">
+                              Impossible de vérifier la livraison : {livraisonDetail.erreur}. Renvoi en attente indisponible.
+                            </p>
+                          ) : livraisonDetail ? (
+                            <p className="text-xs text-[#1B2632]/60">
+                              <span className="font-semibold">Renvoyer en attente : impossible.</span>{' '}
+                              Le livreur {livraisonDetail.livreur} a cette commande (livraison {LIVRAISON_LIBELLES[livraisonDetail.statut] || livraisonDetail.statut}).
+                              Un litige sur la livraison se règle dans Livraisons.
+                            </p>
+                          ) : !renvoiOuvert ? (
+                            <button onClick={() => { setRenvoiOuvert(true); setErreurStatut('') }}
+                              className="px-4 py-2 rounded-xl text-sm font-semibold border border-[#A35139]/50 text-[#A35139] bg-white hover:bg-[#A35139]/5 transition-colors cursor-pointer">
+                              Renvoyer en attente
+                            </button>
+                          ) : (
+                            <div className="flex flex-wrap items-end gap-3">
+                              <div className="flex-1 min-w-[240px]">
+                                <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
+                                  Motif du renvoi <span className="text-[#A35139]">*</span>
+                                </label>
+                                <input type="text" autoFocus
+                                  className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
+                                  value={motifRenvoi}
+                                  onChange={(e) => { setMotifRenvoi(e.target.value); setErreurStatut('') }}
+                                  placeholder="Ex. : confirmée par erreur, le client n'a jamais répondu"
+                                />
+                              </div>
+                              <button onClick={renvoyerEnAttente} disabled={changementEnCours || !motifRenvoi.trim()}
+                                className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-40 transition-colors cursor-pointer">
+                                {changementEnCours ? 'Renvoi…' : 'Confirmer le renvoi'}
+                              </button>
+                              <button onClick={() => { setRenvoiOuvert(false); setMotifRenvoi('') }}
+                                className="px-4 py-2.5 rounded-xl text-sm font-medium text-[#1B2632]/60 hover:text-[#1B2632] cursor-pointer">
+                                Annuler
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

@@ -39,6 +39,39 @@ Deno.serve(handle(async (req) => {
     }
   }
 
+  // 0 a. « Renvoyer en attente » (28/10) : le retour à « Pending ». La base le
+  // refuse de toute façon hors de ces cas (renvoyer_en_attente.sql §4) ; on
+  // le vérifie ici AVANT d'écrire quoi que ce soit, pour un message clair, et
+  // le motif — obligatoire — n'existe que dans cette fonction.
+  // « Pending » est le TEXTE posé par la base, jamais le mot affiché.
+  let notesFinales: string | null = notes ? String(notes) : null
+  if (statut === 'Pending') {
+    if (commande.statut_confirmation === 'Pending') {
+      throw new HttpError(400, 'Cette commande est déjà en attente.')
+    }
+    if (!caller.isSuperAdmin && !['admin', 'manager'].includes(caller.roleNom)) {
+      throw new HttpError(403, 'Renvoi en attente refusé : seuls un manager, un admin ou un super admin peuvent renvoyer une commande en attente.')
+    }
+    const motif = String(notes ?? '').trim()
+    if (!motif) {
+      throw new HttpError(400, 'Le motif est obligatoire pour renvoyer une commande en attente.')
+    }
+    const { data: livraison } = await sb
+      .from('livraisons')
+      .select('statut, livreurs(nom)')
+      .eq('commande_id', commande_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (livraison) {
+      // deno-lint-ignore no-explicit-any
+      const nom = (livraison as any).livreurs?.nom || 'sans nom'
+      const etat: Record<string, string> = { a_preparer: 'à préparer', expedie: 'expédiée', livre: 'livrée', retour: 'retournée', annule: 'annulée' }
+      throw new HttpError(400, `Renvoi refusé : le livreur ${nom} a cette commande (livraison ${etat[livraison.statut] ?? livraison.statut}). Un litige sur la livraison se règle dans Livraisons.`)
+    }
+    notesFinales = `Renvoyé en attente : ${motif}`
+  }
+
   // 0. Le pays envoyé doit être un pays de l'entreprise de la commande. La
   // base le refuse de toute façon (trg_zy_pays_commande, qui ne fait pas
   // d'exception pour la clé service) ; on le vérifie ici AVANT d'écrire
@@ -113,7 +146,7 @@ Deno.serve(handle(async (req) => {
     // D'où venait la commande, lu AVANT la mise à jour. « Injoignable » ne
     // dit rien ; « En attente → Injoignable » dit qu'on a essayé.
     p_statut_precedent: commande.statut_confirmation ?? null,
-    p_notes: notes || null,
+    p_notes: notesFinales,
     // Mesurée par l'écran, bornée ici : une valeur absurde (négative, ou un
     // onglet laissé ouvert toute la nuit) fausserait la durée moyenne sans
     // que personne ne s'en aperçoive. Au-delà d'une heure, on ne garde rien
