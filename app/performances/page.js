@@ -94,21 +94,24 @@ export default function PerformancesPage() {
       supabase.from('appels').select('agent_id, statut, created_at').eq('tenant_id', tenantId).gte('created_at', debut).lte('created_at', fin),
       supabase.from('livreurs').select('id, nom, telephone, zone, actif').eq('tenant_id', tenantId),
       supabase.from('livraisons').select('livreur_id, statut, created_at').eq('tenant_id', tenantId).gte('created_at', debut).lte('created_at', fin),
-      supabase.from('statuts').select('code, declenche_assignation').eq('tenant_id', tenantId).eq('declenche_assignation', true),
+      supabase.from('statuts').select('nom, declenche_assignation').eq('tenant_id', tenantId).eq('declenche_assignation', true),
     ])
 
     const agents = resAgents.data || []
     const appels = resAppels.data || []
     const livreurs = resLivreurs.data || []
     const livraisons = resLivraisons.data || []
-    const codesConfirmes = (resStatuts.data || []).map((s) => s.code)
+    // Un appel garde le NOM du statut (« Confirmed »), jamais son code
+    // (`confirmed`) : c'est ce que confirmer-appel écrit. Comparer aux codes ne
+    // trouvait jamais rien — 0 confirmation pour tout le monde depuis la
+    // première confirmation enregistrée (15/10), corrigé le 28/10.
+    const nomsConfirmes = (resStatuts.data || []).map((s) => s.nom)
 
     const agentsMap = agents.map((agent) => {
       const appelsAgent = appels.filter((a) => String(a.agent_id) === String(agent.id))
       const total = appelsAgent.length
-      const confirmations = codesConfirmes.length > 0
-        ? appelsAgent.filter((a) => codesConfirmes.includes(a.statut)).length
-        : appelsAgent.filter((a) => a.statut === 'confirmed').length // repli si rien n'est encore configuré
+      // Aucun statut qui envoie au livreur dans Paramètres : 0, sans deviner un mot.
+      const confirmations = appelsAgent.filter((a) => nomsConfirmes.includes(a.statut)).length
       const taux = total > 0 ? Math.round((confirmations / total) * 100) : 0
       return { ...agent, total, confirmations, taux }
     }).sort((a, b) => b.confirmations - a.confirmations)
@@ -133,7 +136,7 @@ export default function PerformancesPage() {
 
     setStatsAgents(agentsMap)
     setStatsLivreurs(livreursMap)
-    setAvertissementLivraison(codesConfirmes.length === 0)
+    setAvertissementLivraison(nomsConfirmes.length === 0)
     setChargement(false)
   }, [tenantId, periode, dateDebutPerso, dateFinPerso])
 
@@ -222,7 +225,7 @@ export default function PerformancesPage() {
 
       {avertissementLivraison && ongletActif === 'agents' && (
         <div className="p-4 bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-xl text-sm font-medium text-[#8a5a1f]">
-          Aucun statut n'est marqué "déclenche l'assignation" dans Paramètres → Statuts configurables — le taux de confirmation utilise donc temporairement le code générique <code className="font-mono">confirmed</code>. Configurez ce flag pour un calcul fiable sur vos vrais statuts.
+          Aucun statut n'est marqué "déclenche l'assignation" dans Paramètres → Statuts configurables — aucune confirmation ne peut donc être comptée (0 pour chaque agent). Cochez ce drapeau sur le statut qui confirme une commande.
         </div>
       )}
 
