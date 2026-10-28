@@ -10,6 +10,7 @@ import VignetteProduit from '../components/VignetteProduit'
 import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
+import { libelleStatut } from '../../lib/libellesStatuts.mjs'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -19,7 +20,7 @@ function StatutPill({ statut, listeStatutsDB }) {
     return (
       <span className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1.5 w-fit" 
             style={{ backgroundColor: `${statutConfiguré.couleur}15`, color: statutConfiguré.couleur, border: `1px solid ${statutConfiguré.couleur}40` }}>
-        {statutConfiguré.nom}
+        {libelleStatut(statutConfiguré.nom)}
       </span>
     )
   }
@@ -27,8 +28,8 @@ function StatutPill({ statut, listeStatutsDB }) {
   const configsFallback = {
     'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée' },
     'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente' },
-    'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Injoignable' },
-    'reminder': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'À rappeler' },
+    'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Non joint' },
+    'reminder': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'Rappel' },
     'cancelled': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Annulée' },
     'spam': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Spam' },
     'double': { bg: 'bg-[#C9C1B1]/50', text: 'text-[#4a4437]', label: 'Doublon' },
@@ -38,7 +39,7 @@ function StatutPill({ statut, listeStatutsDB }) {
   const conf = configsFallback[statut] || configsFallback['en_attente']
   return (
     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${conf.bg} ${conf.text} whitespace-nowrap flex items-center gap-1.5 w-fit`}>
-      {conf.label || statut}
+      {conf.label || libelleStatut(statut)}
     </span>
   )
 }
@@ -1016,7 +1017,7 @@ export default function CentreAppelAgent() {
                           label="Statut" 
                           value={filtreStatut} 
                           onChange={appliquer(setFiltreStatut)} 
-                          options={sansPending.map(s => ({ value: s.nom, label: s.nom }))} 
+                          options={sansPending.map(s => ({ value: s.nom, label: libelleStatut(s.nom) }))} 
                           placeholder="Tous les statuts" 
                         />
                       )}
@@ -1110,7 +1111,7 @@ export default function CentreAppelAgent() {
                         <td colSpan={nbColonnes} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 border-y border-[#C9C1B1]/60">
                           {comptes.aTraiter === 0 ? 'Rien à traiter' : `${comptes.aTraiter} à traiter au-dessus`}
                           <span className="text-[#1B2632]/30 mx-2">•</span>
-                          {comptes.traites} en suivi : injoignables, rappels à venir, confirmées pas encore livrées
+                          {comptes.traites} en suivi : non joints, rappels à venir, confirmées pas encore livrées
                         </td>
                       </tr>
                     )}
@@ -1438,7 +1439,7 @@ export default function CentreAppelAgent() {
                     {appelsPrecedents.map((a) => (
                       <div key={a.id} className="text-xs border-l-2 border-[#C9C1B1] pl-2.5">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-[#1B2632]">{a.statut || '—'}</span>
+                          <span className="font-semibold text-[#1B2632]">{libelleStatut(a.statut) || '—'}</span>
                           <span className="text-[#1B2632]/45">
                             {a.created_at ? new Date(a.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : ''}
                           </span>
@@ -1463,7 +1464,7 @@ export default function CentreAppelAgent() {
                 >
                   <option value="" disabled>-- Choisir --</option>
                   {statutsDeLaCommande.map((s) => (
-                    <option key={s.id} value={s.nom}>{s.nom}</option>
+                    <option key={s.id} value={s.nom}>{libelleStatut(s.nom)}</option>
                   ))}
                 </select>
 

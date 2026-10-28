@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
+import { libelleStatut } from "../../lib/libellesStatuts.mjs";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
 import { retirerImage } from "../../lib/imageProduit";
@@ -766,10 +767,17 @@ export default function ParametresAdmin() {
                     ) : (
                       listeStatuts.map((s) => (
                         <tr key={s.id} className="hover:bg-[#EEE9DF]/20">
-                          <td className="font-medium">{s.nom}</td>
+                          {/* Le nom est la VALEUR enregistrée sur les commandes ; l'écran
+                              affiche son libellé français (lib/libellesStatuts.mjs). */}
+                          <td className="font-medium">
+                            {s.nom}
+                            {libelleStatut(s.nom) !== s.nom && (
+                              <span className="block text-xs font-normal text-[#1B2632]/50">affiché « {libelleStatut(s.nom)} »</span>
+                            )}
+                          </td>
                           <td><span className="font-mono text-xs text-[#1B2632]/50">{s.code}</span></td>
                           <td><span className="fg-badge">{s.pays?.nom || 'N/A'}</span></td>
-                          <td><span className="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap" style={{ backgroundColor: s.couleur, color: "#fff" }}>{s.nom}</span></td>
+                          <td><span className="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap" style={{ backgroundColor: s.couleur, color: "#fff" }}>{libelleStatut(s.nom)}</span></td>
                           <td className="text-center">{s.necessite_rappel ? <span className="text-[#FFB162] font-bold">●</span> : "—"}</td>
                           <td className="text-center">{s.declenche_assignation ? <span className="text-[#2C3B4D] font-bold">●</span> : "—"}</td>
                           <td className="text-right flex items-center justify-end gap-2">

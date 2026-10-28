@@ -82,40 +82,9 @@ Deno.serve(handle(async (req) => {
     ? new Date(String(date_rappel)).toISOString()
     : null
 
-  // 1. Log the call
-  const { data: appel, error: erreurAppel } = await sb
-    .from('appels')
-    .insert({
-      commande_id,
-      agent_id: agentId,
-      statut,
-      // D'où venait la commande, lu AVANT la mise à jour. « Injoignable » ne
-      // dit rien ; « En attente → Injoignable » dit qu'on a essayé.
-      statut_precedent: commande.statut_confirmation ?? null,
-      tenant_id: commande.tenant_id,
-      notes: notes || null,
-      // Mesurée par l'écran, bornée ici : une valeur absurde (négative, ou un
-      // onglet laissé ouvert toute la nuit) fausserait la durée moyenne sans
-      // que personne ne s'en aperçoive. Au-delà d'une heure, on ne garde rien
-      // plutôt que d'inventer un chiffre.
-      duree_secondes: Number.isFinite(Number(duree_secondes))
-        && Number(duree_secondes) >= 0
-        && Number(duree_secondes) <= 3600
-          ? Math.round(Number(duree_secondes))
-          : null,
-      date_rappel: dateRappel,
-    })
-    .select()
-    .single()
-  if (erreurAppel) throw new HttpError(400, erreurAppel.message)
-
-  // 2. Update the order (only fields that were actually sent)
+  // 1. Les champs de la commande envoyés par l'écran (seulement ceux-là).
   // deno-lint-ignore no-explicit-any
-  const maj: Record<string, any> = {
-    statut_confirmation: statut,
-    date_rappel: dateRappel,
-    updated_at: new Date().toISOString(),
-  }
+  const maj: Record<string, any> = {}
   if (source !== undefined) maj.source = source || null
   if (client_nom !== undefined) maj.client_nom = client_nom
   if (client_telephone) maj.client_telephone = client_telephone
@@ -130,12 +99,35 @@ Deno.serve(handle(async (req) => {
   // An agent who treats an unassigned lead takes it.
   if (caller.roleNom === 'agent' && !commande.agent_id) maj.agent_id = agentId
 
-  const { error: erreurCommande } = await sb
-    .from('commandes')
-    .update(maj)
-    .eq('id', commande_id)
-    .eq('tenant_id', commande.tenant_id)
-  if (erreurCommande) throw new HttpError(400, erreurCommande.message)
+  // 2. L'appel, la commande et l'historique des statuts dans UNE transaction
+  // (enregistrer_appel, historique_statuts.sql). Avant, l'appel était écrit
+  // puis la commande mise à jour : un refus de la commande laissait un appel
+  // qui n'avait rien changé. Et la clé service n'a pas d'auth.uid() : c'est
+  // `p_fait_par` qui dit à l'historique qui a agi.
+  const { data: appel, error } = await sb.rpc('enregistrer_appel', {
+    p_commande_id: commande_id,
+    p_tenant_id: commande.tenant_id,
+    p_fait_par: caller.userId,
+    p_agent_id: agentId,
+    p_statut: statut,
+    // D'où venait la commande, lu AVANT la mise à jour. « Injoignable » ne
+    // dit rien ; « En attente → Injoignable » dit qu'on a essayé.
+    p_statut_precedent: commande.statut_confirmation ?? null,
+    p_notes: notes || null,
+    // Mesurée par l'écran, bornée ici : une valeur absurde (négative, ou un
+    // onglet laissé ouvert toute la nuit) fausserait la durée moyenne sans
+    // que personne ne s'en aperçoive. Au-delà d'une heure, on ne garde rien
+    // plutôt que d'inventer un chiffre. C'est la SEULE mesure : l'historique
+    // la recopie, il ne la recalcule pas.
+    p_duree_secondes: Number.isFinite(Number(duree_secondes))
+      && Number(duree_secondes) >= 0
+      && Number(duree_secondes) <= 3600
+        ? Math.round(Number(duree_secondes))
+        : null,
+    p_date_rappel: dateRappel,
+    p_maj: maj,
+  })
+  if (error) throw new HttpError(400, error.message)
 
   return json({ status: 'ok', appel })
 }))

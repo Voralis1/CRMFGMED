@@ -7,6 +7,7 @@ import {
   PieChart, Pie, Cell,
 } from "recharts";
 import { supabase } from "../../lib/supabaseClient";
+import { libelleStatut } from "../../lib/libellesStatuts.mjs";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
 
@@ -410,7 +411,7 @@ export default function DashboardFGMED() {
             <h2 className="fg-card-title">Analytics par agent</h2>
             <p className="fg-card-sub">Performance du centre d'appel — {analyticsAgents.length} agent{analyticsAgents.length > 1 ? "s" : ""}</p>
           </div>
-          <StatutPill ton="neutre">Appels · Confirmées · Injoignables · Annulées · Reprogrammées</StatutPill>
+          <StatutPill ton="neutre">Appels · Confirmées · Non joints · Annulées · Rappels</StatutPill>
         </div>
 
         {analyticsAgents.length === 0 ? (
@@ -425,9 +426,9 @@ export default function DashboardFGMED() {
                   <th>Agent</th>
                   <th className="fg-num-col">Appels</th>
                   <th className="fg-num-col">Confirmées</th>
-                  <th className="fg-num-col">Injoignables</th>
+                  <th className="fg-num-col">Non joints</th>
                   <th className="fg-num-col">Annulées</th>
-                  <th className="fg-num-col">Reprogrammées</th>
+                  <th className="fg-num-col">Rappels</th>
                   <th className="fg-taux-col">Taux conf.</th>
                 </tr>
               </thead>
@@ -514,7 +515,7 @@ export default function DashboardFGMED() {
             {data.overviewAppels.length === 0 && <li className="text-sm text-gray-400">Aucun appel</li>}
             {data.overviewAppels.map((o, i) => (
               <li key={i}>
-                <span className="fg-ov-label">{o.label}</span>
+                <span className="fg-ov-label">{libelleStatut(o.label)}</span>
                 <div className="fg-ov-track">
                   <div className="fg-ov-fill" style={{ width: o.pct + "%" }} />
                 </div>

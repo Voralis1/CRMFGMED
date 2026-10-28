@@ -17,6 +17,7 @@ import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/model
 import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichierImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRappel.mjs'
+import { libelleStatut } from '../../lib/libellesStatuts.mjs'
 
 const TAILLE_PAGE = 50
 
@@ -28,7 +29,7 @@ function StatutPill({ statut, listeStatutsDB, type = 'confirmation' }) {
     return (
       <span className="px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1" 
             style={{ backgroundColor: `${statutConfiguré.couleur}15`, color: statutConfiguré.couleur, border: `1px solid ${statutConfiguré.couleur}40` }}>
-        {statutConfiguré.nom}
+        {libelleStatut(statutConfiguré.nom)}
       </span>
     )
   }
@@ -40,7 +41,7 @@ function StatutPill({ statut, listeStatutsDB, type = 'confirmation' }) {
     'paye': { bg: 'bg-emerald-100', text: 'text-emerald-800', label: 'Payé' },
     'non_paye': { bg: 'bg-red-100', text: 'text-red-800', label: 'Non payé' },
   }
-  const conf = configsFallback[statut] || { bg: 'bg-gray-100', text: 'text-gray-700', label: statut || 'N/A' }
+  const conf = configsFallback[statut] || { bg: 'bg-gray-100', text: 'text-gray-700', label: libelleStatut(statut) || 'N/A' }
   
   return (
     <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${conf.bg} ${conf.text} whitespace-nowrap inline-block`}>
@@ -492,11 +493,14 @@ export default function GestionCommandesPage() {
     setRappelCorrige(cmd.date_rappel && new Date(cmd.date_rappel) > new Date() ? versChampLocal(cmd.date_rappel) : '')
     setErreurStatut('')
 
+    // v_historique_statuts (historique_statuts.sql) : le SEUL chemin de
+    // lecture. C'est la vue qui décide : un vendeur reçoit fait_par_nom vide
+    // (il voit quoi et quand, pas qui), un agent ne reçoit aucune ligne.
     const { data } = await supabase
-      .from('appels')
-      .select('id, statut, statut_precedent, notes, duree_secondes, created_at, agent_id')
+      .from('v_historique_statuts')
+      .select('id, statut, statut_precedent, note, duree_secondes, via, cree_le, fait_par_nom')
       .eq('commande_id', cmd.id)
-      .order('created_at', { ascending: false })
+      .order('cree_le', { ascending: false })
 
     setHistorique(data || [])
   }
@@ -645,7 +649,7 @@ export default function GestionCommandesPage() {
       `"${(c.produit || "").replace(/"/g, '""')}"`,
       c.quantite || 1,
       c.prix || 0,
-      c.statut_confirmation || "",
+      libelleStatut(c.statut_confirmation),
       c.statut_livraison || "",
       c.statut_paiement || "",
       c.is_doublon ? "Oui" : "Non",
@@ -1102,9 +1106,9 @@ export default function GestionCommandesPage() {
                 <select className="cm-input" value={filtres.statut}
                   onChange={(e) => setFiltres({ ...filtres, statut: e.target.value })}>
                   <option value="">Tous</option>
-                  <option value="aucun">Pending (pas encore traité)</option>
+                  <option value="aucun">{libelleStatut('Pending')} (pas encore traité)</option>
                   {listeStatutsDB.filter((st) => st.code !== 'pending' && st.nom !== 'Pending')
-                    .map((st) => <option key={st.id} value={st.nom}>{st.nom}</option>)}
+                    .map((st) => <option key={st.id} value={st.nom}>{libelleStatut(st.nom)}</option>)}
                 </select>
               </div>
 
@@ -1254,7 +1258,7 @@ export default function GestionCommandesPage() {
                       {cmd.date_rappel && listeStatutsDB.some((st) => st.nom === cmd.statut_confirmation && st.necessite_rappel) && (
                         <span className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-1 w-fit">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
-                          À rappeler · {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                          {libelleStatut(cmd.statut_confirmation)} · {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
                         </span>
                       )}
                       {(cmd.statut_livraison || cmd.statut_paiement) && (
@@ -1783,7 +1787,7 @@ export default function GestionCommandesPage() {
                   <CarteDetail titre="Traitement">
                     <LigneDetail label="Agent" valeur={detail.agents?.nom} />
                     <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.vendeur_id)} />
-                    <LigneDetail label="Statut d'appel" valeur={detail.statut_confirmation} />
+                    <LigneDetail label="Statut d'appel" valeur={libelleStatut(detail.statut_confirmation)} />
                     <LigneDetail label="Livraison" valeur={detail.statut_livraison} />
                     <LigneDetail label="Paiement" valeur={detail.statut_paiement} />
                     <LigneDetail
@@ -1822,10 +1826,12 @@ export default function GestionCommandesPage() {
                   </table>
                 </div>
 
-                {/* Historique des statuts. Chaque ligne est un appel, avec
-                    d'où la commande venait, où elle est allée, qui l'a fait et
-                    combien de temps ça a pris. C'est ce qui permet de dire
-                    « on a essayé quatre fois » autrement que de mémoire. */}
+                {/* Historique des statuts. Chaque ligne est un changement de
+                    statut, avec d'où la commande venait, où elle est allée, qui
+                    l'a fait et combien de temps ça a pris. C'est ce qui permet
+                    de dire « on a essayé quatre fois » autrement que de mémoire.
+                    La colonne « Par » n'existe pas pour le vendeur : la vue ne
+                    la lui donne de toute façon pas. */}
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-bold text-[#1B2632]">Historique des statuts</h3>
@@ -1838,7 +1844,7 @@ export default function GestionCommandesPage() {
 
                   {historique.length === 0 ? (
                     <p className="px-5 py-6 text-sm text-[#1B2632]/50 text-center">
-                      Aucun appel enregistré pour cette commande.
+                      Aucun changement de statut enregistré pour cette commande.
                     </p>
                   ) : (
                     <div className="overflow-x-auto">
@@ -1848,7 +1854,7 @@ export default function GestionCommandesPage() {
                             <th className="px-4 py-2.5">Date</th>
                             <th className="px-4 py-2.5">Statut précédent</th>
                             <th className="px-4 py-2.5">Statut</th>
-                            <th className="px-4 py-2.5">Agent</th>
+                            {!estSeller && <th className="px-4 py-2.5">Par</th>}
                             <th className="px-4 py-2.5 text-right">Durée</th>
                             <th className="px-4 py-2.5">Commentaire</th>
                           </tr>
@@ -1857,24 +1863,31 @@ export default function GestionCommandesPage() {
                           {historique.map((h) => (
                             <tr key={h.id} className="hover:bg-[#EEE9DF]/25">
                               <td className="px-4 py-2.5 whitespace-nowrap text-[#1B2632]/75">
-                                {h.created_at ? new Date(h.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                                {h.cree_le ? new Date(h.cree_le).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                                {/* Recopiée des anciens appels le jour de l'installation,
+                                    pas écrite au moment du changement. */}
+                                {h.via === 'migration' && (
+                                  <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">repris</span>
+                                )}
                               </td>
                               <td className="px-4 py-2.5 text-[#1B2632]/55">
-                                {h.statut_precedent || <span className="text-[#1B2632]/30">Nouveau lead</span>}
+                                {libelleStatut(h.statut_precedent) || <span className="text-[#1B2632]/30">Nouveau lead</span>}
                               </td>
                               <td className="px-4 py-2.5">
                                 <StatutPill statut={h.statut} listeStatutsDB={listeStatutsDB} />
                               </td>
-                              <td className="px-4 py-2.5 text-[#1B2632]/75">
-                                {agents.find((a) => a.id === h.agent_id)?.nom
-                                  || <span className="text-[#1B2632]/30">—</span>}
-                              </td>
+                              {!estSeller && (
+                                <td className="px-4 py-2.5 text-[#1B2632]/75">
+                                  {h.fait_par_nom
+                                    || <span className="text-[#1B2632]/30">{h.via === 'systeme' ? 'Système' : '—'}</span>}
+                                </td>
+                              )}
                               <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
                                 {h.duree_secondes == null
                                   ? '—'
                                   : `${String(Math.floor(h.duree_secondes / 60)).padStart(2, '0')}:${String(h.duree_secondes % 60).padStart(2, '0')}`}
                               </td>
-                              <td className="px-4 py-2.5 text-[#1B2632]/70 italic max-w-[240px]">{h.notes || '—'}</td>
+                              <td className="px-4 py-2.5 text-[#1B2632]/70 italic max-w-[240px]">{h.note || '—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1910,7 +1923,7 @@ export default function GestionCommandesPage() {
                           {listeStatutsDB
                             .filter((s) => s.code !== 'pending' && s.nom !== 'Pending')
                             .filter((s) => !s.pays_id || !detail.pays_id || s.pays_id === detail.pays_id)
-                            .map((s) => <option key={s.id} value={s.nom}>{s.nom}</option>)}
+                            .map((s) => <option key={s.id} value={s.nom}>{libelleStatut(s.nom)}</option>)}
                         </select>
                       </div>
                       {rappelDemandeDrawer && (
