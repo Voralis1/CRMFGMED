@@ -396,36 +396,54 @@ export default function ExpeditionsPage() {
       return annonce("Aucune modification enregistrée : cette expédition ne vous appartient plus.", 'erreur')
     }
 
-    // Les produits transportés. On remplace la liste entière plutôt que de
-    // calculer les différences : sur une poignée de lignes c'est plus sûr,
-    // et un écart de calcul ici laisserait un produit fantôme dans une
-    // expédition confirmée.
+    // Les produits transportés, mis à jour LIGNE PAR LIGNE (29/10). Avant :
+    // toutes les lignes supprimées puis réécrites avec la seule quantité
+    // envoyée — `quantite_recue` disparaissait à chaque enregistrement, sans
+    // un mot. Maintenant une ligne existante est modifiée sur place (sa
+    // quantité seulement, si elle a changé), un produit ajouté est inséré, un
+    // produit retiré est supprimé. Rien d'autre n'est touché : la quantité
+    // reçue d'une ligne reste ce qu'elle est.
+    // (expeditions_produits refuse deux lignes du même produit dans une
+    // expédition : le produit identifie la ligne.)
+    // Les lignes d'un produit supprimé ne sont ni modifiées ni effacées.
     const expeditionId = data[0].id
-    //
-    // Sauf les lignes d'un produit supprimé : elles ne sont ni effacées ni
-    // réécrites (la base refuserait d'en recréer une sans produit).
-    const { error: erreurPurge } = await supabase
-      .from('expeditions_produits').delete().eq('expedition_id', expeditionId)
-      .not('produit_id', 'is', null)
-
-    if (erreurPurge) {
+    const { data: enBase, error: erreurLecture } = await supabase
+      .from('expeditions_produits').select('id, produit_id, quantite')
+      .eq('expedition_id', expeditionId).not('produit_id', 'is', null)
+    if (erreurLecture) {
       setEnregistrement(false)
-      return annonce("Expédition enregistrée, mais ses produits n'ont pas pu être mis à jour : " + erreurPurge.message, 'erreur')
+      return annonce("Expédition enregistrée, mais ses produits n'ont pas pu être relus : " + erreurLecture.message, 'erreur')
     }
 
-    const aEcrire = lignes.filter((l) => !l.supprime)
-    if (aEcrire.length > 0) {
-      const { error: erreurLignes } = await supabase.from('expeditions_produits').insert(
-        aEcrire.map((l) => ({
-          tenant_id: tenantKey,
-          expedition_id: expeditionId,
-          produit_id: l.produit_id,
-          quantite: Math.max(1, parseInt(l.quantite, 10) || 1),
-        })),
-      )
-      if (erreurLignes) {
+    const voulues = lignes.filter((l) => !l.supprime)
+      .map((l) => ({ produit_id: l.produit_id, quantite: Math.max(1, parseInt(l.quantite, 10) || 1) }))
+    const parProduit = new Map((enBase || []).map((r) => [r.produit_id, r]))
+    const aModifier = voulues.filter((v) => parProduit.has(v.produit_id) && parProduit.get(v.produit_id).quantite !== v.quantite)
+    const aAjouter = voulues.filter((v) => !parProduit.has(v.produit_id))
+    const aRetirer = (enBase || []).filter((r) => !voulues.some((v) => v.produit_id === r.produit_id))
+
+    for (const v of aModifier) {
+      const { error: e1 } = await supabase.from('expeditions_produits')
+        .update({ quantite: v.quantite }).eq('id', parProduit.get(v.produit_id).id)
+      if (e1) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais ses produits ont été refusés : " + erreurLignes.message, 'erreur')
+        return annonce("Expédition enregistrée, mais une quantité a été refusée : " + e1.message, 'erreur')
+      }
+    }
+    if (aRetirer.length > 0) {
+      const { error: e2 } = await supabase.from('expeditions_produits').delete().in('id', aRetirer.map((r) => r.id))
+      if (e2) {
+        setEnregistrement(false)
+        return annonce("Expédition enregistrée, mais un produit retiré n'a pas pu être supprimé : " + e2.message, 'erreur')
+      }
+    }
+    if (aAjouter.length > 0) {
+      const { error: e3 } = await supabase.from('expeditions_produits').insert(
+        aAjouter.map((v) => ({ tenant_id: tenantKey, expedition_id: expeditionId, produit_id: v.produit_id, quantite: v.quantite })),
+      )
+      if (e3) {
+        setEnregistrement(false)
+        return annonce("Expédition enregistrée, mais ses produits ont été refusés : " + e3.message, 'erreur')
       }
     }
 
