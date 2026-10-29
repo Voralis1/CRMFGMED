@@ -8,6 +8,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import VignetteProduit from '../components/VignetteProduit'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
+// Le filtre par agent, partagé avec Commandes : même liste, mêmes règles.
+import SelectAgent, { AUCUN_AGENT, nomFiltreAgent as nomDuFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
@@ -144,8 +146,6 @@ const listeNoms = (noms) => noms.map((n) => `"${String(n).replace(/"/g, '')}"`).
 // Changer l'agent d'un lead, c'est arbitrer la charge de travail : le CEO lit,
 // il n'arbitre pas.
 const ROLES_ASSIGNATION_AGENT = ['admin', 'manager', 'super_admin']
-// La valeur « Sans agent » du filtre : jamais un id d'agent (ce sont des uuid).
-const AUCUN_AGENT = 'aucun'
 
 export default function CentreAppelAgent() {
   const { user, tenantId, loading: authLoading } = useAuth() 
@@ -182,7 +182,6 @@ export default function CentreAppelAgent() {
   // n'a pas eu lieu. Volontairement une vue de cette page, pas un menu de plus :
   // c'est ici qu'on regarde la file d'attente.
   const [modeAgents, setModeAgents] = useState(false)
-  const [listeAgents, setListeAgents] = useState([])
   const [agentChoisi, setAgentChoisi] = useState({})
   const [agentEnCours, setAgentEnCours] = useState(null)
   // Sélection multiple (29/10) : admin, manager, super_admin. Ce qui est
@@ -406,19 +405,9 @@ export default function CentreAppelAgent() {
   // TOUS les agents de l'entreprise, inactifs compris : le filtre doit
   // pouvoir montrer les leads d'un agent parti. Changer d'agent ne propose
   // que les agents actifs qui ont un compte (agentsAssignables).
-  useEffect(() => {
-    if (!tenantKey || !peutFiltrerAgent) return
-    let annule = false
-    supabase
-      .from('agents')
-      .select('id, nom, pays_id, actif, user_id')
-      .eq('tenant_id', tenantKey)
-      .order('nom')
-      .then(({ data }) => { if (!annule) setListeAgents(data || []) })
-    return () => { annule = true }
-  }, [tenantKey, peutFiltrerAgent])
+  // (FiltreAgent.js, le même chargement que Commandes.)
+  const listeAgents = useAgentsEntreprise(tenantKey, peutFiltrerAgent)
   const agentsAssignables = listeAgents.filter((a) => a.actif && a.user_id)
-  const libelleAgent = (a) => (a.actif && a.user_id ? a.nom : `${a.nom} (inactif)`)
 
   // Une ligne seule passe par la même porte qu'un lot (affecter_agent_lot) :
   // mêmes règles, même historique, avec qui l'a fait.
@@ -917,8 +906,7 @@ export default function CentreAppelAgent() {
 
   const nombreFiltresActifs = [filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
   const filtresActifs = dateDebut || dateFin || recherche || filtreAgent || nombreFiltresActifs > 0
-  const nomFiltreAgent = filtreAgent === AUCUN_AGENT ? 'Sans agent'
-    : (listeAgents.find((a) => a.id === filtreAgent)?.nom || 'Agent')
+  const nomFiltreAgent = nomDuFiltreAgent(filtreAgent, listeAgents)
   // Cochable : TOUS les leads de la page (29/10, sa décision ; avant :
   // Pending seulement). Ce que la case de l'en-tête coche, chaque ligne peut
   // le cocher seule. L'historique garde l'auteur de chaque action, et
@@ -1022,18 +1010,14 @@ export default function CentreAppelAgent() {
             {/* Le filtre d'agent : au-dessus de la liste, jamais dans le panneau
                 Filtres — il change ce qu'on croit « restant », il doit se voir. */}
             {peutFiltrerAgent && (
-              <select
+              <SelectAgent
+                agents={listeAgents}
                 value={filtreAgent}
-                onChange={(e) => appliquer(setFiltreAgent)(e.target.value)}
-                title="Ne montrer que les leads d'un agent. Ne change rien à ce que vous pouvez voir."
+                onChange={appliquer(setFiltreAgent)}
                 className={`px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm border outline-none cursor-pointer max-w-full sm:max-w-[220px] ${
                   filtreAgent ? 'bg-[#1B2632] text-white border-[#1B2632]' : 'bg-white text-[#1B2632] border-[#C9C1B1]'
                 }`}
-              >
-                <option value="">Tous les agents</option>
-                <option value={AUCUN_AGENT}>Sans agent</option>
-                {listeAgents.map((a) => <option key={a.id} value={a.id}>{libelleAgent(a)}</option>)}
-              </select>
+              />
             )}
 
             {peutChangerAgent && statutsBas.length > 0 && (

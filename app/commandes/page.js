@@ -18,9 +18,17 @@ import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichie
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRappel.mjs'
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
-import { estTentative, resumeTentatives, statutPrincipal } from '../../lib/affichageStatut.mjs'
+import { nomsParGroupe, sousStatutOuvert, statutPrincipal } from '../../lib/affichageStatut.mjs'
+import ResultatLot, { resumerLot } from '../components/ResultatLot'
+// Le filtre par agent, partagé avec le Centre d'appel : même liste, mêmes règles.
+import SelectAgent, { filtrerParAgent, nomFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
+import PlageDates from '../components/PlageDates'
 
-const TAILLE_PAGE = 50
+// Combien de lignes par page (29/10). 1000 compris (sa décision) : la
+// lecture de l'historique par page a disparu, il ne reste que le rendu. Si
+// 500 peine déjà sur le téléphone du manager (celui où Chrome plante), 1000
+// sera retiré.
+const TAILLES_PAGE = [10, 50, 100, 500, 1000]
 // Les cinq statuts de livraison (contrainte livraisons_statut_valide), en français.
 const LIVRAISON_LIBELLES = { a_preparer: 'à préparer', expedie: 'expédiée', livre: 'livrée', retour: 'retournée', annule: 'annulée' }
 
@@ -112,6 +120,9 @@ export default function GestionCommandesPage() {
   // de ne regarder qu'un seller à la fois.
   const peutFiltrerParVendeur = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
   const peutChoisirAgent = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
+  // Le vendeur coche pour EXPORTER ; seuls manager, admin, super_admin
+  // changent un statut (sa décision du 29/10).
+  const peutSelectionner = hasPermission('exporter_csv') || peutChangerStatut
 
   const [commandes, setCommandes] = useState([])
   const [agents, setAgents] = useState([])
@@ -129,7 +140,15 @@ export default function GestionCommandesPage() {
     { cle: 'client_nom', nom: 'Nom du client' },
     { cle: 'ville_zone', nom: 'Ville / Zone' },
   ]
-  const FILTRES_VIDES = { statut: '', produit: '', agent: '', source: '', du: '', au: '' }
+  // statut     : ce que le BADGE montre — 'en_attente' (tout statut ouvert),
+  //              ou un statut qui ferme (Confirmed, Cancelled…) ;
+  // sousStatut : le découpage de « En attente » (sousStatutOuvert) —
+  //              'pending' | 'non_joint' | 'rappel'. Il SUIT le statut : il
+  //              n'existe que pour « En attente », choisi d'abord ; changer de
+  //              statut le vide ;
+  // actionDu / actionAu   : derniere_action_le (dernier changement de statut) ;
+  // du / au               : la date de la commande.
+  const FILTRES_VIDES = { statut: '', sousStatut: '', produit: '', agent: '', source: '', du: '', au: '', actionDu: '', actionAu: '' }
   const [champRecherche, setChampRecherche] = useState('tracking_number')
   const [recherche, setRecherche] = useState('')
   const [filtres, setFiltres] = useState(FILTRES_VIDES)
@@ -144,11 +163,17 @@ export default function GestionCommandesPage() {
   // s'affichait « Aucun changement de statut », et un écran cassé passait
   // pour une commande sans histoire.
   const [erreurHistorique, setErreurHistorique] = useState('')
-  // Colonne Statut (28/10) : les tentatives de chaque commande affichée,
-  // lues dans l'historique. { [commande_id]: { n, statut, date } }
-  const [tentatives, setTentatives] = useState({})
-  const [erreurTentatives, setErreurTentatives] = useState('')
-  const lectureTentatives = useRef(0)
+  // Sélection (29/10) : ce qui est coché est sur l'écran, jamais toute la
+  // base. Une autre page, un autre filtre, une autre taille de page la vide.
+  const [selection, setSelection] = useState({})
+  const [lotStatut, setLotStatut] = useState('')
+  const [lotMotif, setLotMotif] = useState('')
+  const [lotRappel, setLotRappel] = useState('')
+  const [lotEnCours, setLotEnCours] = useState(false)
+  const [erreurLot, setErreurLot] = useState('')
+  const [resultatLot, setResultatLot] = useState(null)
+  const [refusParId, setRefusParId] = useState({})
+  const [exportEnCours, setExportEnCours] = useState(false)
   const [nouveauStatut, setNouveauStatut] = useState('')
   const [changementEnCours, setChangementEnCours] = useState(false)
   // L'adresse, corrigeable ici par qui corrige le statut : c'est souvent lui
@@ -210,6 +235,10 @@ export default function GestionCommandesPage() {
   const [listeStatutsDB, setListeStatutsDB] = useState([]) 
   const [totalCommandes, setTotalCommandes] = useState(0)
   const [pageActuelle, setPageActuelle] = useState(0)
+  const [taillePage, setTaillePage] = useState(50)
+  // Le total SANS filtre (le même périmètre : un vendeur, ses commandes) :
+  // « 23 sur 136 » — un filtre oublié ne se lit pas comme « il n'y a que ça ».
+  const [totalSansFiltre, setTotalSansFiltre] = useState(null)
   const [chargement, setChargement] = useState(true)
 
   // 🚀 État pour la modale de création manuelle
@@ -280,8 +309,9 @@ export default function GestionCommandesPage() {
     [commandes],
   )
   const nombreFiltresActifs = [
-    filtresActifs.statut, filtresActifs.produit, filtresActifs.agent,
-    filtresActifs.source, filtresActifs.du, filtresActifs.au,
+    filtresActifs.statut, filtresActifs.sousStatut,
+    filtresActifs.produit, filtresActifs.agent, filtresActifs.source, filtresActifs.du || filtresActifs.au,
+    filtresActifs.actionDu || filtresActifs.actionAu,
   ].filter(Boolean).length
 
   // Les colonnes obligatoires que l'aperçu n'a pas trouvées : l'import est
@@ -435,6 +465,50 @@ export default function GestionCommandesPage() {
     setPanneauOuvert(false)
   }
 
+  // Les noms de statuts de chaque groupe (En attente / Non joint / Rappel /
+  // ceux qui ferment), lus sur les drapeaux de Paramètres → Statuts.
+  const groupesStatuts = useMemo(() => nomsParGroupe(listeStatutsDB), [listeStatutsDB])
+
+  // LES filtres sur une requête de commandes : la liste, son total et
+  // l'export passent tous par ici — ce qui est exporté est ce qui est filtré.
+  const appliquerFiltresRequete = useCallback((requete, f) => {
+    requete = requete.eq('tenant_id', tenantKey)
+    // un seller ne demande que ses propres leads (périmètre, pas un filtre)
+    if (estSeller && user?.id) requete = requete.eq('vendeur_id', user.id)
+    if (!f) return requete
+    // un responsable peut n'en regarder qu'un à la fois
+    if (!estSeller && filtreVendeur === 'aucun') requete = requete.is('vendeur_id', null)
+    else if (!estSeller && filtreVendeur) requete = requete.eq('vendeur_id', filtreVendeur)
+    if (f.texte) {
+      // Les caractères de la syntaxe PostgREST sont retirés : un « , » ou une
+      // parenthèse tapés par erreur casseraient la requête au lieu de ne rien
+      // trouver.
+      const t = f.texte.replace(/[%,()]/g, '').trim()
+      if (t) requete = requete.ilike(f.champ, `%${t}%`)
+    }
+    const liste = (noms) => noms.map((n) => `"${String(n).replace(/"/g, '')}"`).join(',')
+    // « En attente » = tout statut ouvert. NULL : les leads d'avant le
+    // rattrapage du 27/10, lus comme Pending.
+    if (f.statut === 'en_attente') requete = requete.or(`statut_confirmation.is.null,statut_confirmation.in.(${liste(groupesStatuts.ouverts)})`)
+    else if (f.statut) requete = requete.eq('statut_confirmation', f.statut)
+    if (f.statut !== 'en_attente') f = { ...f, sousStatut: '' }
+    if (f.sousStatut === 'pending') requete = requete.or('statut_confirmation.is.null,statut_confirmation.eq.Pending')
+    else if (f.sousStatut) {
+      const noms = groupesStatuts[f.sousStatut] || []
+      requete = noms.length ? requete.in('statut_confirmation', noms) : requete.is('id', null)
+    }
+    if (f.produit) requete = requete.eq('produit', f.produit)
+    if (!estSeller) requete = filtrerParAgent(requete, f.agent)
+    if (f.source) requete = requete.eq('source', f.source)
+    // Les bornes hautes couvrent la journée entière : sans l'heure, « au 10 »
+    // exclut tout ce qui est arrivé le 10.
+    if (f.du) requete = requete.gte('created_at', f.du)
+    if (f.au) requete = requete.lte('created_at', `${f.au}T23:59:59`)
+    if (f.actionDu) requete = requete.gte('derniere_action_le', f.actionDu)
+    if (f.actionAu) requete = requete.lte('derniere_action_le', `${f.actionAu}T23:59:59`)
+    return requete
+  }, [tenantKey, estSeller, user?.id, filtreVendeur, groupesStatuts])
+
   function reinitialiserFiltres() {
     setFiltres(FILTRES_VIDES)
     setRecherche('')
@@ -448,58 +522,52 @@ export default function GestionCommandesPage() {
     if (!tenantKey) return
     setChargement(true)
 
-    const debut = page * TAILLE_PAGE
-    const fin = debut + TAILLE_PAGE - 1
+    const debut = page * taillePage
+    const fin = debut + taillePage - 1
 
-    let requete = supabase
-      .from('commandes')
-      .select('*, pays(nom, devise), agents(nom), entrepots(nom)', { count: 'exact' })
-      .eq('tenant_id', tenantKey)
-    // un seller ne demande que ses propres leads
-    if (estSeller && user?.id) requete = requete.eq('vendeur_id', user.id)
-    // un responsable peut n'en regarder qu'un à la fois
-    else if (filtreVendeur === 'aucun') requete = requete.is('vendeur_id', null)
-    else if (filtreVendeur) requete = requete.eq('vendeur_id', filtreVendeur)
-
-    const f = filtresActifs
-    if (f.texte) {
-      // Les caractères de la syntaxe PostgREST sont retirés : un « , » ou une
-      // parenthèse tapés par erreur casseraient la requête au lieu de ne rien
-      // trouver.
-      const t = f.texte.replace(/[%,()]/g, '').trim()
-      if (t) requete = requete.ilike(f.champ, `%${t}%`)
-    }
-    // « Pending » (27/10) : un vrai statut, posé par la base. Les leads
-    // d'avant le rattrapage sont encore à NULL : on lit les deux.
-    if (f.statut === 'aucun') requete = requete.or('statut_confirmation.is.null,statut_confirmation.eq.Pending')
-    else if (f.statut) requete = requete.eq('statut_confirmation', f.statut)
-    if (f.produit) requete = requete.eq('produit', f.produit)
-    if (f.agent === 'aucun') requete = requete.is('agent_id', null)
-    else if (f.agent) requete = requete.eq('agent_id', f.agent)
-    if (f.source) requete = requete.eq('source', f.source)
-    if (f.du) requete = requete.gte('created_at', f.du)
-    // La borne haute couvre la journée entière : sans l'heure, « au 10 » exclut
-    // tout ce qui est arrivé le 10.
-    if (f.au) requete = requete.lte('created_at', `${f.au}T23:59:59`)
-
-    const { data, count, error } = await requete
-      .order('created_at', { ascending: false })
-      .range(debut, fin)
+    const filtre = filtreVendeur || nombreFiltresActifs > 0 || filtresActifs.texte
+    const [{ data, count, error }, total] = await Promise.all([
+      appliquerFiltresRequete(
+        supabase.from('commandes').select('*, pays(nom, devise), agents(nom), entrepots(nom)', { count: 'exact' }),
+        filtresActifs,
+      ).order('created_at', { ascending: false }).order('id', { ascending: false }).range(debut, fin),
+      filtre
+        ? appliquerFiltresRequete(supabase.from('commandes').select('id', { count: 'exact', head: true }), null)
+        : Promise.resolve(null),
+    ])
 
     if (error) {
       alert("Erreur lors du chargement : " + error.message)
     } else {
       setCommandes(data || [])
       setTotalCommandes(count || 0)
+      setTotalSansFiltre(total && !total.error ? total.count : null)
     }
     setChargement(false)
-  }, [tenantKey, estSeller, user?.id, filtreVendeur, filtresActifs])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantKey, filtreVendeur, filtresActifs, taillePage, appliquerFiltresRequete])
 
+  // La sélection, c'est ce qui est à l'écran : une autre page, un autre
+  // filtre, une autre taille de page la vide (et les raisons du dernier lot).
+  useEffect(() => {
+    setSelection({}); setRefusParId({})
+  }, [pageActuelle, taillePage, filtresActifs, filtreVendeur])
+
+  // DEUX effets, exprès (29/10). Les référentiels posent une NOUVELLE liste de
+  // statuts à chaque lecture ; les filtres en dépendent (groupesStatuts), donc
+  // chargerCommandes change avec eux. Dans un seul effet, relire les
+  // référentiels relançait l'effet, qui les relisait… — une boucle de
+  // requêtes (697 en 3 s, mesuré). Les référentiels ne se relisent qu'avec
+  // l'entreprise ; la liste, avec la page et les filtres.
   useEffect(() => {
     if (authLoading || permsLoading || !tenantKey) return
     chargerReferentiels()
+  }, [authLoading, permsLoading, tenantKey, chargerReferentiels])
+
+  useEffect(() => {
+    if (authLoading || permsLoading || !tenantKey) return
     chargerCommandes(pageActuelle)
-  }, [authLoading, permsLoading, tenantKey, pageActuelle, chargerReferentiels, chargerCommandes])
+  }, [authLoading, permsLoading, tenantKey, pageActuelle, chargerCommandes])
 
   // ASSIGNATION D'UN AGENT
   // Ouvrir le détail charge aussi l'historique. Il arrive après : la fiche
@@ -544,33 +612,57 @@ export default function GestionCommandesPage() {
     setHistorique(data || [])
   }
 
-  // Les tentatives des commandes affichées (colonne Statut). Une lecture par
-  // page, limitée aux commandes visibles et aux statuts « tentative » (ouverts,
-  // sauf Pending). Une réponse arrivée après une autre page est ignorée.
-  useEffect(() => {
-    const ids = commandes.map((c) => c.id)
-    const nomsTentatives = listeStatutsDB.filter((st) => estTentative(st.nom, listeStatutsDB)).map((st) => st.nom)
-    const numero = ++lectureTentatives.current
-    if (ids.length === 0 || nomsTentatives.length === 0) { setTentatives({}); setErreurTentatives(''); return }
-    supabase
-      .from('v_historique_statuts')
-      .select('commande_id, statut, cree_le')
-      .in('commande_id', ids)
-      .in('statut', nomsTentatives)
-      .then(({ data, error }) => {
-        if (numero !== lectureTentatives.current) return
-        if (error) { setTentatives({}); setErreurTentatives(error.message); return }
-        const parCommande = {}
-        for (const l of data || []) (parCommande[l.commande_id] ||= []).push(l)
-        const resume = {}
-        for (const [id, lignes] of Object.entries(parCommande)) resume[id] = resumeTentatives(lignes, listeStatutsDB)
-        setTentatives(resume)
-        setErreurTentatives('')
-      })
-  }, [commandes, listeStatutsDB])
-
   // Le statut choisi dans le tiroir demande-t-il un rappel ? Le drapeau, pas le mot.
   const rappelDemandeDrawer = listeStatutsDB.some((s) => s.nom === nouveauStatut && s.necessite_rappel)
+
+  // ---- Sélection et changement de statut par lot (29/10) ----------------
+  const agentsFiltre = useAgentsEntreprise(tenantKey, peutChoisirAgent)
+  const lignesCochees = commandes.filter((c) => selection[c.id])
+  const toutCoche = commandes.length > 0 && commandes.every((c) => selection[c.id])
+  const basculerTout = () => setSelection(toutCoche ? {} : Object.fromEntries(commandes.map((c) => [c.id, true])))
+  const basculer = (id) => setSelection((prec) => {
+    const s = { ...prec }
+    if (s[id]) delete s[id]; else s[id] = true
+    return s
+  })
+  const nbColonnes = (estSeller ? 8 : 9) + (peutSelectionner ? 1 : 0)
+  const lotDemandeRappel = groupesStatuts.rappel.includes(lotStatut)
+
+  // UNE porte pour En attente, Non joint, Rappel depuis Commandes :
+  // changer_statut_lot (commandes_statut_lot.sql) — le lot comme une ligne
+  // seule (le tiroir). Un appel pour tout le lot : chaque commande appliquée
+  // ou refusée seule, avec sa raison ; les refusées restent cochées.
+  async function appelerChangerStatut(ids, statut, motif, rappelIso) {
+    return supabase.rpc('changer_statut_lot', {
+      p_tenant: tenantKey, p_ids: ids, p_statut: statut,
+      p_motif: motif || null, p_date_rappel: rappelIso || null,
+    })
+  }
+
+  async function changerStatutLot() {
+    const lignes = lignesCochees
+    if (!lignes.length || !lotStatut) return
+    setErreurLot('')
+    if (lotStatut === 'Pending' && !lotMotif.trim()) { setErreurLot('Le motif est obligatoire pour renvoyer en attente.'); return }
+    const rappelIso = lotDemandeRappel ? depuisChampLocal(lotRappel) : null
+    // Même règle que le tiroir et confirmer-appel (_shared/appel.ts), dite
+    // avant l'envoi ; la base revérifie.
+    const refusRappel = rappelRefuse(listeStatutsDB, lotStatut, null, rappelIso)
+    if (refusRappel) { setErreurLot(refusRappel); return }
+    if (!confirm(`Passer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page en « ${libelleStatut(lotStatut)} » ?`)) return
+
+    setLotEnCours(true)
+    const { data, error } = await appelerChangerStatut(lignes.map((c) => c.id), lotStatut, lotMotif.trim(), rappelIso)
+    setLotEnCours(false)
+    const action = `Statut « ${libelleStatut(lotStatut)} »`
+    if (error) { setResultatLot({ action, erreur: error.message }); return }
+    const resume = resumerLot(action, data, lignes)
+    setResultatLot(resume)
+    setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
+    setLotStatut(''); setLotMotif(''); setLotRappel('')
+    await chargerCommandes(pageActuelle)
+    setSelection(Object.fromEntries(resume.refus.map((r) => [r.id, true])))
+  }
 
   // Remettre une commande dans un autre statut.
   //
@@ -592,6 +684,29 @@ export default function GestionCommandesPage() {
     setErreurStatut('')
 
     setChangementEnCours(true)
+
+    // Vers un statut OUVERT (Non joint, Rappel…) : la porte des lots, une
+    // commande (29/10) — mêmes règles que la sélection, livreur nommé. Une
+    // adresse corrigée en même temps part ensuite, seule, par confirmer-appel.
+    if (statutChange && groupesStatuts.ouverts.includes(nouveauStatut)) {
+      const { data, error } = await appelerChangerStatut([detail.id], nouveauStatut, null, rappelDemandeDrawer ? rappelIso : null)
+      const r = (data || [])[0]
+      if (error || r?.resultat === 'refuse') {
+        setChangementEnCours(false)
+        setErreurStatut(error ? error.message : r.motif)
+        return
+      }
+      if (!adresseChange) {
+        setChangementEnCours(false)
+        const maj = { ...detail, statut_confirmation: nouveauStatut, date_rappel: rappelDemandeDrawer ? rappelIso : null }
+        setDetail(maj)
+        await ouvrirDetail(maj)
+        chargerCommandes(pageActuelle)
+        return
+      }
+    }
+    const seulementAdresse = statutChange && groupesStatuts.ouverts.includes(nouveauStatut)
+
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { setChangementEnCours(false); return }
 
@@ -612,7 +727,7 @@ export default function GestionCommandesPage() {
           // Une correction de bureau n'est pas un appel : pas de durée, et une
           // note qui dit ce que c'est. Sans elle, l'historique laisserait
           // croire que quelqu'un a eu le client au téléphone.
-          notes: statutChange ? 'Statut corrigé depuis Commandes' : 'Adresse corrigée depuis Commandes',
+          notes: statutChange && !seulementAdresse ? 'Statut corrigé depuis Commandes' : 'Adresse corrigée depuis Commandes',
         }),
       },
     )
@@ -628,27 +743,18 @@ export default function GestionCommandesPage() {
     chargerCommandes(pageActuelle)
   }
 
-  // Renvoyer en attente : par confirmer-appel, comme toute correction de
-  // statut. La fonction vérifie le rôle, le motif et le livreur ; la base
-  // revérifie le rôle et le livreur (renvoyer_en_attente.sql §4), pour tous
-  // les chemins. Le motif finit dans l'historique (« Renvoyé en attente : … »).
+  // Renvoyer en attente (29/10) : par changer_statut_lot, avec une seule
+  // commande — la même porte que la sélection. Rôle, motif obligatoire,
+  // livreur nommé ; le motif finit dans l'historique (« Renvoyé en attente : … »).
   async function renvoyerEnAttente() {
     if (!detail || !motifRenvoi.trim()) return
     setErreurStatut('')
     setChangementEnCours(true)
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) { setChangementEnCours(false); return }
-    const reponse = await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-appel`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ commande_id: detail.id, statut: 'Pending', tenant_id: tenantKey, notes: motifRenvoi.trim() }),
-      },
-    )
-    const resultat = await reponse.json().catch(() => ({ error: `Réponse illisible (HTTP ${reponse.status})` }))
+    const { data, error } = await appelerChangerStatut([detail.id], 'Pending', motifRenvoi.trim(), null)
     setChangementEnCours(false)
-    if (resultat.error) { setErreurStatut(resultat.error); return }
+    const r = (data || [])[0]
+    if (error) { setErreurStatut(error.message); return }
+    if (r?.resultat === 'refuse') { setErreurStatut(r.motif); return }
     const maj = { ...detail, statut_confirmation: 'Pending', date_rappel: null }
     setDetail(maj)
     await ouvrirDetail(maj)
@@ -720,7 +826,40 @@ export default function GestionCommandesPage() {
   }
 
   // EXPORT CSV COMPLET (Toutes les colonnes DB)
-  function exporterCSV() {
+  // L'export (29/10) :
+  //   · des commandes cochées → exactement celles-là, fichier « _selection-N » ;
+  //   · rien de coché → TOUT ce que les filtres gardent, toutes pages (lu par
+  //     paquets de 1000), fichier « _filtre » si un filtre est posé. Avant :
+  //     seulement la page affichée, ce que personne ne voulait dire.
+  async function exporter() {
+    const coches = commandes.filter((c) => selection[c.id])
+    const jour = new Date().toISOString().slice(0, 10)
+    if (coches.length > 0) {
+      exporterCSV(coches, `commandes_${jour}_selection-${coches.length}.csv`)
+      return
+    }
+    setExportEnCours(true)
+    const toutes = []
+    try {
+      for (let i = 0; ; i += 1000) {
+        const { data, error } = await appliquerFiltresRequete(
+          supabase.from('commandes').select('*, pays(nom, devise), agents(nom), entrepots(nom)'), filtresActifs,
+        ).order('created_at', { ascending: false }).order('id', { ascending: false }).range(i, i + 999)
+        if (error) throw error
+        toutes.push(...(data || []))
+        if (!data || data.length < 1000) break
+      }
+    } catch (e) {
+      setExportEnCours(false)
+      alert("Export impossible : " + (e?.message || e))
+      return
+    }
+    setExportEnCours(false)
+    const filtre = filtreVendeur || nombreFiltresActifs > 0 || filtresActifs.texte
+    exporterCSV(toutes, `commandes_${jour}${filtre ? '_filtre' : ''}.csv`)
+  }
+
+  function exporterCSV(commandes, nomFichier) {
     if (commandes.length === 0) {
       alert("Aucune commande à exporter dans cette vue.");
       return;
@@ -763,7 +902,7 @@ export default function GestionCommandesPage() {
     const url = URL.createObjectURL(blob)
     const lien = document.createElement("a")
     lien.setAttribute("href", url)
-    lien.setAttribute("download", `toutes_les_commandes_${new Date().toISOString().slice(0, 10)}.csv`)
+    lien.setAttribute("download", nomFichier)
     document.body.appendChild(lien)
     lien.click()
     document.body.removeChild(lien)
@@ -1061,7 +1200,7 @@ export default function GestionCommandesPage() {
     setImportEnCours(false)
   }
 
-  const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
+  const totalPages = Math.max(1, Math.ceil(totalCommandes / taillePage))
 
   if (authLoading || permsLoading) {
     return <div className="p-8 text-[#1B2632] font-medium text-center mt-20">Vérification des accès...</div>
@@ -1083,9 +1222,22 @@ export default function GestionCommandesPage() {
           <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
             Commerce & Logistique
           </p>
-          <h1 className="text-3xl font-bold text-[#1B2632]">
-            Toutes les commandes (Vue globale)
-          </h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-3xl font-bold text-[#1B2632]">
+              Toutes les commandes (Vue globale)
+            </h1>
+            {/* Combien de lignes par page. Un simple état : un rechargement
+                revient à 50. */}
+            <select
+              value={taillePage}
+              onChange={(e) => { setTaillePage(Number(e.target.value)); setPageActuelle(0) }}
+              title="Lignes par page"
+              data-taille-page
+              className="px-3 py-1.5 bg-white border border-[#C9C1B1] rounded-lg text-sm font-bold text-[#1B2632] outline-none cursor-pointer"
+            >
+              {TAILLES_PAGE.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
         </div>
         
         <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
@@ -1106,12 +1258,13 @@ export default function GestionCommandesPage() {
 
           {hasPermission('exporter_csv') && (
             <button
-              onClick={exporterCSV}
-              title="Exporter toutes les colonnes en CSV"
+              onClick={exporter}
+              disabled={exportEnCours}
+              title={lignesCochees.length > 0 ? `Exporter les ${lignesCochees.length} commandes cochées` : 'Exporter tout ce que les filtres gardent (toutes les pages)'}
               className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
             >
               <IconExporter />
-              Exporter CSV
+              {exportEnCours ? 'Export…' : lignesCochees.length > 0 ? `Exporter la sélection (${lignesCochees.length})` : 'Exporter CSV'}
             </button>
           )}
 
@@ -1195,16 +1348,43 @@ export default function GestionCommandesPage() {
 
         {panneauOuvert && (
           <div className="border-t border-[#C9C1B1]/50 px-5 py-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Statut = ce que montre le BADGE : « En attente » couvre tous
+                  les statuts ouverts ; le détail est le filtre suivant. */}
               <div>
                 <label className="cm-label">Statut</label>
-                <select className="cm-input" value={filtres.statut}
-                  onChange={(e) => setFiltres({ ...filtres, statut: e.target.value })}>
+                <select className="cm-input" value={filtres.statut} data-filtre-statut
+                  onChange={(e) => setFiltres({ ...filtres, statut: e.target.value, sousStatut: e.target.value === 'en_attente' ? filtres.sousStatut : '' })}>
                   <option value="">Tous</option>
-                  <option value="aucun">{libelleStatut('Pending')} (pas encore traité)</option>
-                  {listeStatutsDB.filter((st) => st.code !== 'pending' && st.nom !== 'Pending')
-                    .map((st) => <option key={st.id} value={st.nom}>{libelleStatut(st.nom)}</option>)}
+                  <option value="en_attente">{libelleStatut('Pending')}</option>
+                  {groupesStatuts.fermants.map((nom) => <option key={nom} value={nom}>{libelleStatut(nom)}</option>)}
                 </select>
+              </div>
+
+              {/* Le découpage de « En attente » : le même que la deuxième ligne
+                  du badge (sousStatutOuvert). Il SUIT le statut : rien à
+                  choisir tant que « En attente » n'est pas choisi — un statut
+                  qui conclut n'a pas de sous-statut. */}
+              <div>
+                <label className="cm-label">Sous-statut</label>
+                <select className="cm-input disabled:bg-[#F4F0E6] disabled:text-[#1B2632]/40 disabled:cursor-not-allowed"
+                  value={filtres.statut === 'en_attente' ? filtres.sousStatut : ''} data-filtre-sous-statut
+                  disabled={filtres.statut !== 'en_attente'}
+                  onChange={(e) => setFiltres({ ...filtres, sousStatut: e.target.value })}>
+                  {filtres.statut === 'en_attente' ? (
+                    <>
+                      <option value="">Tous</option>
+                      {/* « À appeler » et pas « Jamais appelé » : un lead renvoyé
+                          en attente a pu être appelé avant. */}
+                      <option value="pending">À appeler</option>
+                      <option value="non_joint">{groupesStatuts.non_joint.map(libelleStatut).join(', ') || 'Non joint'}</option>
+                      <option value="rappel">{groupesStatuts.rappel.map(libelleStatut).join(', ') || 'Rappel'}</option>
+                    </>
+                  ) : <option value="">—</option>}
+                </select>
+                {filtres.statut !== 'en_attente' && (
+                  <p className="text-[11px] text-[#1B2632]/45 mt-1">Seulement pour « En attente ».</p>
+                )}
               </div>
 
               <div>
@@ -1216,15 +1396,14 @@ export default function GestionCommandesPage() {
                 </select>
               </div>
 
-              <div>
-                <label className="cm-label">Agent</label>
-                <select className="cm-input" value={filtres.agent}
-                  onChange={(e) => setFiltres({ ...filtres, agent: e.target.value })}>
-                  <option value="">Tous</option>
-                  <option value="aucun">Non affecté</option>
-                  {agents.map((a) => <option key={a.id} value={a.id}>{a.nom}</option>)}
-                </select>
-              </div>
+              {/* Responsables seulement : le filtre du Centre d'appel (FiltreAgent.js). */}
+              {peutChoisirAgent && (
+                <div>
+                  <label className="cm-label">Agent</label>
+                  <SelectAgent agents={agentsFiltre} value={filtres.agent} className="cm-input"
+                    onChange={(v) => setFiltres({ ...filtres, agent: v })} />
+                </div>
+              )}
 
               <div>
                 <label className="cm-label">Source</label>
@@ -1235,14 +1414,17 @@ export default function GestionCommandesPage() {
                 </select>
               </div>
 
+              {/* Deux périodes, UN contrôle chacune (calendrier). */}
               <div>
-                <label className="cm-label">Arrivée</label>
-                <div className="flex flex-col sm:flex-row items-stretch gap-1.5">
-                  <input type="date" className="cm-input" value={filtres.du}
-                    onChange={(e) => setFiltres({ ...filtres, du: e.target.value })} />
-                  <input type="date" className="cm-input" value={filtres.au}
-                    onChange={(e) => setFiltres({ ...filtres, au: e.target.value })} />
-                </div>
+                <label className="cm-label">Dernière action</label>
+                <PlageDates etiquette="action" du={filtres.actionDu} au={filtres.actionAu}
+                  onChange={(du, au) => setFiltres((f) => ({ ...f, actionDu: du, actionAu: au }))} />
+              </div>
+
+              <div>
+                <label className="cm-label">Date de la commande</label>
+                <PlageDates etiquette="commande" du={filtres.du} au={filtres.au}
+                  onChange={(du, au) => setFiltres((f) => ({ ...f, du, au }))} />
               </div>
             </div>
 
@@ -1262,18 +1444,75 @@ export default function GestionCommandesPage() {
         )}
       </div>
 
-      {erreurTentatives && (
-        <p className="mb-3 px-4 py-2.5 rounded-xl border border-[#A35139]/40 bg-[#A35139]/5 text-sm text-[#A35139]">
-          Tentatives d&apos;appel non lues : {erreurTentatives}. La colonne Statut affiche « En attente » sans le détail des appels.
-        </p>
+      {/* Combien, et sur combien : un filtre oublié ne se lit pas comme
+          « il n'y en a que 23 ». */}
+      <div className="flex flex-wrap items-center gap-3 text-sm text-[#1B2632]/70 -mt-2" data-comptes>
+        <span>
+          <b className="text-[#1B2632]">{totalCommandes}</b> commande{totalCommandes > 1 ? 's' : ''}
+          {totalSansFiltre != null && totalSansFiltre !== totalCommandes && <> sur <b className="text-[#1B2632]">{totalSansFiltre}</b> (filtrées)</>}
+        </span>
+        {(nombreFiltresActifs > 0 || filtresActifs.texte) && (
+          <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">Retirer les filtres</button>
+        )}
+      </div>
+
+      <ResultatLot resultat={resultatLot} onFermer={() => setResultatLot(null)} />
+
+      {peutChangerStatut && lignesCochees.length > 0 && (
+        <div className="flex flex-col gap-2 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm" data-barre-lot>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold">
+              {lignesCochees.length} commande{lignesCochees.length > 1 ? 's' : ''} cochée{lignesCochees.length > 1 ? 's' : ''}
+              <span className="font-normal text-white/60"> — sur cette page seulement</span>
+            </span>
+            <select value={lotStatut} onChange={(e) => { setLotStatut(e.target.value); setErreurLot('') }}
+              className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none">
+              <option value="">Changer le statut en…</option>
+              {groupesStatuts.ouverts.map((nom) => <option key={nom} value={nom}>{libelleStatut(nom)}</option>)}
+            </select>
+            {lotStatut && (
+              <input type="text" value={lotMotif} onChange={(e) => setLotMotif(e.target.value)}
+                placeholder={lotStatut === 'Pending' ? 'Motif (obligatoire)' : 'Motif (facultatif)'}
+                className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none min-w-[200px] flex-1 sm:flex-none" />
+            )}
+            {lotDemandeRappel && (
+              <input type="datetime-local" value={lotRappel} onChange={(e) => setLotRappel(e.target.value)}
+                min={bornesChamp(RAPPEL_MAX_JOURS).min} max={bornesChamp(RAPPEL_MAX_JOURS).max}
+                title="Une heure pour toutes les commandes cochées"
+                className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none" />
+            )}
+            <button onClick={changerStatutLot} disabled={!lotStatut || lotEnCours}
+              className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50">
+              {lotEnCours ? 'En cours…' : 'Appliquer'}
+            </button>
+            <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
+              Tout décocher
+            </button>
+          </div>
+          {erreurLot && <p className="text-xs text-[#FFB162]">{erreurLot}</p>}
+        </div>
       )}
 
       {/* Tableau ultra-enrichi affichant le max de colonnes de la DB */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
+        {peutSelectionner && commandes.length > 0 && (
+          <p className="px-5 pt-3 pb-1 text-xs text-[#1B2632]/50">
+            La case de l&apos;en-tête coche les {commandes.length} commandes de cette page, pas toute la base ({totalCommandes} au total).
+            {' '}Exporter sans rien cocher donne tout ce que les filtres gardent.
+          </p>
+        )}
         <div className="overflow-auto min-h-[500px] max-h-[72vh]">
           <table className="w-full min-w-[1250px] text-left border-collapse text-xs">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#C9D3DD] text-[11px] uppercase tracking-wider text-[#1B2632]/70 font-bold">
+                {peutSelectionner && (
+                  <th className="pl-4 pr-1 py-3.5 w-[1%]">
+                    {/* Coche ce qui est AFFICHÉ, jamais la base entière. */}
+                    <input type="checkbox" checked={toutCoche} onChange={basculerTout} disabled={commandes.length === 0}
+                      title={`Cocher les ${commandes.length} commandes de cette page (pas toute la base)`}
+                      aria-label="Cocher les commandes de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                  </th>
+                )}
                 <th className="px-4 py-3.5">ID</th>
                 {!estSeller && <th className="px-4 py-3.5">Vendeur</th>}
                 <th className="px-4 py-3.5">Client</th>
@@ -1287,9 +1526,11 @@ export default function GestionCommandesPage() {
             </thead>
             <tbody>
               {chargement ? (
-                <tr><td colSpan={estSeller ? 8 : 9} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
+                <tr><td colSpan={nbColonnes} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan={estSeller ? 8 : 9} className="text-center py-12 text-[#1B2632]/50">Aucune commande trouvée.</td></tr>
+                <tr><td colSpan={nbColonnes} className="text-center py-12 text-[#1B2632]/50">
+                  {totalSansFiltre ? `Aucune commande pour ces filtres — ${totalSansFiltre} au total.` : 'Aucune commande trouvée.'}
+                </td></tr>
               ) : (
                 commandes.map((cmd, i) => {
                   const ouverte = lignesOuvertes.has(cmd.id)
@@ -1298,8 +1539,18 @@ export default function GestionCommandesPage() {
                   <React.Fragment key={cmd.id}>
                   <tr className={`${fond} hover:bg-[#EEE9DF]/30 transition-colors border-b border-[#C9C1B1]/25`}>
 
+                    {peutSelectionner && (
+                      <td className="pl-4 pr-1 py-3.5 align-top">
+                        <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
+                          aria-label={`Cocher ${cmd.lead_id || 'cette commande'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                      </td>
+                    )}
+
                     <td className="px-4 py-3.5 align-top">
                       <div className="font-mono font-bold text-[#1B2632] text-sm">{cmd.lead_id || '—'}</div>
+                      {refusParId[cmd.id] && (
+                        <div className="text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px]">Refusé : {refusParId[cmd.id]}</div>
+                      )}
                       <div className="text-[10px] text-[#5c5648] uppercase bg-[#EEE9DF] px-1.5 py-0.5 rounded w-fit mt-1">
                         {cmd.source || 'direct'}{cmd.source_sheet ? ` · ${cmd.source_sheet}` : ''}
                       </div>
@@ -1361,8 +1612,15 @@ export default function GestionCommandesPage() {
                           vrai statut ; le tiroir, le filtre et l'export aussi, et le
                           Centre d'appel le montre aux responsables. */}
                       <StatutPill statut={statutPrincipal(cmd.statut_confirmation, listeStatutsDB)} listeStatutsDB={listeStatutsDB} />
-                      {estTentative(cmd.statut_confirmation, listeStatutsDB) && (() => {
-                        const t = tentatives[cmd.id]
+                      {/* La deuxième ligne : un statut ouvert autre que Pending
+                          (sousStatutOuvert, le découpage du filtre « Pending
+                          status »). Le compte vient de la base (nb_tentatives,
+                          derniere_tentative_*) — la seule définition d'une
+                          tentative est en SQL. */}
+                      {['non_joint', 'rappel'].includes(sousStatutOuvert(cmd.statut_confirmation, listeStatutsDB)) && (() => {
+                        const t = cmd.nb_tentatives > 0
+                          ? { n: cmd.nb_tentatives, statut: cmd.derniere_tentative_statut, date: cmd.derniere_tentative_le }
+                          : null
                         return (
                           <span className="flex items-center gap-1 mt-1.5 text-[10px] text-[#1B2632]/70 whitespace-nowrap">
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" /></svg>
@@ -1399,7 +1657,7 @@ export default function GestionCommandesPage() {
 
                   {ouverte && (
                     <tr className="bg-[#E3EFF8] border-b border-[#C9C1B1]/25">
-                      <td colSpan={estSeller ? 8 : 9} className="px-4 py-0">
+                      <td colSpan={nbColonnes} className="px-4 py-0">
                         <table className="w-full text-left text-xs">
                           <thead>
                             <tr className="text-[10px] uppercase tracking-wider text-[#1B2632]/55 font-bold">
@@ -1461,7 +1719,10 @@ export default function GestionCommandesPage() {
 
         {/* Pagination */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20">
-          <span className="text-sm text-[#1B2632]/70 font-medium">Page {pageActuelle + 1} sur {totalPages}</span>
+          <span className="text-sm text-[#1B2632]/70 font-medium">
+            Page {pageActuelle + 1} sur {totalPages}
+            {totalCommandes > 0 && <span className="text-[#1B2632]/50"> · {pageActuelle * taillePage + 1}–{Math.min((pageActuelle + 1) * taillePage, totalCommandes)} sur {totalCommandes}</span>}
+          </span>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setPageActuelle(p => Math.max(0, p - 1))}
