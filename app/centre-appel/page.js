@@ -143,6 +143,8 @@ const listeNoms = (noms) => noms.map((n) => `"${String(n).replace(/"/g, '')}"`).
 // Changer l'agent d'un lead, c'est arbitrer la charge de travail : le CEO lit,
 // il n'arbitre pas.
 const ROLES_ASSIGNATION_AGENT = ['admin', 'manager', 'super_admin']
+// La valeur « Sans agent » du filtre : jamais un id d'agent (ce sont des uuid).
+const AUCUN_AGENT = 'aucun'
 
 export default function CentreAppelAgent() {
   const { user, tenantId, loading: authLoading } = useAuth() 
@@ -166,6 +168,12 @@ export default function CentreAppelAgent() {
   const [filtreVille, setFiltreVille] = useState('')
   const [filtreSource, setFiltreSource] = useState('')
   const [filtrePays, setFiltrePays] = useState('')
+  // Filtre par agent (29/10), responsables seulement : '' = tous, AUCUN_AGENT =
+  // les leads que personne ne tient, sinon l'id d'un agent. Une VUE, pas un
+  // droit : il resserre ce qui s'affiche, pas ce que la personne peut lire.
+  // Un simple état : il ne survit pas à un rechargement, exprès — un filtre
+  // oublié ne doit pas faire croire le lendemain que la file est vide.
+  const [filtreAgent, setFiltreAgent] = useState('')
   
   const [panneauFiltresOuvert, setPanneauFiltresOuvert] = useState(false)
   // Mode « qui appelle quoi » : réservé aux responsables. Il remplace la colonne
@@ -353,9 +361,11 @@ export default function CentreAppelAgent() {
   // le premier chargement part avec une liste vide — donc sans les leads à
   // rappeler — et rien ne le relancerait quand les statuts arrivent.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
+  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
+  // Le CEO filtre par agent (il lit tout) mais n'en change aucun.
+  const peutFiltrerAgent = ROLES_VUE_GLOBALE.includes((roleNom || '').toLowerCase())
   // La requête des commandes ne ramène que `agent_id` ; le nom vient de la liste
   // déjà chargée, ce qui évite une jointure sur chaque page.
   const nomAgent = (id) => {
@@ -372,25 +382,28 @@ export default function CentreAppelAgent() {
   //   · pas de date (la création trahit un vieux lead), pas de « Remonté le »,
   //     pas d'appels précédents, pas de « Appel n° 3 » ;
   //   · trié parmi les nouveaux par l'heure de sa remontée (entree_file).
-  // La base ferme `appels` à l'agent (renvoyer_en_attente.sql §2) : la console
+  // La base ferme `appels` à l'agent (appels_responsables.sql) : la console
   // du navigateur ne les lui rend pas non plus.
   const vueAgent = !!agentActuel
   const statutVu = (cmd) => (vueAgent && cmd.remonte_le ? PENDING : cmd.statut_confirmation)
   const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0)
 
+  // TOUS les agents de l'entreprise, inactifs compris : le filtre doit
+  // pouvoir montrer les leads d'un agent parti. Changer d'agent ne propose
+  // que les agents actifs qui ont un compte (agentsAssignables).
   useEffect(() => {
-    if (!tenantKey || !peutChangerAgent) return
+    if (!tenantKey || !peutFiltrerAgent) return
     let annule = false
     supabase
       .from('agents')
-      .select('id, nom, pays_id')
+      .select('id, nom, pays_id, actif, user_id')
       .eq('tenant_id', tenantKey)
-      .eq('actif', true)
-      .not('user_id', 'is', null)
       .order('nom')
       .then(({ data }) => { if (!annule) setListeAgents(data || []) })
     return () => { annule = true }
-  }, [tenantKey, peutChangerAgent])
+  }, [tenantKey, peutFiltrerAgent])
+  const agentsAssignables = listeAgents.filter((a) => a.actif && a.user_id)
+  const libelleAgent = (a) => (a.actif && a.user_id ? a.nom : `${a.nom} (inactif)`)
 
   // Un lead déjà traité garde son agent : le statut et l'historique sont à lui.
   async function changerAgent(commandeId, agentId) {
@@ -434,7 +447,9 @@ export default function CentreAppelAgent() {
   // Les filtres de l'écran, posés sur une requête neuve. La liste, ses
   // comptes ET le bouton « Remonter » passent par ici : le bouton remonte
   // exactement ce que la liste montre.
-  function appliquerFiltres(q, agentId, dateField) {
+  // `avecFiltreAgent = false` : la même requête sans le filtre d'agent — le
+  // total « sur N » de l'en-tête.
+  function appliquerFiltres(q, agentId, dateField, avecFiltreAgent = true) {
     // Le cloisonnement vaut POUR TOUT LE MONDE, super_admin compris.
     //
     // Avant, le super_admin était exempté de ce filtre : le centre d'appel lui
@@ -450,6 +465,9 @@ export default function CentreAppelAgent() {
 
     // 🔒 An agent only sees HIS orders
     if (agentId) q = q.eq('agent_id', agentId)
+    // Le filtre d'un responsable (jamais posé pour un agent : agentId le remplace).
+    else if (avecFiltreAgent && filtreAgent === AUCUN_AGENT) q = q.is('agent_id', null)
+    else if (avecFiltreAgent && filtreAgent) q = q.eq('agent_id', filtreAgent)
 
     if (dateDebut) q = q.gte(dateField, dateDebut)
     if (dateFin) q = q.lte(dateField, `${dateFin}T23:59:59`)
@@ -477,7 +495,7 @@ export default function CentreAppelAgent() {
   // qui arrive à échéance pendant que l'écran est ouvert remonte au
   // rechargement suivant (voir le minuteur plus bas).
   const nomsRappel = listeNoms(statutsRappel.map((s) => s.nom))
-  const groupeHaut = (q, agentId, maintenant) => appliquerFiltres(q, agentId, 'created_at')
+  const groupeHaut = (q, agentId, maintenant, avecFiltreAgent) => appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent)
     .or([
       'statut_confirmation.is.null', `statut_confirmation.eq.${PENDING}`, 'remonte_le.not.is.null',
       ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),or(date_rappel.is.null,date_rappel.lte."${maintenant}"))`] : []),
@@ -490,9 +508,9 @@ export default function CentreAppelAgent() {
   // sa liste jusqu'à ce qu'un responsable le remonte. Ses rappels et ses
   // confirmées pas encore livrées restent.
   const nomsBasPour = (agentId) => [...(agentId ? [] : statutsBas), ...statutsSuivis].map((s) => s.nom)
-  const groupeBas = (q, agentId, maintenant) => {
+  const groupeBas = (q, agentId, maintenant, avecFiltreAgent) => {
     const nomsBas = nomsBasPour(agentId)
-    return appliquerFiltres(q, agentId, 'created_at')
+    return appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent)
     .or([
       ...(nomsBas.length ? [`statut_confirmation.in.(${listeNoms(nomsBas)})`] : []),
       ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),date_rappel.gt."${maintenant}")`] : []),
@@ -538,7 +556,7 @@ export default function CentreAppelAgent() {
     const { count, error: erreurCompte } = await groupeARemonter(supabase.from('commandes').select('id', { count: 'exact', head: true }))
     if (erreurCompte) { alert('Erreur : ' + erreurCompte.message); return }
     if (!count) { alert('Aucun lead en attente de rappel ne correspond aux filtres.'); return }
-    if (!confirm(`Remonter ${count} lead${count > 1 ? 's' : ''} en attente de rappel ?\n\nIls passent en tête de la file de leur agent. Leur statut ne change pas.`)) return
+    if (!confirm(`Remonter ${count} lead${count > 1 ? 's' : ''} en attente de rappel${filtreAgent ? ` (filtre agent : ${nomFiltreAgent})` : ''} ?\n\nIls passent en tête de la file de leur agent. Leur statut ne change pas.`)) return
 
     setRemonteeEnCours(true)
     try {
@@ -597,12 +615,20 @@ export default function CentreAppelAgent() {
     // rouvrir une livraison close). On le retrouve dans Commandes.
     const maintenant = new Date().toISOString()
     setErreurChargement('')
-    const [{ count: nA, error: eA }, { count: nB, error: eB }] = await Promise.all([
-      groupeHaut(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
-      groupeBas(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant),
+    // Filtre d'agent posé : on compte AUSSI sans lui, pour écrire « 3 sur 47 ».
+    // Un manager qui a oublié le filtre ne lit pas une liste vide comme « plus
+    // rien à faire ».
+    const filtreAgentPose = !agentId && !!filtreAgent
+    const compter = (groupe, avecFiltreAgent) => groupe(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant, avecFiltreAgent)
+    const [{ count: nA, error: eA }, { count: nB, error: eB }, totA, totB] = await Promise.all([
+      compter(groupeHaut, true),
+      compter(groupeBas, true),
+      filtreAgentPose ? compter(groupeHaut, false) : { count: null },
+      filtreAgentPose ? compter(groupeBas, false) : { count: null },
     ])
-    if (eA || eB) {
-      setErreurChargement((eA || eB).message)
+    const eT = totA.error || totB.error
+    if (eA || eB || eT) {
+      setErreurChargement((eA || eB || eT).message)
       setCommandes([]); setComptes(null); setLoading(false)
       return
     }
@@ -655,7 +681,12 @@ export default function CentreAppelAgent() {
       setCommandes([]); setComptes(null); setLoading(false)
       return
     }
-    setComptes({ aTraiter: nbHaut, traites: nbBas, pageHaut: pH, pagesHaut, pageBas: pB, pagesBas })
+    setComptes({
+      aTraiter: nbHaut, traites: nbBas, pageHaut: pH, pagesHaut, pageBas: pB, pagesBas,
+      // null sans filtre d'agent : rien à comparer.
+      totalATraiter: filtreAgentPose ? (totA.count || 0) : null,
+      totalTraites: filtreAgentPose ? (totB.count || 0) : null,
+    })
 
     const commandesIntelligentes = (data || []).map(cmd => {
       const { appels, ...cmdSansJointure } = cmd
@@ -829,7 +860,7 @@ export default function CentreAppelAgent() {
 
   function reinitialiserFiltres() {
     setDateDebut(''); setDateFin(''); setRecherche('')
-    setFiltreProduit(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays('')
+    setFiltreProduit(''); setFiltreVille(''); setFiltreSource(''); setFiltrePays(''); setFiltreAgent('')
     allerPage1()
   }
 
@@ -853,7 +884,11 @@ export default function CentreAppelAgent() {
   const bornesRappel = bornesChamp(RAPPEL_MAX_JOURS)
 
   const nombreFiltresActifs = [filtreProduit, filtreVille, filtreSource, filtrePays].filter(Boolean).length
-  const filtresActifs = dateDebut || dateFin || recherche || nombreFiltresActifs > 0
+  const filtresActifs = dateDebut || dateFin || recherche || filtreAgent || nombreFiltresActifs > 0
+  const nomFiltreAgent = filtreAgent === AUCUN_AGENT ? 'Sans agent'
+    : (listeAgents.find((a) => a.id === filtreAgent)?.nom || 'Agent')
+  // « 3 sur 47 » quand le filtre d'agent est posé.
+  const surTotal = (total) => (total === null || total === undefined ? '' : ` sur ${total}`)
 
   const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
@@ -906,11 +941,12 @@ export default function CentreAppelAgent() {
             <div className="text-sm text-[#1B2632]/60 font-medium">
               {comptes && (
                 <>
-                  <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{comptes.aTraiter} à traiter</span>
+                  {comptes.totalATraiter !== null && <span className="font-semibold text-[#1B2632]">{nomFiltreAgent} : </span>}
+                  <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{comptes.aTraiter}{surTotal(comptes.totalATraiter)} à traiter</span>
                   {' · '}
                   <button type="button" className="underline decoration-dotted underline-offset-2 hover:text-[#1B2632]"
                     onClick={() => document.getElementById('separateur-suivi')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
-                    {comptes.traites} en suivi
+                    {comptes.traites}{surTotal(comptes.totalTraites)} en suivi
                   </button>
                 </>
               )}
@@ -933,6 +969,23 @@ export default function CentreAppelAgent() {
                 <button onClick={() => setRecherche('')} className="text-[#1B2632]/40 hover:text-[#A35139] text-xs">✕</button>
               )}
             </div>
+
+            {/* Le filtre d'agent : au-dessus de la liste, jamais dans le panneau
+                Filtres — il change ce qu'on croit « restant », il doit se voir. */}
+            {peutFiltrerAgent && (
+              <select
+                value={filtreAgent}
+                onChange={(e) => appliquer(setFiltreAgent)(e.target.value)}
+                title="Ne montrer que les leads d'un agent. Ne change rien à ce que vous pouvez voir."
+                className={`px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm border outline-none cursor-pointer max-w-full sm:max-w-[220px] ${
+                  filtreAgent ? 'bg-[#1B2632] text-white border-[#1B2632]' : 'bg-white text-[#1B2632] border-[#C9C1B1]'
+                }`}
+              >
+                <option value="">Tous les agents</option>
+                <option value={AUCUN_AGENT}>Sans agent</option>
+                {listeAgents.map((a) => <option key={a.id} value={a.id}>{libelleAgent(a)}</option>)}
+              </select>
+            )}
 
             {peutChangerAgent && statutsBas.length > 0 && (
               <button
@@ -1035,8 +1088,9 @@ export default function CentreAppelAgent() {
           </div>
         </div>
 
-        {nombreFiltresActifs > 0 && (
+        {(nombreFiltresActifs > 0 || filtreAgent) && (
           <div className="flex flex-wrap items-center gap-2">
+            {filtreAgent && <ChipFiltre label={`Agent : ${nomFiltreAgent}`} onClear={() => appliquer(setFiltreAgent)('')} />}
             {filtrePays && <ChipFiltre label={`Pays : ${optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || ''}`} onClear={() => appliquer(setFiltrePays)('')} />}
             {filtreProduit && <ChipFiltre label={`Produit : ${filtreProduit}`} onClear={() => appliquer(setFiltreProduit)('')} />}
             {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
@@ -1068,7 +1122,10 @@ export default function CentreAppelAgent() {
               ) : erreurChargement ? (
                 <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-sm font-medium text-[#A35139]">Impossible de charger les leads : {erreurChargement}</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.' : 'Aucune commande pour ce filtre.'}</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.'
+                  : comptes?.totalATraiter != null
+                    ? `Aucun lead pour « ${nomFiltreAgent} ». Tous agents confondus : ${comptes.totalATraiter} à traiter, ${comptes.totalTraites} en suivi.`
+                    : 'Aucune commande pour ce filtre.'}</td></tr>
               ) : (
                 commandes.map((cmd, i) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
@@ -1139,7 +1196,7 @@ export default function CentreAppelAgent() {
                                 <option value="">Changer…</option>
                                 {/* Un agent ne peut traiter que les leads de son pays :
                                     la même règle qu'en base, mais visible ici. */}
-                                {listeAgents
+                                {agentsAssignables
                                   .filter((a) => !cmd.pays_id || !a.pays_id || a.pays_id === cmd.pays_id)
                                   .filter((a) => a.id !== cmd.agent_id)
                                   .map((a) => <option key={a.id} value={a.id}>{a.nom}</option>)}
