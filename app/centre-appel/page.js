@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import VignetteProduit from '../components/VignetteProduit'
+import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
@@ -184,6 +185,15 @@ export default function CentreAppelAgent() {
   const [listeAgents, setListeAgents] = useState([])
   const [agentChoisi, setAgentChoisi] = useState({})
   const [agentEnCours, setAgentEnCours] = useState(null)
+  // Sélection multiple (29/10) : admin, manager, super_admin. Ce qui est
+  // coché est sur l'écran — jamais « toute la base ». Changer de page, de
+  // filtre ou de recherche vide la sélection.
+  const [selection, setSelection] = useState({})
+  const [agentLot, setAgentLot] = useState('')
+  const [lotEnCours, setLotEnCours] = useState(false)
+  // Le compte rendu du dernier lot, et la raison de chaque refus sur sa ligne.
+  const [resultatLot, setResultatLot] = useState(null)
+  const [refusParId, setRefusParId] = useState({})
   const [optionsFiltres, setOptionsFiltres] = useState({ produits: [], villes: [], sources: [], pays: [] })
   // Le catalogue, pour l'image du produit dans le panneau d'appel (26/10) :
   // l'agent décrit le produit au client (« c'est bien le flacon bleu ? »).
@@ -364,6 +374,11 @@ export default function CentreAppelAgent() {
   }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
+  // La sélection, c'est ce qui est à l'écran : une autre page, un autre filtre
+  // la vide. Les raisons de refus du lot précédent s'effacent avec.
+  useEffect(() => {
+    setSelection({}); setRefusParId({})
+  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent])
   // Le CEO filtre par agent (il lit tout) mais n'en change aucun.
   const peutFiltrerAgent = ROLES_VUE_GLOBALE.includes((roleNom || '').toLowerCase())
   // La requête des commandes ne ramène que `agent_id` ; le nom vient de la liste
@@ -386,7 +401,7 @@ export default function CentreAppelAgent() {
   // du navigateur ne les lui rend pas non plus.
   const vueAgent = !!agentActuel
   const statutVu = (cmd) => (vueAgent && cmd.remonte_le ? PENDING : cmd.statut_confirmation)
-  const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0)
+  const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0) + (peutChangerAgent ? 1 : 0)
 
   // TOUS les agents de l'entreprise, inactifs compris : le filtre doit
   // pouvoir montrer les leads d'un agent parti. Changer d'agent ne propose
@@ -405,29 +420,46 @@ export default function CentreAppelAgent() {
   const agentsAssignables = listeAgents.filter((a) => a.actif && a.user_id)
   const libelleAgent = (a) => (a.actif && a.user_id ? a.nom : `${a.nom} (inactif)`)
 
-  // Un lead déjà traité garde son agent : le statut et l'historique sont à lui.
+  // Une ligne seule passe par la même porte qu'un lot (affecter_agent_lot) :
+  // mêmes règles, même historique, avec qui l'a fait.
   async function changerAgent(commandeId, agentId) {
     if (!agentId) return
     setAgentEnCours(commandeId)
-
-    const { data, error } = await supabase
-      .from('commandes')
-      .update({ agent_id: agentId })
-      .eq('id', commandeId)
-      .eq('tenant_id', tenantKey)
-      .or(FILTRE_PENDING)
-      .select('id')
-
+    const { data, error } = await supabase.rpc('affecter_agent_lot', { p_tenant: tenantKey, p_ids: [commandeId], p_agent: agentId })
     setAgentEnCours(null)
 
     if (error) { alert('Erreur : ' + error.message); return }
-    if (!data || data.length === 0) {
-      alert("Ce lead vient d'être traité : son agent ne peut plus être changé.")
-      return
-    }
+    const r = (data || [])[0]
+    if (r?.resultat === 'refuse') { alert(r.motif); return }
 
     setCommandes((prec) => prec.map((c) => (c.id === commandeId ? { ...c, agent_id: agentId } : c)))
     setAgentChoisi((prec) => ({ ...prec, [commandeId]: '' }))
+  }
+
+  // UN appel pour tout le lot : si la connexion tombe, rien n'est appliqué
+  // (la base n'a rien reçu) ou tout le lot a eu sa réponse — jamais un lot à
+  // moitié écrit sans le savoir. Chaque ligne est appliquée ou refusée seule,
+  // avec sa raison ; les refusées restent cochées.
+  async function affecterLot() {
+    const lignes = commandes.filter((c) => selection[c.id])
+    const agent = listeAgents.find((a) => a.id === agentLot)
+    if (!lignes.length || !agent) return
+    if (!confirm(`Affecter ${lignes.length} lead${lignes.length > 1 ? 's' : ''} de cette page à ${agent.nom} ?`)) return
+
+    setLotEnCours(true)
+    const { data, error } = await supabase.rpc('affecter_agent_lot', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_agent: agentLot })
+    setLotEnCours(false)
+    const action = `Affectation à ${agent.nom}`
+    if (error) {
+      setResultatLot({ action, erreur: error.message })
+      return
+    }
+    const resume = resumerLot(action, data, lignes)
+    setResultatLot(resume)
+    setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
+    setSelection(Object.fromEntries(resume.refus.map((r) => [r.id, true])))
+    setAgentLot('')
+    await chargerCommandes(page, null)
   }
 
   // Les statuts rangés par ce qu'ils FONT (drapeaux de Paramètres), jamais par
@@ -887,6 +919,23 @@ export default function CentreAppelAgent() {
   const filtresActifs = dateDebut || dateFin || recherche || filtreAgent || nombreFiltresActifs > 0
   const nomFiltreAgent = filtreAgent === AUCUN_AGENT ? 'Sans agent'
     : (listeAgents.find((a) => a.id === filtreAgent)?.nom || 'Agent')
+  // Cochable : TOUS les leads de la page (29/10, sa décision ; avant :
+  // Pending seulement). Ce que la case de l'en-tête coche, chaque ligne peut
+  // le cocher seule. L'historique garde l'auteur de chaque action, et
+  // Performances compte les appels par l'agent qui a appelé : changer l'agent
+  // ne déplace rien (affecter_agent_lot, historique_affectations.sql §5).
+  const cochable = () => peutChangerAgent
+  const lignesCochables = commandes.filter(cochable)
+  const lignesCochees = commandes.filter((c) => selection[c.id])
+  const toutCoche = lignesCochables.length > 0 && lignesCochables.every((c) => selection[c.id])
+  const basculerTout = () => setSelection(toutCoche ? {} : Object.fromEntries(lignesCochables.map((c) => [c.id, true])))
+  const basculer = (id) => setSelection((prec) => {
+    const s = { ...prec }
+    if (s[id]) delete s[id]; else s[id] = true
+    return s
+  })
+  // Seuls les agents qui peuvent prendre TOUS les leads cochés (leur pays).
+  const agentsPourLot = agentsAssignables.filter((a) => !a.pays_id || lignesCochees.every((c) => c.pays_id === a.pays_id))
   // « 3 sur 47 » quand le filtre d'agent est posé.
   const surTotal = (total) => (total === null || total === undefined ? '' : ` sur ${total}`)
 
@@ -1099,11 +1148,56 @@ export default function CentreAppelAgent() {
         )}
       </header>
 
+      <ResultatLot resultat={resultatLot} onFermer={() => setResultatLot(null)} />
+
+      {peutChangerAgent && lignesCochees.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm">
+          <span className="text-sm font-semibold">
+            {lignesCochees.length} lead{lignesCochees.length > 1 ? 's' : ''} coché{lignesCochees.length > 1 ? 's' : ''}
+            <span className="font-normal text-white/60"> — sur cette page seulement</span>
+          </span>
+          <select
+            value={agentLot}
+            onChange={(e) => setAgentLot(e.target.value)}
+            className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none max-w-full sm:max-w-[220px]"
+          >
+            <option value="">Affecter à…</option>
+            {agentsPourLot.map((a) => <option key={a.id} value={a.id}>{a.nom}</option>)}
+          </select>
+          {agentsPourLot.length === 0 && (
+            <span className="text-xs text-[#FFB162]">Aucun agent ne couvre tous les pays cochés.</span>
+          )}
+          <button
+            onClick={affecterLot}
+            disabled={!agentLot || lotEnCours}
+            className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50"
+          >
+            {lotEnCours ? 'Affectation…' : 'Affecter'}
+          </button>
+          <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
+            Tout décocher
+          </button>
+        </div>
+      )}
+
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
+        {peutChangerAgent && !loading && commandes.length > 0 && (
+          <p className="px-6 pt-3 pb-1 text-xs text-[#1B2632]/50">
+            La case de l'en-tête coche les {lignesCochables.length} leads de cette page, pas toute la base.
+          </p>
+        )}
         <div className="overflow-auto min-h-[400px] max-h-[calc(100vh-280px)]">
           <table className="w-full min-w-[1050px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
+                {peutChangerAgent && (
+                  <th className="pl-4 pr-1 py-4 w-[1%]">
+                    {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
+                    <input type="checkbox" checked={toutCoche} onChange={basculerTout} disabled={lignesCochables.length === 0}
+                      title={`Cocher les ${lignesCochables.length} leads de cette page (pas toute la base)`}
+                      aria-label="Cocher les leads de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                  </th>
+                )}
                 <th className="px-6 py-4">Lead ID</th>
                 {!vueAgent && <th className="px-6 py-4">Date</th>}
                 <th className="px-6 py-4">Client</th>
@@ -1156,7 +1250,21 @@ export default function CentreAppelAgent() {
                       onClick={() => ouvrirPanneau(cmd)}
                       className={`cursor-pointer transition-colors ${estSelectionne ? 'bg-[#FFB162]/10' : 'hover:bg-[#EEE9DF]/40'}`}
                     >
-                      <td className="px-6 py-4 font-mono text-xs text-[#1B2632]/80 whitespace-nowrap">#{cmd.lead_id || 'N/A'}</td>
+                      {peutChangerAgent && (
+                        // La ligne ouvre le panneau d'appel : la case ne doit pas.
+                        <td className="pl-4 pr-1 py-4" onClick={(e) => e.stopPropagation()}>
+                          {cochable(cmd) && (
+                            <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
+                              aria-label={`Cocher ${cmd.lead_id || 'ce lead'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                          )}
+                        </td>
+                      )}
+                      <td className="px-6 py-4 font-mono text-xs text-[#1B2632]/80 whitespace-nowrap">
+                        #{cmd.lead_id || 'N/A'}
+                        {refusParId[cmd.id] && (
+                          <div className="font-sans text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px] whitespace-normal">Refusé : {refusParId[cmd.id]}</div>
+                        )}
+                      </td>
                       {!vueAgent && (
                         <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
                           {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">traité le</span>}
@@ -1184,9 +1292,9 @@ export default function CentreAppelAgent() {
                             {nomAgent(cmd.agent_id) || <span className="text-[#A35139]">Non affecté</span>}
                           </div>
 
-                          {!estPending(cmd.statut_confirmation) ? (
-                            <div className="text-[11px] text-[#1B2632]/40">Lead traité — agent figé</div>
-                          ) : (
+                          {/* Tout lead change d'agent, traité compris (29/10) : la même
+                              règle que le lot. */}
+                          {(
                             <div className="flex items-center gap-1.5">
                               <select
                                 value={agentChoisi[cmd.id] || ''}

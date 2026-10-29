@@ -655,6 +655,10 @@ export default function GestionCommandesPage() {
     chargerCommandes(pageActuelle)
   }
 
+  // Tout lead change d'agent, traité compris (29/10, sa décision) — ici
+  // comme dans le Centre d'appel (affecter_agent_lot). Le changement est
+  // historisé (historique_affectations, « navigateur », avec qui) ; les appels
+  // et l'historique des statuts gardent leur auteur. Voir CLAUDE.md §8.
   async function assignerAgent(commandeId, agentId) {
     const valueToSet = agentId === "" ? null : agentId;
     

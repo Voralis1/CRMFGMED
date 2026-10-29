@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { texteNormalise } from '../../lib/texteNormalise.mjs'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
+import ResultatLot, { resumerLot } from '../components/ResultatLot'
 
 const TAILLE_PAGE = 50
 
@@ -26,6 +27,14 @@ export default function AssignationLivreurPage() {
   const [chargement, setChargement] = useState(true)
   const [livreurChoisiParCommande, setLivreurChoisiParCommande] = useState({})
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
+  // Sélection multiple (29/10), pour qui a `assigner_livreur` : ce qui est
+  // coché est sur l'écran, jamais toute la base. Changer d'onglet ou de page
+  // vide la sélection.
+  const [selection, setSelection] = useState({})
+  const [livreurLot, setLivreurLot] = useState('')
+  const [lotEnCours, setLotEnCours] = useState(false)
+  const [resultatLot, setResultatLot] = useState(null)
+  const [refusParId, setRefusParId] = useState({})
 
   // 🚀 Plus de filtre manuel : on affiche TOUJOURS uniquement les commandes
   // dont le statut est marqué "declenche_assignation" dans Paramètres → Statuts.
@@ -120,6 +129,10 @@ export default function AssignationLivreurPage() {
   }, [user, authLoading, permsLoading, tenantKey])
 
   useEffect(() => {
+    setSelection({}); setRefusParId({})
+  }, [pageActuelle, ongletActif])
+
+  useEffect(() => {
     if (!tenantKey) return
     chargerCommandes(pageActuelle, ongletActif)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,6 +142,10 @@ export default function AssignationLivreurPage() {
     setLivreurChoisiParCommande((prec) => ({ ...prec, [commandeId]: livreurId }))
   }
 
+  // Une commande seule passe par la même porte qu'un lot
+  // (affecter_livreur_lot) : mêmes règles, même historique, avec qui l'a fait.
+  // L'ancienne fonction assigner-livreur (clé service) ne savait pas qui
+  // agissait.
   async function assigner(commandeId) {
     const livreurId = livreurChoisiParCommande[commandeId]
     if (!livreurId) {
@@ -137,37 +154,54 @@ export default function AssignationLivreurPage() {
     }
 
     setEnvoiEnCoursId(commandeId)
-
-    const { data: { session } } = await supabase.auth.getSession()
-
-    const reponse = await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/assigner-livreur`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          commande_id: commandeId,
-          livreur_id: livreurId,
-          tenant_id: tenantKey
-        }),
-      }
-    )
-
-    const resultat = await reponse.json()
+    const { data, error } = await supabase.rpc('affecter_livreur_lot', { p_tenant: tenantKey, p_ids: [commandeId], p_livreur: livreurId })
     setEnvoiEnCoursId(null)
 
-    if (resultat.error) {
-      alert('Erreur : ' + resultat.error)
-      return
-    }
+    if (error) { alert('Erreur : ' + error.message); return }
+    const r = (data || [])[0]
+    if (r?.resultat === 'refuse') { alert(r.motif); return }
 
     await chargerCommandes(pageActuelle, ongletActif)
   }
 
+  // UN appel pour tout le lot : une connexion qui tombe ne laisse jamais un
+  // lot à moitié écrit sans le savoir. Chaque commande est appliquée ou
+  // refusée seule, avec sa raison ; les refusées restent cochées.
+  async function assignerLot() {
+    const lignes = commandes.filter((c) => selection[c.id])
+    const livreur = livreurs.find((l) => l.id === livreurLot)
+    if (!lignes.length || !livreur) return
+    if (!confirm(`Assigner ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page à ${livreur.nom} ?`)) return
+
+    setLotEnCours(true)
+    const { data, error } = await supabase.rpc('affecter_livreur_lot', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_livreur: livreurLot })
+    setLotEnCours(false)
+    const action = `Assignation à ${livreur.nom}`
+    if (error) {
+      setResultatLot({ action, erreur: error.message })
+      return
+    }
+    const resume = resumerLot(action, data, lignes)
+    setResultatLot(resume)
+    setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
+    setSelection(Object.fromEntries(resume.refus.map((r) => [r.id, true])))
+    setLivreurLot('')
+    await chargerCommandes(pageActuelle, ongletActif)
+  }
+
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
+
+  const peutAssigner = hasPermission('assigner_livreur')
+  const lignesCochees = commandes.filter((c) => selection[c.id])
+  const toutCoche = commandes.length > 0 && commandes.every((c) => selection[c.id])
+  const basculerTout = () => setSelection(toutCoche ? {} : Object.fromEntries(commandes.map((c) => [c.id, true])))
+  const basculer = (id) => setSelection((prec) => {
+    const s = { ...prec }
+    if (s[id]) delete s[id]; else s[id] = true
+    return s
+  })
+  // Un livreur livre dans SON pays : seuls ceux du pays de toutes les commandes cochées.
+  const livreursPourLot = livreurs.filter((l) => lignesCochees.every((c) => c.pays_id === l.pays_id))
 
   if (authLoading || permsLoading || !hasPermission('menu_assignation_livreur')) {
     return <div className="p-8 text-[#1B2632] font-medium">Vérification des accès...</div>
@@ -218,6 +252,42 @@ export default function AssignationLivreurPage() {
         </p>
       </header>
 
+      {resultatLot && (
+        <div className="mx-6 md:mx-0">
+          <ResultatLot resultat={resultatLot} onFermer={() => setResultatLot(null)} />
+        </div>
+      )}
+
+      {peutAssigner && lignesCochees.length > 0 && (
+        <div className="mx-6 md:mx-0 flex flex-wrap items-center gap-3 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm">
+          <span className="text-sm font-semibold">
+            {lignesCochees.length} commande{lignesCochees.length > 1 ? 's' : ''} cochée{lignesCochees.length > 1 ? 's' : ''}
+            <span className="font-normal text-white/60"> — sur cette page seulement</span>
+          </span>
+          <select
+            value={livreurLot}
+            onChange={(e) => setLivreurLot(e.target.value)}
+            className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none max-w-full sm:max-w-[240px]"
+          >
+            <option value="">Assigner à…</option>
+            {livreursPourLot.map((l) => <option key={l.id} value={l.id}>{l.nom} — {l.zone ? l.zone.trim() : 'sans zone'}</option>)}
+          </select>
+          {livreursPourLot.length === 0 && (
+            <span className="text-xs text-[#FFB162]">Aucun livreur ne couvre tous les pays cochés.</span>
+          )}
+          <button
+            onClick={assignerLot}
+            disabled={!livreurLot || lotEnCours}
+            className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50"
+          >
+            {lotEnCours ? 'Assignation…' : 'Assigner'}
+          </button>
+          <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
+            Tout décocher
+          </button>
+        </div>
+      )}
+
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col mx-6 md:mx-0">
         {chargement ? (
           <p className="text-sm text-[#1B2632]/60 p-6">Chargement...</p>
@@ -229,10 +299,23 @@ export default function AssignationLivreurPage() {
           </p>
         ) : (
           <>
+            {peutAssigner && (
+              <p className="px-6 pt-3 text-xs text-[#1B2632]/50">
+                La case de l'en-tête coche les {commandes.length} commandes de cette page, pas toute la base ({totalCommandes} au total).
+              </p>
+            )}
             <div className="overflow-x-auto min-h-[400px]">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
+                    {peutAssigner && (
+                      <th className="pl-4 pr-1 py-4 w-[1%]">
+                        {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
+                        <input type="checkbox" checked={toutCoche} onChange={basculerTout}
+                          title={`Cocher les ${commandes.length} commandes de cette page (pas toute la base)`}
+                          aria-label="Cocher les commandes de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                      </th>
+                    )}
                     <th className="px-6 py-4">Lead ID</th>
                     <th className="px-6 py-4">Date</th>
                     <th className="px-6 py-4">Client</th>
@@ -263,8 +346,18 @@ export default function AssignationLivreurPage() {
                     return (
                       <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
 
+                        {peutAssigner && (
+                          <td className="pl-4 pr-1 py-4">
+                            <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
+                              aria-label={`Cocher ${cmd.lead_id || 'cette commande'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                          </td>
+                        )}
+
                         <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80">
                           #{cmd.lead_id || 'N/A'}
+                          {refusParId[cmd.id] && (
+                            <div className="font-sans text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px]">Refusé : {refusParId[cmd.id]}</div>
+                          )}
                         </td>
 
                         <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
