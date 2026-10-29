@@ -52,6 +52,10 @@ function pourInput(v) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+// Le filtre par vendeur (29/10) : responsables et ceo. Une vue, pas un droit.
+const ROLES_FILTRE_VENDEUR = ['admin', 'manager', 'ceo', 'super_admin']
+const pourNomDeFichier = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '')
+
 export default function ExpeditionsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
@@ -90,6 +94,12 @@ export default function ExpeditionsPage() {
   const [filtreStatut, setFiltreStatut] = useState('')
   const [filtreMode, setFiltreMode] = useState('')
   const [filtrePays, setFiltrePays] = useState('')
+  // Filtre par vendeur : resserre la liste déjà lue, ne change aucune
+  // lecture ; un rechargement l'efface ; jamais montré au vendeur.
+  const [filtreVendeur, setFiltreVendeur] = useState('')
+  // Les vendeurs de l'entreprise, pour les options du filtre — lus
+  // SEULEMENT pour un responsable : la lecture du vendeur ne change pas.
+  const [vendeursFiltre, setVendeursFiltre] = useState([])
   const [panneauFiltres, setPanneauFiltres] = useState(false)
   const [analyseOuverte, setAnalyseOuverte] = useState(false)
 
@@ -215,7 +225,8 @@ export default function ExpeditionsPage() {
     return v.nom || v.email || '—'
   }, [vendeurs, user])
 
-  const affichees = useMemo(() => {
+  // Tous les filtres SAUF le vendeur : le « sur N » du filtre vendeur.
+  const afficheesTousVendeurs = useMemo(() => {
     const r = recherche.trim().toLowerCase()
     return expeditions.filter((e) => {
       if (r && !`${e.reference || ''} ${e.transporteur || ''} ${e.pays || ''} ${e.details || ''}`.toLowerCase().includes(r)) return false
@@ -225,6 +236,31 @@ export default function ExpeditionsPage() {
       return true
     })
   }, [expeditions, recherche, filtreStatut, filtreMode, filtrePays])
+
+  const peutFiltrerVendeur = !estSeller && ROLES_FILTRE_VENDEUR.includes(String(roleNom || '').toLowerCase())
+  // Pour un vendeur, filtreVendeur reste vide : affichees = la liste d'avant.
+  const affichees = useMemo(
+    () => (filtreVendeur ? afficheesTousVendeurs.filter((e) => e.vendeur_id === filtreVendeur) : afficheesTousVendeurs),
+    [afficheesTousVendeurs, filtreVendeur],
+  )
+  // Les options : les vendeurs de l'entreprise, plus quiconque a déclaré une
+  // expédition sans être vendeur (un responsable) — rien n'est inatteignable.
+  const optionsVendeur = useMemo(() => {
+    const ids = new Set(vendeursFiltre.map((v) => v.user_id))
+    const autres = [...new Set(expeditions.map((e) => e.vendeur_id).filter((id) => id && !ids.has(id)))]
+    return [
+      ...vendeursFiltre.map((v) => ({ id: v.user_id, nom: v.nom || v.email || '—' })),
+      ...autres.map((id) => ({ id, nom: `${nomVendeur(id)} (pas vendeur)` })),
+    ]
+  }, [vendeursFiltre, expeditions, nomVendeur])
+  const nomFiltreVendeur = filtreVendeur ? (optionsVendeur.find((o) => o.id === filtreVendeur)?.nom || nomVendeur(filtreVendeur)) : ''
+  useEffect(() => {
+    if (!tenantKey || !peutFiltrerVendeur) return
+    let annule = false
+    supabase.from('user_roles').select('user_id, email, nom').eq('tenant_id', tenantKey).eq('role', 'seller')
+      .then(({ data }) => { if (!annule) setVendeursFiltre((data || []).sort((a, b) => String(a.nom || a.email).localeCompare(String(b.nom || b.email), 'fr'))) })
+    return () => { annule = true }
+  }, [tenantKey, peutFiltrerVendeur])
 
   // Les pays de départ déjà saisis, pour le filtre et pour la saisie assistée.
   // Le pays de DÉPART, saisi librement. La destination, elle, est un entrepôt.
@@ -258,6 +294,7 @@ export default function ExpeditionsPage() {
   }, [affichees])
 
   const nombreFiltres = [filtreStatut, filtreMode, filtrePays].filter(Boolean).length
+  const enAttenteTousVendeurs = afficheesTousVendeurs.filter((e) => e.statut === 'en_attente').length
 
   function annonce(texte, type) {
     setMessage({ texte, type })
@@ -507,13 +544,16 @@ export default function ExpeditionsPage() {
       e.date_reception ? dateCourte(e.date_reception) : '',
       STATUTS[e.statut]?.label || e.statut, nomVendeur(e.vendeur_id), e.motif_refus || '',
     ])
-    const csv = [entetes, ...lignes]
+    // `lignesCsv`, les expéditions affichées. Avant le 29/10 : `lignes` —
+    // les lignes de produits du FORMULAIRE — l'export n'avait que l'en-tête.
+    const csv = [entetes, ...lignesCsv]
       .map((l) => l.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
       .join('\n')
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `expeditions_${new Date().toISOString().slice(0, 10)}.csv`
+    // Filtré par vendeur, le nom du fichier le dit.
+    a.download = `expeditions_${new Date().toISOString().slice(0, 10)}${filtreVendeur ? `_vendeur-${pourNomDeFichier(nomFiltreVendeur)}` : ''}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -616,6 +656,22 @@ export default function ExpeditionsPage() {
             )}
           </div>
 
+          {/* Au-dessus de la liste, jamais dans le panneau Filtres : il doit se voir. */}
+          {peutFiltrerVendeur && (
+            <select
+              data-filtre-vendeur
+              value={filtreVendeur}
+              onChange={(e) => setFiltreVendeur(e.target.value)}
+              title="Ne montrer que les expéditions d'un vendeur. Ne change rien à ce que vous pouvez voir."
+              className={`px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm border outline-none cursor-pointer max-w-full sm:max-w-[220px] ${
+                filtreVendeur ? 'bg-[#1B2632] text-white border-[#1B2632]' : 'bg-white text-[#1B2632] border-[#C9C1B1]'
+              }`}
+            >
+              <option value="">Tous les vendeurs</option>
+              {optionsVendeur.map((o) => <option key={o.id} value={o.id}>{o.nom}</option>)}
+            </select>
+          )}
+
           <button
             onClick={() => setAnalyseOuverte((o) => !o)}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border transition-all ${
@@ -639,6 +695,18 @@ export default function ExpeditionsPage() {
             )}
           </div>
         </div>
+
+        {filtreVendeur && (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-[#1B2632]/70">
+              <b className="text-[#1B2632]">{nomFiltreVendeur}</b> : {affichees.length} expédition{affichees.length > 1 ? 's' : ''} sur {afficheesTousVendeurs.length}
+            </span>
+            <span className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full bg-[#1B2632] text-white text-xs font-semibold">
+              Vendeur : {nomFiltreVendeur}
+              <button onClick={() => setFiltreVendeur('')} aria-label="Retirer le filtre vendeur" className="w-5 h-5 rounded-full hover:bg-white/20">✕</button>
+            </span>
+          </div>
+        )}
 
         {/* Le seller doit savoir, avant de saisir, que ça ne vaut rien sans
             validation — sinon il croit l'expédition enregistrée et partie. */}
@@ -669,10 +737,12 @@ export default function ExpeditionsPage() {
         </div>
       )}
 
-      {peutConfirmer && analyse.enAttente > 0 && (
+      {peutConfirmer && (analyse.enAttente > 0 || (filtreVendeur && enAttenteTousVendeurs > 0)) && (
         <div className="px-4 py-3 rounded-xl bg-[#FFB162]/15 border border-[#FFB162]/50 flex items-center justify-between gap-3 flex-wrap">
           <span className="text-sm font-semibold text-[#8a5a1f]">
             {analyse.enAttente} expédition{analyse.enAttente > 1 ? 's' : ''} attend{analyse.enAttente > 1 ? 'ent' : ''} votre confirmation
+            {/* Filtré par vendeur : le total de l'entreprise reste lisible. */}
+            {filtreVendeur && ` — pour ${nomFiltreVendeur} ; ${enAttenteTousVendeurs} tous vendeurs confondus`}
           </span>
           <button
             onClick={() => setFiltreStatut('en_attente')}
@@ -685,6 +755,11 @@ export default function ExpeditionsPage() {
 
       {analyseOuverte && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm p-6 pop-in">
+          {filtreVendeur && (
+            <p data-analyse-titre className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-4">
+              Analyse — {nomFiltreVendeur} seulement
+            </p>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-5">
             <Chiffre label="Expéditions" valeur={analyse.total} />
             <Chiffre label="En attente" valeur={analyse.enAttente} alerte={analyse.enAttente > 0} />
@@ -730,7 +805,10 @@ export default function ExpeditionsPage() {
               ) : affichees.length === 0 ? (
                 <tr>
                   <td colSpan="10" className="px-6 py-12 text-center text-[#1B2632]/60">
-                    {expeditions.length === 0 ? 'Aucune expédition.' : 'Aucune expédition ne correspond à cette recherche.'}
+                    {expeditions.length === 0 ? 'Aucune expédition.'
+                      : filtreVendeur && afficheesTousVendeurs.length > 0
+                        ? `Aucune expédition pour « ${nomFiltreVendeur} » — ${afficheesTousVendeurs.length} au total.`
+                        : 'Aucune expédition ne correspond à cette recherche.'}
                   </td>
                 </tr>
               ) : (

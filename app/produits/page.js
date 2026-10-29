@@ -73,6 +73,12 @@ function QuantiteCellule({ total, parPays }) {
   )
 }
 
+// Le filtre par vendeur (29/10) : responsables et ceo. La valeur « Sans
+// vendeur » n'est jamais un id (ce sont des uuid).
+const ROLES_FILTRE_VENDEUR = ['admin', 'manager', 'ceo', 'super_admin']
+const SANS_VENDEUR = 'aucun'
+const pourNomDeFichier = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '')
+
 export default function ProduitsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
@@ -106,6 +112,11 @@ export default function ProduitsPage() {
   const [filtreType, setFiltreType] = useState('')
   const [filtreStatut, setFiltreStatut] = useState('')
   const [filtreUpsell, setFiltreUpsell] = useState('')
+  // Filtre par vendeur : une VUE, pas un droit — il resserre la liste déjà
+  // lue, il ne change aucune lecture. Un simple état : un rechargement
+  // l'efface, exprès. Jamais montré au vendeur (sa liste est déjà la sienne,
+  // par la base).
+  const [filtreVendeur, setFiltreVendeur] = useState('')
   const [panneauFiltres, setPanneauFiltres] = useState(false)
   const [analyseOuverte, setAnalyseOuverte] = useState(false)
 
@@ -222,7 +233,8 @@ export default function ProduitsPage() {
 
   // Le filtrage se fait sur la liste déjà chargée : un catalogue tient en
   // quelques dizaines de lignes, inutile d'aller-retour sur le serveur.
-  const affiches = useMemo(() => {
+  // Tous les filtres SAUF le vendeur : le « sur N » du filtre vendeur.
+  const affichesTousVendeurs = useMemo(() => {
     const r = recherche.trim().toLowerCase()
     return produits.filter((p) => {
       if (r && !`${p.product || ''} ${p.code || ''} ${nomVendeur(p.vendeur_id) || ''}`.toLowerCase().includes(r)) return false
@@ -233,6 +245,16 @@ export default function ProduitsPage() {
       return true
     })
   }, [produits, recherche, filtreType, filtreStatut, filtreUpsell, nomVendeur])
+
+  const peutFiltrerVendeur = !estSeller && ROLES_FILTRE_VENDEUR.includes(String(roleNom || '').toLowerCase())
+  // Pour un vendeur, filtreVendeur reste vide : affiches = affichesTousVendeurs,
+  // exactement la liste d'avant.
+  const affiches = useMemo(() => {
+    if (!filtreVendeur) return affichesTousVendeurs
+    if (filtreVendeur === SANS_VENDEUR) return affichesTousVendeurs.filter((p) => !p.vendeur_id)
+    return affichesTousVendeurs.filter((p) => p.vendeur_id === filtreVendeur)
+  }, [affichesTousVendeurs, filtreVendeur])
+  const nomFiltreVendeur = filtreVendeur === SANS_VENDEUR ? 'Sans vendeur' : (filtreVendeur ? nomVendeur(filtreVendeur) : '')
 
   const analyse = useMemo(() => {
     const total = affiches.length
@@ -598,10 +620,13 @@ export default function ProduitsPage() {
     const csv = [entetes, ...lignes]
       .map((l) => l.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
       .join('\n')
+    // Filtré par vendeur, le nom du fichier le dit : un export d'un vendeur
+    // ne doit pas passer pour le catalogue entier.
+    const suffixe = filtreVendeur ? `_vendeur-${pourNomDeFichier(nomFiltreVendeur)}` : ''
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `produits_${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `produits_${new Date().toISOString().slice(0, 10)}${suffixe}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -713,6 +738,24 @@ export default function ProduitsPage() {
             )}
           </div>
 
+          {/* Au-dessus de la liste, jamais dans le panneau Filtres : il change ce
+              qu'on croit être « le catalogue », il doit se voir. */}
+          {peutFiltrerVendeur && (
+            <select
+              data-filtre-vendeur
+              value={filtreVendeur}
+              onChange={(e) => setFiltreVendeur(e.target.value)}
+              title="Ne montrer que les produits d'un vendeur. Ne change rien à ce que vous pouvez voir."
+              className={`px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm border outline-none cursor-pointer max-w-full sm:max-w-[220px] ${
+                filtreVendeur ? 'bg-[#1B2632] text-white border-[#1B2632]' : 'bg-white text-[#1B2632] border-[#C9C1B1]'
+              }`}
+            >
+              <option value="">Tous les vendeurs</option>
+              <option value={SANS_VENDEUR}>Sans vendeur</option>
+              {vendeurs.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
+            </select>
+          )}
+
           <button
             onClick={() => setAnalyseOuverte((o) => !o)}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border transition-all ${
@@ -736,6 +779,17 @@ export default function ProduitsPage() {
             )}
           </div>
         </div>
+        {filtreVendeur && (
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-[#1B2632]/70">
+              <b className="text-[#1B2632]">{nomFiltreVendeur}</b> : {affiches.length} produit{affiches.length > 1 ? 's' : ''} sur {affichesTousVendeurs.length}
+            </span>
+            <span className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full bg-[#1B2632] text-white text-xs font-semibold">
+              Vendeur : {nomFiltreVendeur}
+              <button onClick={() => setFiltreVendeur('')} aria-label="Retirer le filtre vendeur" className="w-5 h-5 rounded-full hover:bg-white/20">✕</button>
+            </span>
+          </div>
+        )}
       </header>
 
       {message.texte && (
@@ -762,6 +816,11 @@ export default function ProduitsPage() {
 
       {analyseOuverte && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm p-6 pop-in">
+          {filtreVendeur && (
+            <p data-analyse-titre className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-4">
+              Analyse — {nomFiltreVendeur} seulement
+            </p>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
             <Chiffre label="Produits" valeur={analyse.total} detail={`${analyse.actifs} actifs`} />
             <Chiffre label="En stock" valeur={analyse.enStock} />
@@ -819,7 +878,9 @@ export default function ProduitsPage() {
                   <td colSpan="11" className="px-6 py-12 text-center text-[#1B2632]/60">
                     {produits.length === 0
                       ? (estSeller ? 'Vous n\u2019avez encore aucun produit.' : 'Aucun produit dans le catalogue.')
-                      : 'Aucun produit ne correspond à cette recherche.'}
+                      : filtreVendeur && affichesTousVendeurs.length > 0
+                        ? `Aucun produit pour « ${nomFiltreVendeur} » — ${affichesTousVendeurs.length} au total.`
+                        : 'Aucun produit ne correspond à cette recherche.'}
                   </td>
                 </tr>
               ) : (
