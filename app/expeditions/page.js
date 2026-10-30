@@ -214,7 +214,11 @@ export default function ExpeditionsPage() {
     setNbProduits(compte)
 
     setChargement(false)
-  }, [tenantKey])
+  // estSeller en dépendance (30/10) : au rechargement, l'entreprise arrive
+  // AVANT les permissions. Avec [tenantKey] seul, charger restait figé sur
+  // « pas vendeur » : il lisait les entrepôts (rien pour un vendeur) et jamais
+  // les pays livrables — le formulaire disait « Aucun pays de destination ».
+  }, [tenantKey, estSeller])
 
   useEffect(() => { if (tenantKey && !permsLoading) charger() }, [tenantKey, permsLoading, charger])
 
