@@ -23,6 +23,8 @@ import ResultatLot, { resumerLot } from '../components/ResultatLot'
 // Le filtre par agent, partagé avec le Centre d'appel : même liste, mêmes règles.
 import SelectAgent, { filtrerParAgent, nomFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 import PlageDates from '../components/PlageDates'
+// Le filtre produit par PRODUIT (produit_id), partagé avec le Centre d'appel.
+import { NON_RECONNU, filtrerParProduit, optionsProduit } from '../../lib/filtreProduit.mjs'
 
 // Combien de lignes par page (29/10). 1000 compris (sa décision) : la
 // lecture de l'historique par page a disparu, il ne reste que le rendu. Si
@@ -239,6 +241,7 @@ export default function GestionCommandesPage() {
   // Le total SANS filtre (le même périmètre : un vendeur, ses commandes) :
   // « 23 sur 136 » — un filtre oublié ne se lit pas comme « il n'y a que ça ».
   const [totalSansFiltre, setTotalSansFiltre] = useState(null)
+  const [nbNonReconnu, setNbNonReconnu] = useState(null)
   const [chargement, setChargement] = useState(true)
 
   // 🚀 État pour la modale de création manuelle
@@ -297,13 +300,9 @@ export default function GestionCommandesPage() {
     if (catalogueData) setCatalogue(catalogueData)
   }, [tenantKey, estSeller])
 
-  // Les produits et les sources proposés viennent de ce qui existe vraiment
-  // dans la page : une liste fixe finirait par proposer des produits retirés
-  // et par taire les nouveaux.
-  const produitsConnus = useMemo(
-    () => [...new Set(commandes.map((c) => c.produit).filter(Boolean))].sort(),
-    [commandes],
-  )
+  // Les sources proposées viennent de ce qui existe vraiment dans la page.
+  // Les PRODUITS, eux, viennent du catalogue (lib/filtreProduit.mjs, 29/10) :
+  // avant, le texte des commandes de la page — un produit par orthographe.
   const sourcesConnues = useMemo(
     () => [...new Set(commandes.map((c) => c.source).filter(Boolean))].sort(),
     [commandes],
@@ -497,7 +496,7 @@ export default function GestionCommandesPage() {
       const noms = groupesStatuts[f.sousStatut] || []
       requete = noms.length ? requete.in('statut_confirmation', noms) : requete.is('id', null)
     }
-    if (f.produit) requete = requete.eq('produit', f.produit)
+    requete = filtrerParProduit(requete, f.produit, catalogue)
     if (!estSeller) requete = filtrerParAgent(requete, f.agent)
     if (f.source) requete = requete.eq('source', f.source)
     // Les bornes hautes couvrent la journée entière : sans l'heure, « au 10 »
@@ -507,7 +506,7 @@ export default function GestionCommandesPage() {
     if (f.actionDu) requete = requete.gte('derniere_action_le', f.actionDu)
     if (f.actionAu) requete = requete.lte('derniere_action_le', `${f.actionAu}T23:59:59`)
     return requete
-  }, [tenantKey, estSeller, user?.id, filtreVendeur, groupesStatuts])
+  }, [tenantKey, estSeller, user?.id, filtreVendeur, groupesStatuts, catalogue])
 
   function reinitialiserFiltres() {
     setFiltres(FILTRES_VIDES)
@@ -526,7 +525,7 @@ export default function GestionCommandesPage() {
     const fin = debut + taillePage - 1
 
     const filtre = filtreVendeur || nombreFiltresActifs > 0 || filtresActifs.texte
-    const [{ data, count, error }, total] = await Promise.all([
+    const [{ data, count, error }, total, nonReconnu] = await Promise.all([
       appliquerFiltresRequete(
         supabase.from('commandes').select('*, pays(nom, devise), agents(nom), entrepots(nom)', { count: 'exact' }),
         filtresActifs,
@@ -534,7 +533,12 @@ export default function GestionCommandesPage() {
       filtre
         ? appliquerFiltresRequete(supabase.from('commandes').select('id', { count: 'exact', head: true }), null)
         : Promise.resolve(null),
+      // « Produit non reconnu (N) » : ce que donnerait ce choix, avec les
+      // autres filtres posés.
+      appliquerFiltresRequete(supabase.from('commandes').select('id', { count: 'exact', head: true }),
+        { ...filtresActifs, produit: NON_RECONNU }),
     ])
+    setNbNonReconnu(nonReconnu && !nonReconnu.error ? nonReconnu.count : null)
 
     if (error) {
       alert("Erreur lors du chargement : " + error.message)
@@ -1392,7 +1396,9 @@ export default function GestionCommandesPage() {
                 <select className="cm-input" value={filtres.produit}
                   onChange={(e) => setFiltres({ ...filtres, produit: e.target.value })}>
                   <option value="">Tous</option>
-                  {produitsConnus.map((pr) => <option key={pr} value={pr}>{pr}</option>)}
+                  {/* Le catalogue que la personne voit, puis tout le reste. */}
+                  {optionsProduit(catalogue).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  <option value={NON_RECONNU}>Produit non reconnu{nbNonReconnu != null ? ` (${nbNonReconnu})` : ''}</option>
                 </select>
               </div>
 

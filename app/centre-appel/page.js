@@ -10,6 +10,8 @@ import VignetteProduit from '../components/VignetteProduit'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 // Le filtre par agent, partagé avec Commandes : même liste, mêmes règles.
 import SelectAgent, { AUCUN_AGENT, nomFiltreAgent as nomDuFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
+// Le filtre produit par PRODUIT (produit_id), partagé avec Commandes.
+import { NON_RECONNU, filtrerParProduit, nomProduitFiltre, optionsProduit } from '../../lib/filtreProduit.mjs'
 import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
@@ -198,6 +200,7 @@ export default function CentreAppelAgent() {
   // l'agent décrit le produit au client (« c'est bien le flacon bleu ? »).
   // La RLS de `produits` donne tous les produits de l'entreprise à l'agent.
   const [catalogue, setCatalogue] = useState([])
+  const [nbNonReconnu, setNbNonReconnu] = useState(null)
 
   const [page, setPage] = useState(1)
   // Le bas a SA pagination (27/10). Avant, les deux groupes étaient une seule
@@ -319,7 +322,9 @@ export default function CentreAppelAgent() {
           .sort((a, b) => a.localeCompare(b, 'fr'))
 
       setOptionsFiltres({
-        produits: valeursDe('produit'),
+        // Les produits ne viennent plus d'ici (le texte des commandes) : du
+        // catalogue (lib/filtreProduit.mjs, 29/10).
+        produits: [],
         villes: valeursDe('ville'),
         sources: valeursDe('source'),
         pays: (pays || []).map(p => ({ id: p.id, nom: p.nom }))
@@ -370,7 +375,7 @@ export default function CentreAppelAgent() {
   // le premier chargement part avec une liste vide — donc sans les leads à
   // rappeler — et rien ne le relancerait quand les statuts arrivent.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB])
+  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB, catalogue])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
   // La sélection, c'est ce qui est à l'écran : une autre page, un autre filtre
@@ -470,7 +475,9 @@ export default function CentreAppelAgent() {
   // exactement ce que la liste montre.
   // `avecFiltreAgent = false` : la même requête sans le filtre d'agent — le
   // total « sur N » de l'en-tête.
-  function appliquerFiltres(q, agentId, dateField, avecFiltreAgent = true) {
+  // `produit` : la valeur du filtre produit à appliquer (par défaut celle de
+  // l'écran) — « non reconnu » est compté à part pour son « (N) ».
+  function appliquerFiltres(q, agentId, dateField, avecFiltreAgent = true, produit = filtreProduit) {
     // Le cloisonnement vaut POUR TOUT LE MONDE, super_admin compris.
     //
     // Avant, le super_admin était exempté de ce filtre : le centre d'appel lui
@@ -504,7 +511,7 @@ export default function CentreAppelAgent() {
     // Le pays est désormais obligatoire et verrouillé en base, donc on filtre
     // dessus côté serveur : plus besoin de rapatrier 5000 lignes pour trier ici.
     if (filtrePays) q = q.eq('pays_id', filtrePays)
-    if (filtreProduit) q = q.eq('produit', filtreProduit)
+    q = filtrerParProduit(q, produit, catalogue)
     if (filtreVille) q = q.eq('ville_zone', filtreVille)
     if (filtreSource) q = q.eq('source', filtreSource)
     return q
@@ -516,7 +523,7 @@ export default function CentreAppelAgent() {
   // qui arrive à échéance pendant que l'écran est ouvert remonte au
   // rechargement suivant (voir le minuteur plus bas).
   const nomsRappel = listeNoms(statutsRappel.map((s) => s.nom))
-  const groupeHaut = (q, agentId, maintenant, avecFiltreAgent) => appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent)
+  const groupeHaut = (q, agentId, maintenant, avecFiltreAgent, produit) => appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent, produit)
     .or([
       'statut_confirmation.is.null', `statut_confirmation.eq.${PENDING}`, 'remonte_le.not.is.null',
       ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),or(date_rappel.is.null,date_rappel.lte."${maintenant}"))`] : []),
@@ -529,9 +536,9 @@ export default function CentreAppelAgent() {
   // sa liste jusqu'à ce qu'un responsable le remonte. Ses rappels et ses
   // confirmées pas encore livrées restent.
   const nomsBasPour = (agentId) => [...(agentId ? [] : statutsBas), ...statutsSuivis].map((s) => s.nom)
-  const groupeBas = (q, agentId, maintenant, avecFiltreAgent) => {
+  const groupeBas = (q, agentId, maintenant, avecFiltreAgent, produit) => {
     const nomsBas = nomsBasPour(agentId)
-    return appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent)
+    return appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent, produit)
     .or([
       ...(nomsBas.length ? [`statut_confirmation.in.(${listeNoms(nomsBas)})`] : []),
       ...(statutsRappel.length ? [`and(statut_confirmation.in.(${nomsRappel}),date_rappel.gt."${maintenant}")`] : []),
@@ -640,13 +647,17 @@ export default function CentreAppelAgent() {
     // Un manager qui a oublié le filtre ne lit pas une liste vide comme « plus
     // rien à faire ».
     const filtreAgentPose = !agentId && !!filtreAgent
-    const compter = (groupe, avecFiltreAgent) => groupe(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant, avecFiltreAgent)
-    const [{ count: nA, error: eA }, { count: nB, error: eB }, totA, totB] = await Promise.all([
+    const compter = (groupe, avecFiltreAgent, produit) => groupe(supabase.from('commandes').select('id', { count: 'exact', head: true }), agentId, maintenant, avecFiltreAgent, produit)
+    const [{ count: nA, error: eA }, { count: nB, error: eB }, totA, totB, nrA, nrB] = await Promise.all([
       compter(groupeHaut, true),
       compter(groupeBas, true),
       filtreAgentPose ? compter(groupeHaut, false) : { count: null },
       filtreAgentPose ? compter(groupeBas, false) : { count: null },
+      // « Produit non reconnu (N) » : ce que donnerait ce choix, autres filtres posés.
+      compter(groupeHaut, true, NON_RECONNU),
+      compter(groupeBas, true, NON_RECONNU),
     ])
+    setNbNonReconnu(nrA.error || nrB.error ? null : (nrA.count || 0) + (nrB.count || 0))
     const eT = totA.error || totB.error
     if (eA || eB || eT) {
       setErreurChargement((eA || eB || eT).message)
@@ -1088,7 +1099,7 @@ export default function CentreAppelAgent() {
 
                     <div className="flex flex-col gap-4">
                       <SelectFiltre label="Pays" value={filtrePays} onChange={appliquer(setFiltrePays)} options={optionsFiltres.pays.map(p => ({ value: p.id, label: p.nom }))} placeholder="Tous les pays" />
-                      <SelectFiltre label="Produit" value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={optionsFiltres.produits.map(p => ({ value: p, label: p }))} placeholder="Tous les produits" />
+                      <SelectFiltre label="Produit" value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={[...optionsProduit(catalogue), { value: NON_RECONNU, label: `Produit non reconnu${nbNonReconnu != null ? ` (${nbNonReconnu})` : ''}` }]} placeholder="Tous les produits" />
                       <SelectFiltre label="Ville" value={filtreVille} onChange={appliquer(setFiltreVille)} options={optionsFiltres.villes.map(v => ({ value: v, label: v }))} placeholder="Toutes les villes" />
                       <SelectFiltre label="Source" value={filtreSource} onChange={appliquer(setFiltreSource)} options={optionsFiltres.sources.map(s => ({ value: s, label: s }))} placeholder="Toutes les sources" />
                     </div>
@@ -1125,7 +1136,7 @@ export default function CentreAppelAgent() {
           <div className="flex flex-wrap items-center gap-2">
             {filtreAgent && <ChipFiltre label={`Agent : ${nomFiltreAgent}`} onClear={() => appliquer(setFiltreAgent)('')} />}
             {filtrePays && <ChipFiltre label={`Pays : ${optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || ''}`} onClear={() => appliquer(setFiltrePays)('')} />}
-            {filtreProduit && <ChipFiltre label={`Produit : ${filtreProduit}`} onClear={() => appliquer(setFiltreProduit)('')} />}
+            {filtreProduit && <ChipFiltre label={`Produit : ${nomProduitFiltre(filtreProduit, catalogue)}`} onClear={() => appliquer(setFiltreProduit)('')} />}
             {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
             {filtreSource && <ChipFiltre label={`Source : ${filtreSource}`} onClear={() => appliquer(setFiltreSource)('')} />}
           </div>

@@ -531,12 +531,15 @@ export default function DashboardFGMED() {
           </div>
           <ol className="fg-top">
             {data.topProduits.length === 0 && <li className="text-sm text-gray-400">Aucun produit</li>}
+            {/* Par PRODUIT depuis le 29/10 (stats_dashboard) : les orthographes
+                d'un même produit comptent ensemble. « Produit non reconnu »
+                arrive sans rang, en dernier : une ligne à part, jamais classée. */}
             {data.topProduits.map((p) => (
-              <li key={p.rang}>
-                <span className="fg-rang">{p.rang}</span>
+              <li key={p.rang ?? 'non-reconnu'} className={p.rang == null ? 'opacity-60 italic' : ''}>
+                <span className="fg-rang">{p.rang ?? '–'}</span>
                 <span className="fg-top-nom">{p.nom}</span>
                 <div className="fg-top-bar">
-                  <div className="fg-top-fill" style={{ width: (p.qte / data.topProduits[0].qte) * 100 + "%" }} />
+                  <div className="fg-top-fill" style={{ width: Math.min(100, (p.qte / Math.max(1, ...data.topProduits.filter((x) => x.rang != null).map((x) => x.qte), p.rang == null ? 0 : p.qte)) * 100) + "%" }} />
                 </div>
                 <span className="fg-qte">{p.qte}</span>
               </li>
