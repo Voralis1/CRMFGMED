@@ -321,7 +321,11 @@ export default function ExpeditionsPage() {
       transporteur_telephone: e.transporteur_telephone || '',
       pays: e.pays || '',
       pays_code: e.pays_code || paysParNom(e.pays)?.code || '',
-      entrepot_destination_id: e.entrepot_destination_id || '',
+      // Un responsable qui ouvre l'expédition d'un vendeur (un pays, pas
+      // d'entrepôt) trouve l'entrepôt de ce pays déjà choisi : un entrepôt =
+      // un pays. Avant : champ obligatoire vide, il fallait le remplir.
+      entrepot_destination_id: e.entrepot_destination_id
+        || (!estSeller && entrepots.find((x) => x.pays_id && x.pays_id === e.pays_destination_id)?.id) || '',
       pays_destination_id: e.pays_destination_id || '',
       date_expedition: pourInput(e.date_expedition),
       date_reception: pourInput(e.date_reception),
@@ -376,8 +380,13 @@ export default function ExpeditionsPage() {
       pays_code: formulaire.pays_code || null,
       entrepot_destination_id: estSeller ? null : (formulaire.entrepot_destination_id || null),
       // Le vendeur n'a choisi qu'un pays : on n'invente pas d'entrepôt pour
-      // lui. Le responsable le renseignera à la confirmation.
-      pays_destination_id: estSeller ? (formulaire.pays_destination_id || null) : null,
+      // lui. Le responsable, lui, choisit un entrepôt : son pays EST le pays
+      // de destination (30/10). Avant, son enregistrement écrivait NULL et la
+      // destination disparaissait de l'écran du vendeur (EXP-000031). La base
+      // le garantit aussi (expeditions_pays_destination.sql).
+      pays_destination_id: estSeller
+        ? (formulaire.pays_destination_id || null)
+        : (entrepots.find((x) => x.id === formulaire.entrepot_destination_id)?.pays_id || formulaire.pays_destination_id || null),
       date_expedition: formulaire.date_expedition || null,
     }
     // La date de réception appartient au responsable : c'est lui qui constate
