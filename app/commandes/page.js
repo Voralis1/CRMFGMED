@@ -122,9 +122,13 @@ export default function GestionCommandesPage() {
   // de ne regarder qu'un seller à la fois.
   const peutFiltrerParVendeur = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
   const peutChoisirAgent = ROLES_AFFECTATION.includes(String(roleNom || '').toLowerCase())
+  // Changer le statut de PLUSIEURS commandes (la barre du lot) : le droit de
+  // changer un statut PLUS « actions_masse » (30/10, sa décision ; la base
+  // refuse pareil). Le tiroir d'une seule commande ne la demande pas.
+  const peutChangerEnMasse = peutChangerStatut && hasPermission('actions_masse')
   // Le vendeur coche pour EXPORTER ; seuls manager, admin, super_admin
   // changent un statut (sa décision du 29/10).
-  const peutSelectionner = hasPermission('exporter_csv') || peutChangerStatut
+  const peutSelectionner = hasPermission('exporter_csv') || peutChangerEnMasse
 
   const [commandes, setCommandes] = useState([])
   const [agents, setAgents] = useState([])
@@ -1469,7 +1473,7 @@ export default function GestionCommandesPage() {
 
       <ResultatLot resultat={resultatLot} onFermer={() => setResultatLot(null)} />
 
-      {peutChangerStatut && lignesCochees.length > 0 && (
+      {peutChangerEnMasse && lignesCochees.length > 0 && (
         <div className="flex flex-col gap-2 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm" data-barre-lot>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm font-semibold">

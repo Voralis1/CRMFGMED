@@ -378,6 +378,10 @@ export default function CentreAppelAgent() {
   }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB, catalogue])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
+  // Plusieurs leads d'un coup (cases, barre du lot, « Remonter ») : le droit de
+  // l'action PLUS la permission « actions_masse » (30/10, sa décision ; la base
+  // refuse pareil). Changer l'agent d'UNE ligne ne la demande pas.
+  const peutAgirEnMasse = peutChangerAgent && hasPermission('actions_masse')
   // La sélection, c'est ce qui est à l'écran : une autre page, un autre filtre
   // la vide. Les raisons de refus du lot précédent s'effacent avec.
   useEffect(() => {
@@ -405,7 +409,7 @@ export default function CentreAppelAgent() {
   // du navigateur ne les lui rend pas non plus.
   const vueAgent = !!agentActuel
   const statutVu = (cmd) => (vueAgent && cmd.remonte_le ? PENDING : cmd.statut_confirmation)
-  const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0) + (peutChangerAgent ? 1 : 0)
+  const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0) + (peutAgirEnMasse ? 1 : 0)
 
   // TOUS les agents de l'entreprise, inactifs compris : le filtre doit
   // pouvoir montrer les leads d'un agent parti. Changer d'agent ne propose
@@ -923,7 +927,7 @@ export default function CentreAppelAgent() {
   // le cocher seule. L'historique garde l'auteur de chaque action, et
   // Performances compte les appels par l'agent qui a appelé : changer l'agent
   // ne déplace rien (affecter_agent_lot, historique_affectations.sql §5).
-  const cochable = () => peutChangerAgent
+  const cochable = () => peutAgirEnMasse
   const lignesCochables = commandes.filter(cochable)
   const lignesCochees = commandes.filter((c) => selection[c.id])
   const toutCoche = lignesCochables.length > 0 && lignesCochables.every((c) => selection[c.id])
@@ -1031,7 +1035,7 @@ export default function CentreAppelAgent() {
               />
             )}
 
-            {peutChangerAgent && statutsBas.length > 0 && (
+            {peutAgirEnMasse && statutsBas.length > 0 && (
               <button
                 onClick={remonterLeads}
                 disabled={remonteeEnCours}
@@ -1145,7 +1149,7 @@ export default function CentreAppelAgent() {
 
       <ResultatLot resultat={resultatLot} onFermer={() => setResultatLot(null)} />
 
-      {peutChangerAgent && lignesCochees.length > 0 && (
+      {peutAgirEnMasse && lignesCochees.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm">
           <span className="text-sm font-semibold">
             {lignesCochees.length} lead{lignesCochees.length > 1 ? 's' : ''} coché{lignesCochees.length > 1 ? 's' : ''}
@@ -1176,7 +1180,7 @@ export default function CentreAppelAgent() {
       )}
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
-        {peutChangerAgent && !loading && commandes.length > 0 && (
+        {peutAgirEnMasse && !loading && commandes.length > 0 && (
           <p className="px-6 pt-3 pb-1 text-xs text-[#1B2632]/50">
             La case de l'en-tête coche les {lignesCochables.length} leads de cette page, pas toute la base.
           </p>
@@ -1185,7 +1189,7 @@ export default function CentreAppelAgent() {
           <table className="w-full min-w-[1050px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
-                {peutChangerAgent && (
+                {peutAgirEnMasse && (
                   <th className="pl-4 pr-1 py-4 w-[1%]">
                     {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
                     <input type="checkbox" checked={toutCoche} onChange={basculerTout} disabled={lignesCochables.length === 0}
@@ -1245,7 +1249,7 @@ export default function CentreAppelAgent() {
                       onClick={() => ouvrirPanneau(cmd)}
                       className={`cursor-pointer transition-colors ${estSelectionne ? 'bg-[#FFB162]/10' : 'hover:bg-[#EEE9DF]/40'}`}
                     >
-                      {peutChangerAgent && (
+                      {peutAgirEnMasse && (
                         // La ligne ouvre le panneau d'appel : la case ne doit pas.
                         <td className="pl-4 pr-1 py-4" onClick={(e) => e.stopPropagation()}>
                           {cochable(cmd) && (

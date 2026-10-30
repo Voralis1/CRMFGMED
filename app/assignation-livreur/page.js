@@ -191,7 +191,10 @@ export default function AssignationLivreurPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalCommandes / TAILLE_PAGE))
 
-  const peutAssigner = hasPermission('assigner_livreur')
+  // Plusieurs commandes d'un coup (cases + barre du lot) : le droit d'assigner
+  // PLUS « actions_masse » (30/10, sa décision ; la base refuse pareil). Le
+  // menu d'une seule ligne ne demande que le droit d'assigner.
+  const peutAgirEnMasse = hasPermission('assigner_livreur') && hasPermission('actions_masse')
   const lignesCochees = commandes.filter((c) => selection[c.id])
   const toutCoche = commandes.length > 0 && commandes.every((c) => selection[c.id])
   const basculerTout = () => setSelection(toutCoche ? {} : Object.fromEntries(commandes.map((c) => [c.id, true])))
@@ -258,7 +261,7 @@ export default function AssignationLivreurPage() {
         </div>
       )}
 
-      {peutAssigner && lignesCochees.length > 0 && (
+      {peutAgirEnMasse && lignesCochees.length > 0 && (
         <div className="mx-6 md:mx-0 flex flex-wrap items-center gap-3 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm">
           <span className="text-sm font-semibold">
             {lignesCochees.length} commande{lignesCochees.length > 1 ? 's' : ''} cochée{lignesCochees.length > 1 ? 's' : ''}
@@ -299,7 +302,7 @@ export default function AssignationLivreurPage() {
           </p>
         ) : (
           <>
-            {peutAssigner && (
+            {peutAgirEnMasse && (
               <p className="px-6 pt-3 text-xs text-[#1B2632]/50">
                 La case de l'en-tête coche les {commandes.length} commandes de cette page, pas toute la base ({totalCommandes} au total).
               </p>
@@ -308,7 +311,7 @@ export default function AssignationLivreurPage() {
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                    {peutAssigner && (
+                    {peutAgirEnMasse && (
                       <th className="pl-4 pr-1 py-4 w-[1%]">
                         {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
                         <input type="checkbox" checked={toutCoche} onChange={basculerTout}
@@ -346,7 +349,7 @@ export default function AssignationLivreurPage() {
                     return (
                       <tr key={cmd.id} className="hover:bg-[#EEE9DF]/20 transition-colors">
 
-                        {peutAssigner && (
+                        {peutAgirEnMasse && (
                           <td className="pl-4 pr-1 py-4">
                             <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
                               aria-label={`Cocher ${cmd.lead_id || 'cette commande'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
