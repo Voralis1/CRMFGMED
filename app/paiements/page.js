@@ -26,6 +26,12 @@ export default function PaiementsPage() {
   // pas au nom du rôle : c'est la même source que la base.
   const vues = useMemo(() => {
     const liste = []
+    // La page elle-même : `menu_paiements` (30/10). Sans lui, AUCUN onglet,
+    // donc aucun composant monté et rien de chargé : avant, un livreur
+    // (voir_caisse, pas menu_paiements) qui tapait l'adresse montait « Caisse
+    // livreurs », qui chargeait la liste de tous les livreurs PUIS le
+    // renvoyait ailleurs — les données étaient déjà dans son navigateur.
+    if (!hasPermission('menu_paiements')) return liste
     if (hasPermission('menu_reglements')) liste.push({ cle: 'vendeurs', nom: 'Relevés vendeurs' })
     // `voir_caisse`, pas `menu_paiements` : le seller a bien le menu Paiements
     // — ce sont ses relevés — mais l'argent encaissé par les livreurs ne le

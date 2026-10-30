@@ -113,7 +113,9 @@ export default function CaisseLivreurs() {
   }, [chargerPaiements, chargerCaisses, pagePaiements])
 
   useEffect(() => {
-    if (authLoading || permsLoading || !user || !tenantId) return
+    // Rien ne se charge sans la permission de la page : vérifier, PUIS lire
+    // (30/10). Avant, la lecture partait et la redirection venait après.
+    if (authLoading || permsLoading || !user || !tenantId || !hasPermission('menu_paiements')) return
 
     async function initialiserUtilisateur() {
       const { data: userData } = await supabase
@@ -134,7 +136,7 @@ export default function CaisseLivreurs() {
     }
     
     initialiserUtilisateur()
-  }, [user, authLoading, permsLoading, tenantId, chargerTout])
+  }, [user, authLoading, permsLoading, tenantId, chargerTout, hasPermission])
 
   async function encaisser(paiementId) {
     setEnvoiEnCoursId(paiementId)

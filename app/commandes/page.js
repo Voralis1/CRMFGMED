@@ -901,7 +901,12 @@ export default function GestionCommandesPage() {
       c.updated_at ? new Date(c.updated_at).toLocaleString('fr-FR') : ""
     ])
 
-    const contenuCSV = [entetes.join(","), ...lignes.map(l => l.join(","))].join("\n")
+    // Le vendeur : pas de colonne « Agent Assigné » (30/10). La base ne lui
+    // donne plus la liste des agents (agents_livreurs_lecture.sql) : la
+    // colonne aurait dit « Non assigné » partout, ce qui est faux.
+    const colAgent = entetes.indexOf("Agent Assigné")
+    const garder = (l) => (estSeller ? l.filter((_, i) => i !== colAgent) : l)
+    const contenuCSV = [garder(entetes).join(","), ...lignes.map((l) => garder(l).join(","))].join("\n")
     const blob = new Blob([contenuCSV], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const lien = document.createElement("a")
@@ -2171,7 +2176,8 @@ export default function GestionCommandesPage() {
                   </CarteDetail>
 
                   <CarteDetail titre="Traitement">
-                    <LigneDetail label="Agent" valeur={detail.agents?.nom} />
+                    {/* Pas pour le vendeur (30/10) : la base ne lui donne plus les agents. */}
+                    {!estSeller && <LigneDetail label="Agent" valeur={detail.agents?.nom} />}
                     <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.vendeur_id)} />
                     <LigneDetail label="Statut d'appel" valeur={libelleStatut(detail.statut_confirmation)} />
                     <LigneDetail label="Livraison" valeur={detail.statut_livraison} />

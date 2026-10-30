@@ -181,14 +181,20 @@ export default function LivraisonsPage() {
       }
       setNomAffiche(nom || user.email)
 
+      // Le livreur : les noms des zones (son filtre), pas leurs tarifs (30/10).
       const { data: zones } = await supabase
-        .from('zones').select('id, nom_zone, frais_livraison, frais_retour')
+        .from('zones').select(estLivreur ? 'id, nom_zone' : 'id, nom_zone, frais_livraison, frais_retour')
         .eq('tenant_id', tenantId).order('nom_zone')
       setListeZones(zones || [])
 
-      const { data: produits } = await supabase
-        .from('produits').select('id, code, product, image_chemin').eq('tenant_id', tenantId)
-      setCatalogue(produits || [])
+      // Le catalogue (l'image du produit) : tout pour un responsable ; pour un
+      // livreur, seulement les produits de SES livraisons, chargés avec la
+      // liste (30/10) — plus le catalogue de toute l'entreprise.
+      if (!estLivreur) {
+        const { data: produits } = await supabase
+          .from('produits').select('id, code, product, image_chemin').eq('tenant_id', tenantId)
+        setCatalogue(produits || [])
+      }
 
       if (estResponsable) {
         const { data: livs } = await supabase
@@ -206,7 +212,7 @@ export default function LivraisonsPage() {
     }
 
     initialiser()
-  }, [user, authLoading, permsLoading, tenantId, estResponsable])
+  }, [user, authLoading, permsLoading, tenantId, estResponsable, estLivreur])
 
   // ------------------------------------------------------------------
   // Construction de la requête — une seule fonction pour la liste et l'export
@@ -243,16 +249,28 @@ export default function LivraisonsPage() {
     // Masquer la colonne ne suffirait pas : la donnée arriverait quand même
     // dans la réponse réseau, lisible en deux clics.
     const embedLivreur = estResponsable ? 'livreurs(nom),' : ''
+    // LE LIVREUR (30/10) : seulement ce que son écran montre — client,
+    // adresse, ville, zone (son nom), produit, quantité, montant, n° de suivi,
+    // pays et devise. Plus de `*` : l'agent, le vendeur, les notes de l'agent,
+    // le Lead ID, la source, les dates, le suivi des appels n'arrivent plus
+    // dans son navigateur — masquer une colonne ne suffisait pas. Ni les
+    // tarifs de zone, ni la date de création de la livraison.
+    // Les autres comptes (responsables, vendeur) : inchangé ici.
+    const colonnesCommande = estLivreur
+      ? `id, client_nom, client_telephone, adresse, ville_zone, zone_id, produit, quantite, prix, tracking_number,
+          pays(nom, devise),
+          zones(nom_zone)`
+      : `*,
+          pays(nom, devise),
+          zones(nom_zone, frais_livraison, frais_retour)`
 
     let r = supabase
       .from('livraisons')
       .select(`
-        id, statut, created_at, motif_retour, livreur_id,
+        id, statut, ${estLivreur ? '' : 'created_at, '}motif_retour, livreur_id,
         ${embedLivreur}
         ${jointure}(
-          *,
-          pays(nom, devise),
-          zones(nom_zone, frais_livraison, frais_retour)
+          ${colonnesCommande}
         )
       `, { count: 'exact' })
       .eq('tenant_id', tenantId)
@@ -319,6 +337,7 @@ export default function LivraisonsPage() {
       } else {
         setLivraisons(data || [])
         setTotal(count || 0)
+        if (estLivreur) chargerProduitsDuLivreur(data || [])
       }
     } catch (e) {
       setErreur(e?.message || 'Erreur inattendue pendant le chargement.')
@@ -326,7 +345,20 @@ export default function LivraisonsPage() {
     } finally {
       setChargement(false)
     }
-  }, [tenantId, permsLoading, construireRequete, page, parPage])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, permsLoading, construireRequete, page, parPage, estLivreur])
+
+  // Le livreur : les produits de ses livraisons affichées, retrouvés par leur
+  // code ou leur nom (comme produitDuCatalogue, sans casse) — pour l'image.
+  async function chargerProduitsDuLivreur(lignes) {
+    const textes = [...new Set(lignes.map((l) => (l.commandes?.produit || '').trim()).filter(Boolean))]
+    if (textes.length === 0) { setCatalogue([]); return }
+    const propre = (t) => t.replace(/[,()"\\*%]/g, '')
+    const conditions = textes.flatMap((t) => [`code.ilike.${propre(t)}`, `product.ilike.${propre(t)}`]).join(',')
+    const { data } = await supabase.from('produits').select('id, code, product, image_chemin')
+      .eq('tenant_id', tenantId).or(conditions)
+    setCatalogue(data || [])
+  }
 
   useEffect(() => { charger() }, [charger])
 
@@ -372,7 +404,23 @@ export default function LivraisonsPage() {
     if (error) { alert('Erreur export : ' + error.message); return }
     if (!data || data.length === 0) { alert('Aucune livraison à exporter avec ces filtres.'); return }
 
-    const lignes = data.map((l) => ({
+    // Le livreur (30/10) : son export, sans Lead ID, sans date, sans livreur
+    // (lui) ni vendeur — les colonnes de son écran.
+    const lignes = estLivreur
+      ? data.map((l) => ({
+          'N° de suivi': l.commandes?.tracking_number || '',
+          'Client': l.commandes?.client_nom || '',
+          'Téléphone': l.commandes?.client_telephone || '',
+          'Adresse': l.commandes?.adresse || '',
+          'Ville / Zone': l.commandes?.ville_zone || '',
+          'Produit': l.commandes?.produit || '',
+          'Quantité': l.commandes?.quantite ?? 1,
+          'À encaisser': l.commandes?.prix ?? 0,
+          'Devise': l.commandes?.pays?.devise || '',
+          'Statut': STATUTS[l.statut]?.label || l.statut || '',
+          'Motif de retour': l.motif_retour || '',
+        }))
+      : data.map((l) => ({
       'Lead ID': l.commandes?.lead_id || '',
       'Date': l.created_at ? new Date(l.created_at).toLocaleString('fr-FR') : '',
       'N° de suivi': l.commandes?.tracking_number || '',
@@ -503,7 +551,8 @@ export default function LivraisonsPage() {
             onChange={(e) => setChampRecherche(e.target.value)}
             className="px-3 py-2.5 bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl sm:rounded-l-xl sm:rounded-r-none sm:border-r-0 text-sm font-semibold text-[#1B2632] outline-none cursor-pointer"
           >
-            {CHAMPS_RECHERCHE.map((c) => <option key={c.cle} value={c.cle}>{c.nom}</option>)}
+            {/* Le livreur ne cherche pas par Lead ID : il ne le voit plus (30/10). */}
+            {CHAMPS_RECHERCHE.filter((c) => !(estLivreur && c.cle === 'lead_id')).map((c) => <option key={c.cle} value={c.cle}>{c.nom}</option>)}
           </select>
 
           <input
@@ -897,12 +946,14 @@ export default function LivraisonsPage() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                   <CarteDetail titre="Livraison">
-                    <LigneDetail label="Lead ID" valeur={detail.commandes?.lead_id} mono />
+                    {!estLivreur && <LigneDetail label="Lead ID" valeur={detail.commandes?.lead_id} mono />}
                     <LigneDetail label="N° de suivi" valeur={detail.commandes?.tracking_number} mono />
+{!estLivreur && (
                     <LigneDetail
                       label="Créée le"
                       valeur={detail.created_at ? new Date(detail.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
+                    )}
                     <LigneDetail label="Livreur" valeur={detail.livreurs?.nom} />
                     {estResponsable && <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.commandes?.vendeur_id)} />}
                     <LigneDetail label="Statut" valeur={STATUTS[detail.statut]?.label || detail.statut} />
@@ -925,8 +976,12 @@ export default function LivraisonsPage() {
                     <LigneDetail label="Adresse" valeur={detail.commandes?.adresse} />
                     <LigneDetail label="Pays" valeur={detail.commandes?.pays?.nom} />
                     <LigneDetail label="Ville / Zone" valeur={detail.commandes?.ville_zone} />
+                    {estLivreur && zoneDetail?.nom_zone && <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />}
                   </CarteDetail>
 
+                  {/* Les tarifs de zone : pas pour le livreur (30/10) — il ne les reçoit
+                      même plus. Son nom de zone est dans la carte Client. */}
+                  {!estLivreur && (
                   <CarteDetail titre="Tarifs de la zone">
                     {zoneDetail ? (
                       <>
@@ -940,6 +995,7 @@ export default function LivraisonsPage() {
                       </p>
                     )}
                   </CarteDetail>
+                  )}
                 </div>
 
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">

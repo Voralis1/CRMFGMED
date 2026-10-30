@@ -1,18 +1,19 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import NavBar from './NavBar'
 import { supabase } from '../../lib/supabaseClient'
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte global
 import { useAuth } from '../context/AuthContext'
+import { pageAutorisee, redirectionPour, regleDePage } from '../../lib/droitsPages.mjs'
 
 const LARGEUR_BUREAU = 768   // tailwind `md`
 
 export default function AppLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [utilisateur, setUtilisateur] = useState({ nom: '' }) // Plus besoin de stocker le rôle ici
-  const { estSuperAdmin, tenantId, tenantChoisi, setTenantChoisi } = useAuth()
+  const { estSuperAdmin, tenantId, tenantChoisi, setTenantChoisi, loading: authLoading } = useAuth()
   const [entreprises, setEntreprises] = useState([])
   
   // 🚀 Ajout de l'état isMounted pour éviter l'erreur "Hydration Mismatch"
@@ -21,7 +22,20 @@ export default function AppLayout({ children }) {
   const pathname = usePathname()
   
   // 🚀 On récupère le VRAI nom du rôle depuis notre système de permissions !
-  const { roleNom } = usePermissions()
+  const { roleNom, hasPermission, loading: permsLoading } = usePermissions()
+  const router = useRouter()
+
+  // La page n'est MONTÉE que si la personne a le droit de l'ouvrir (30/10,
+  // lib/droitsPages.mjs) : vérifier d'abord, charger ensuite. Tant que les
+  // droits ne sont pas connus, rien n'est monté non plus.
+  const regle = regleDePage(pathname)
+  const droitsConnus = !authLoading && !permsLoading
+  const pageOuverte = !regle || (droitsConnus && pageAutorisee(regle, hasPermission, roleNom))
+  useEffect(() => {
+    if (regle && droitsConnus && !pageAutorisee(regle, hasPermission, roleNom)) {
+      router.replace(redirectionPour(regle, roleNom))
+    }
+  }, [regle, droitsConnus, hasPermission, roleNom, router])
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen)
 
@@ -181,7 +195,9 @@ export default function AppLayout({ children }) {
         {/* Contenu de la page */}
         {/* px-0 sur téléphone : chaque page gère sa propre marge intérieure */}
         <main className="flex-1 overflow-y-auto overflow-x-hidden px-0 sm:px-6 pb-6">
-          {children}
+          {pageOuverte
+            ? children
+            : <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès…</div>}
         </main>
       </div>
 
