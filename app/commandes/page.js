@@ -23,6 +23,8 @@ import ResultatLot, { resumerLot } from '../components/ResultatLot'
 // Le filtre par agent, partagé avec le Centre d'appel : même liste, mêmes règles.
 import SelectAgent, { filtrerParAgent, nomFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 import PlageDates from '../components/PlageDates'
+// Le vendeur reçoit toutes les colonnes d'une commande sauf l'agent et qui l'a remontée (02/11).
+import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
 // Le filtre produit par PRODUIT (produit_id), partagé avec le Centre d'appel.
 import { NON_RECONNU, filtrerParProduit, optionsProduit } from '../../lib/filtreProduit.mjs'
 
@@ -114,6 +116,12 @@ export default function GestionCommandesPage() {
   // imports faits par le manager. La base applique la même règle (RLS), l'écran
   // ne fait que demander ce qu'il a le droit de lire.
   const estSeller = String(roleNom || '').toLowerCase() === 'seller'
+  // Ce que la liste et l'export demandent (02/11). Le vendeur : sans agent_id,
+  // sans remonte_par, sans agents(nom) — rien de l'agent n'arrive dans son
+  // navigateur. Les autres comptes : la même requête qu'avant, mot pour mot.
+  const colonnesListe = estSeller
+    ? `${COLONNES_COMMANDE_VENDEUR}, pays(nom, devise), entrepots(nom)`
+    : '*, pays(nom, devise), agents(nom), entrepots(nom)'
   // Qui peut remettre une commande dans un autre statut. Le ceo lit, il ne
   // corrige pas — c'est une écriture sur le travail d'un agent.
   const peutChangerStatut = ['manager', 'admin', 'super_admin']
@@ -531,7 +539,7 @@ export default function GestionCommandesPage() {
     const filtre = filtreVendeur || nombreFiltresActifs > 0 || filtresActifs.texte
     const [{ data, count, error }, total, nonReconnu] = await Promise.all([
       appliquerFiltresRequete(
-        supabase.from('commandes').select('*, pays(nom, devise), agents(nom), entrepots(nom)', { count: 'exact' }),
+        supabase.from('commandes').select(colonnesListe, { count: 'exact' }),
         filtresActifs,
       ).order('created_at', { ascending: false }).order('id', { ascending: false }).range(debut, fin),
       filtre
@@ -553,7 +561,7 @@ export default function GestionCommandesPage() {
     }
     setChargement(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantKey, filtreVendeur, filtresActifs, taillePage, appliquerFiltresRequete])
+  }, [tenantKey, filtreVendeur, filtresActifs, taillePage, appliquerFiltresRequete, colonnesListe])
 
   // La sélection, c'est ce qui est à l'écran : une autre page, un autre
   // filtre, une autre taille de page la vide (et les raisons du dernier lot).
@@ -612,7 +620,11 @@ export default function GestionCommandesPage() {
     // (il voit quoi et quand, pas qui), un agent ne reçoit aucune ligne.
     const { data, error } = await supabase
       .from('v_historique_statuts')
-      .select('id, statut, statut_precedent, note, duree_secondes, via, cree_le, fait_par_nom')
+      // Le vendeur (02/11) : sans la durée — elle mesure le travail de l'agent,
+      // c'est au responsable d'en juger, pas au vendeur.
+      .select(estSeller
+        ? 'id, statut, statut_precedent, note, via, cree_le, fait_par_nom'
+        : 'id, statut, statut_precedent, note, duree_secondes, via, cree_le, fait_par_nom')
       .eq('commande_id', cmd.id)
       .order('cree_le', { ascending: false })
 
@@ -851,7 +863,7 @@ export default function GestionCommandesPage() {
     try {
       for (let i = 0; ; i += 1000) {
         const { data, error } = await appliquerFiltresRequete(
-          supabase.from('commandes').select('*, pays(nom, devise), agents(nom), entrepots(nom)'), filtresActifs,
+          supabase.from('commandes').select(colonnesListe), filtresActifs,
         ).order('created_at', { ascending: false }).order('id', { ascending: false }).range(i, i + 999)
         if (error) throw error
         toutes.push(...(data || []))
@@ -2227,7 +2239,8 @@ export default function GestionCommandesPage() {
                     l'a fait et combien de temps ça a pris. C'est ce qui permet
                     de dire « on a essayé quatre fois » autrement que de mémoire.
                     La colonne « Par » n'existe pas pour le vendeur : la vue ne
-                    la lui donne de toute façon pas. */}
+                    la lui donne de toute façon pas. Ni « Durée » (02/11) : elle
+                    juge le travail de l'agent. */}
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-bold text-[#1B2632]">Historique des statuts</h3>
@@ -2257,7 +2270,7 @@ export default function GestionCommandesPage() {
                             <th className="px-4 py-2.5">Statut précédent</th>
                             <th className="px-4 py-2.5">Statut</th>
                             {!estSeller && <th className="px-4 py-2.5">Par</th>}
-                            <th className="px-4 py-2.5 text-right">Durée</th>
+                            {!estSeller && <th className="px-4 py-2.5 text-right">Durée</th>}
                             <th className="px-4 py-2.5">Commentaire</th>
                           </tr>
                         </thead>
@@ -2284,11 +2297,13 @@ export default function GestionCommandesPage() {
                                     || <span className="text-[#1B2632]/30">{h.via === 'systeme' ? 'Système' : '—'}</span>}
                                 </td>
                               )}
-                              <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
-                                {h.duree_secondes == null
-                                  ? '—'
-                                  : `${String(Math.floor(h.duree_secondes / 60)).padStart(2, '0')}:${String(h.duree_secondes % 60).padStart(2, '0')}`}
-                              </td>
+                              {!estSeller && (
+                                <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
+                                  {h.duree_secondes == null
+                                    ? '—'
+                                    : `${String(Math.floor(h.duree_secondes / 60)).padStart(2, '0')}:${String(h.duree_secondes % 60).padStart(2, '0')}`}
+                                </td>
+                              )}
                               <td className="px-4 py-2.5 text-[#1B2632]/70 italic max-w-[240px]">{h.note || '—'}</td>
                             </tr>
                           ))}

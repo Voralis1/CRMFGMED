@@ -8,6 +8,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 import VignetteProduit from '../components/VignetteProduit'
 import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
+// Le vendeur : la commande sans l'agent ni qui l'a remontée (02/11).
+import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
 
 const TAILLES_PAGE = [10, 25, 50, 100]
 
@@ -75,6 +77,9 @@ export default function LivraisonsPage() {
   const router = useRouter()
 
   const estLivreur = String(roleNom || '').toLowerCase() === 'livreur'
+  // Le vendeur (02/11) : ni le livreur ni l'agent n'arrivent dans son
+  // navigateur — pas de livreur_id, pas d'agent_id ; ni ligne ni colonne « Livreur ».
+  const estSeller = String(roleNom || '').toLowerCase() === 'seller'
 
   const [livraisons, setLivraisons] = useState([])
   const [total, setTotal] = useState(0)
@@ -260,14 +265,18 @@ export default function LivraisonsPage() {
       ? `id, client_nom, client_telephone, adresse, ville_zone, zone_id, produit, quantite, prix, tracking_number,
           pays(nom, devise),
           zones(nom_zone)`
-      : `*,
+      : estSeller
+        ? `${COLONNES_COMMANDE_VENDEUR},
+          pays(nom, devise),
+          zones(nom_zone, frais_livraison, frais_retour)`
+        : `*,
           pays(nom, devise),
           zones(nom_zone, frais_livraison, frais_retour)`
 
     let r = supabase
       .from('livraisons')
       .select(`
-        id, statut, ${estLivreur ? '' : 'created_at, '}motif_retour, livreur_id,
+        id, statut, ${estLivreur ? '' : 'created_at, '}motif_retour${estSeller ? '' : ', livreur_id'},
         ${embedLivreur}
         ${jointure}(
           ${colonnesCommande}
@@ -299,7 +308,7 @@ export default function LivraisonsPage() {
     // function ». L'objet qui l'enveloppe n'est pas thenable : il traverse
     // `await` intact.
     return { requete: r.order('created_at', { ascending: false }).order('id', { ascending: false }) }
-  }, [tenantId, estLivreur, estResponsable, user?.id, vue, filtresActifs])
+  }, [tenantId, estLivreur, estResponsable, estSeller, user?.id, vue, filtresActifs])
 
   const charger = useCallback(async () => {
     if (permsLoading) return
@@ -432,7 +441,7 @@ export default function LivraisonsPage() {
       'Quantité': l.commandes?.quantite ?? 1,
       'Prix': l.commandes?.prix ?? 0,
       'Devise': l.commandes?.pays?.devise || '',
-      'Livreur': l.livreurs?.nom || '',
+      ...(estSeller ? {} : { 'Livreur': l.livreurs?.nom || '' }),
       'Vendeur': estResponsable ? (nomDuVendeur(l.commandes?.vendeur_id) || '') : '',
       'Statut': STATUTS[l.statut]?.label || l.statut || '',
       'Motif de retour': l.motif_retour || '',
@@ -954,7 +963,7 @@ export default function LivraisonsPage() {
                       valeur={detail.created_at ? new Date(detail.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
                     )}
-                    <LigneDetail label="Livreur" valeur={detail.livreurs?.nom} />
+                    {!estSeller && <LigneDetail label="Livreur" valeur={detail.livreurs?.nom} />}
                     {estResponsable && <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.commandes?.vendeur_id)} />}
                     <LigneDetail label="Statut" valeur={STATUTS[detail.statut]?.label || detail.statut} />
                     <LigneDetail label="Motif de retour" valeur={detail.motif_retour} />
