@@ -620,11 +620,9 @@ export default function GestionCommandesPage() {
     // (il voit quoi et quand, pas qui), un agent ne reçoit aucune ligne.
     const { data, error } = await supabase
       .from('v_historique_statuts')
-      // Le vendeur (02/11) : sans la durée — elle mesure le travail de l'agent,
-      // c'est au responsable d'en juger, pas au vendeur.
-      .select(estSeller
-        ? 'id, statut, statut_precedent, note, via, cree_le, fait_par_nom'
-        : 'id, statut, statut_precedent, note, duree_secondes, via, cree_le, fait_par_nom')
+      // La durée de chaque appel, vendeur compris (02/11, sa décision) : c'est
+      // SA vente qui se joue, il voit comment son lead a été traité — pas par qui.
+      .select('id, statut, statut_precedent, note, duree_secondes, via, cree_le, fait_par_nom')
       .eq('commande_id', cmd.id)
       .order('cree_le', { ascending: false })
 
@@ -2239,8 +2237,8 @@ export default function GestionCommandesPage() {
                     l'a fait et combien de temps ça a pris. C'est ce qui permet
                     de dire « on a essayé quatre fois » autrement que de mémoire.
                     La colonne « Par » n'existe pas pour le vendeur : la vue ne
-                    la lui donne de toute façon pas. Ni « Durée » (02/11) : elle
-                    juge le travail de l'agent. */}
+                    la lui donne de toute façon pas. « Durée » : oui, pour lui
+                    aussi (02/11) — comment son lead a été traité, pas par qui. */}
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-bold text-[#1B2632]">Historique des statuts</h3>
@@ -2270,7 +2268,7 @@ export default function GestionCommandesPage() {
                             <th className="px-4 py-2.5">Statut précédent</th>
                             <th className="px-4 py-2.5">Statut</th>
                             {!estSeller && <th className="px-4 py-2.5">Par</th>}
-                            {!estSeller && <th className="px-4 py-2.5 text-right">Durée</th>}
+                            <th className="px-4 py-2.5 text-right">Durée</th>
                             <th className="px-4 py-2.5">Commentaire</th>
                           </tr>
                         </thead>
@@ -2297,13 +2295,11 @@ export default function GestionCommandesPage() {
                                     || <span className="text-[#1B2632]/30">{h.via === 'systeme' ? 'Système' : '—'}</span>}
                                 </td>
                               )}
-                              {!estSeller && (
-                                <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
-                                  {h.duree_secondes == null
-                                    ? '—'
-                                    : `${String(Math.floor(h.duree_secondes / 60)).padStart(2, '0')}:${String(h.duree_secondes % 60).padStart(2, '0')}`}
-                                </td>
-                              )}
+                              <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
+                                {h.duree_secondes == null
+                                  ? '—'
+                                  : `${String(Math.floor(h.duree_secondes / 60)).padStart(2, '0')}:${String(h.duree_secondes % 60).padStart(2, '0')}`}
+                              </td>
                               <td className="px-4 py-2.5 text-[#1B2632]/70 italic max-w-[240px]">{h.note || '—'}</td>
                             </tr>
                           ))}
