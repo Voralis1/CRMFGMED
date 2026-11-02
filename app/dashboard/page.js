@@ -10,6 +10,8 @@ import { supabase } from "../../lib/supabaseClient";
 import { libelleStatut } from "../../lib/libellesStatuts.mjs";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
+// Délai de première prise en charge enregistrée (02/11) : responsables seulement, pas le vendeur.
+import { CarteDelai } from "../components/DelaiPriseEnCharge";
 
 // ==================================================================
 //  COMPOSANTS VISUELS
@@ -143,13 +145,8 @@ const AVATAR_COLORS = ["#1B2632", "#A35139", "#2C3B4D", "#8a5a1f", "#5c5648"];
 // ==================================================================
 //  RÉCUPÉRATION ET CALCUL DES DONNÉES
 // ==================================================================
-// La base fait tout le calcul (voir supabase/sql/stats_dashboard.sql) : la page
-// ne télécharge plus des milliers de lignes pour les compter dans le navigateur.
-// La fonction tourne avec les droits de l'appelant, donc un seller n'obtient que
-// les chiffres de SES leads — c'est la base qui tranche, pas l'écran.
-async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
-  if (!tenantId) return null;
-
+// Les bornes d'une période du tableau de bord (les stats et la carte du délai).
+function bornesDashboard(periode, dateDebutPerso, dateFinPerso) {
   const maintenant = new Date();
   let debut = new Date(0);
   let fin = new Date();
@@ -170,6 +167,17 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
       fin.setHours(23, 59, 59, 999);
     }
   }
+  return { debut, fin };
+}
+
+// La base fait tout le calcul (voir supabase/sql/stats_dashboard.sql) : la page
+// ne télécharge plus des milliers de lignes pour les compter dans le navigateur.
+// La fonction tourne avec les droits de l'appelant, donc un seller n'obtient que
+// les chiffres de SES leads — c'est la base qui tranche, pas l'écran.
+async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
+  if (!tenantId) return null;
+
+  const { debut, fin } = bornesDashboard(periode, dateDebutPerso, dateFinPerso);
 
   const { data, error } = await supabase.rpc("stats_dashboard", {
     p_tenant: tenantId,
@@ -199,6 +207,7 @@ export default function DashboardFGMED() {
   const [periode, setPeriode] = useState("Aujourd'hui");
   const [dateDebutPerso, setDateDebutPerso] = useState("");
   const [dateFinPerso, setDateFinPerso] = useState("");
+  const [bornesDelai, setBornesDelai] = useState({ debut: null, fin: null });
 
   const router = useRouter();
 
@@ -235,6 +244,9 @@ export default function DashboardFGMED() {
     // On charge les données seulement si l'utilisateur y est autorisé
     if (hasPermission("menu_dashboard") || roleNom === "super_admin" || roleNom === "SUPER_ADMIN") {
       chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
+      // Mêmes bornes pour la carte du délai, figées à ce chargement.
+      const { debut, fin } = bornesDashboard(periode, dateDebutPerso, dateFinPerso);
+      setBornesDelai({ debut: debut.toISOString(), fin: fin.toISOString() });
     }
   }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading, hasPermission, roleNom]);
 
@@ -343,6 +355,9 @@ export default function DashboardFGMED() {
         />
         <StatCardEncaisse liste={caEncaisseListe} />
       </section>
+
+      {/* Responsables seulement (CarteDelai ne demande rien pour un autre rôle). */}
+      {!estSeller && <CarteDelai tenantId={tenantKey} debut={bornesDelai.debut} fin={bornesDelai.fin} roleNom={roleNom} />}
 
       {/* Graphiques */}
       <section className="fg-grid-2">

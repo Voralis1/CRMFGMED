@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
+// Le délai de première prise en charge enregistrée (02/11) : responsables seulement.
+import { SectionDelai } from '../components/DelaiPriseEnCharge'
 
 const PERIODES = [
   { id: 'aujourdhui', label: "Aujourd'hui" },
@@ -53,7 +55,7 @@ function BarreTaux({ valeur, couleur }) {
 
 export default function PerformancesPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
-  const { hasPermission, loading: permsLoading } = usePermissions()
+  const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
   const [ongletActif, setOngletActif] = useState('agents')
@@ -64,6 +66,8 @@ export default function PerformancesPage() {
   const [dateFinPerso, setDateFinPerso] = useState('')
 
   const [statsAgents, setStatsAgents] = useState([])
+  // Les bornes de la période, posées au chargement (la section du délai les lit).
+  const [bornes, setBornes] = useState({ debut: null, fin: null })
   const [statsLivreurs, setStatsLivreurs] = useState([])
   const [avertissementLivraison, setAvertissementLivraison] = useState(false)
 
@@ -83,6 +87,7 @@ export default function PerformancesPage() {
     setChargement(true)
 
     const { debut, fin } = bornesPeriode(periode, dateDebutPerso, dateFinPerso)
+    setBornes({ debut, fin })
 
     // Les statuts marqués "declenche_assignation" sont, par construction, ceux qui
     // signifient "commande confirmée" pour ce tenant — quel que soit leur nom
@@ -227,6 +232,10 @@ export default function PerformancesPage() {
         <div className="p-4 bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-xl text-sm font-medium text-[#8a5a1f]">
           Aucun statut n'est marqué "déclenche l'assignation" dans Paramètres → Statuts configurables — aucune confirmation ne peut donc être comptée (0 pour chaque agent). Cochez ce drapeau sur le statut qui confirme une commande.
         </div>
+      )}
+
+      {ongletActif === 'agents' && (
+        <SectionDelai tenantId={tenantId} debut={bornes.debut} fin={bornes.fin} roleNom={roleNom} />
       )}
 
       {chargement ? (
