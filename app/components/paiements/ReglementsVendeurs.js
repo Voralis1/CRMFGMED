@@ -22,6 +22,12 @@ const STATUTS = {
 }
 const METHODES = { especes: 'Espèces', virement: 'Virement', cheque: 'Chèque' }
 
+// Le montant d'une commande dans un relevé = son prix, JAMAIS prix × quantité :
+// le prix est déjà le total de la commande (« Montant à encaisser », offres
+// dégressives : 3 unités = 58 000). Multiplier payait le vendeur trop
+// (FG0000000197 : 174 000 au lieu de 58 000, REG-000003, 03/11).
+const montantLigne = (c) => Number(c.prix || 0)
+
 function Statut({ valeur }) {
   const s = STATUTS[valeur] || { label: valeur || '—', classe: 'border-[#C9C1B1] text-[#1B2632]/60 bg-white' }
   return (
@@ -211,7 +217,7 @@ export default function ReglementsVendeurs() {
   }
 
   const retenues = candidates.filter((c) => choisies.includes(c.commande_id))
-  const totalRetenu = retenues.reduce((s, c) => s + Number(c.prix || 0) * (c.quantite || 1), 0)
+  const totalRetenu = retenues.reduce((s, c) => s + montantLigne(c), 0)
   const deviseRetenue = retenues[0]?.devise || ''
 
   async function enregistrerReleve() {
@@ -253,7 +259,7 @@ export default function ReglementsVendeurs() {
         commande_id: c.commande_id,
         reglement_id: releveId,
         tenant_id: tenantKey,
-        montant: Number(c.prix || 0) * (c.quantite || 1),
+        montant: montantLigne(c),
       })),
     )
 
@@ -678,7 +684,7 @@ export default function ReglementsVendeurs() {
                                 <td className="px-4 py-2.5">{c.produit || '—'}</td>
                                 <td className="px-4 py-2.5 text-[#1B2632]/60 whitespace-nowrap">{jour(c.updated_at)}</td>
                                 <td className="px-4 py-2.5 text-right font-mono">
-                                  {sou(Number(c.prix || 0) * (c.quantite || 1))} <span className="text-xs text-[#1B2632]/50">{c.devise || ''}</span>
+                                  {sou(montantLigne(c))} <span className="text-xs text-[#1B2632]/50">{c.devise || ''}</span>
                                 </td>
                               </tr>
                             )
