@@ -238,7 +238,7 @@ export default function CentreAppelAgent() {
 
   const [formData, setFormData] = useState({
     source: '', client_nom: '', client_telephone: '', ville_zone: '', adresse: '',
-    zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: '', prixUnitaire: 0
+    zone_id: '', pays_id: '', produit: '', quantite: 1, prix: 0, notes: '', date_rappel: ''
   })
 
   // REDIRECTION SÉCURISÉE
@@ -799,7 +799,6 @@ export default function CentreAppelAgent() {
     }
 
     const qte = commande.quantite || 1;
-    const prixUnit = (commande.prix || 0) / qte;
 
     setFormData({
       source: commande.source || '',
@@ -819,7 +818,6 @@ export default function CentreAppelAgent() {
       // Le rappel en cours, s'il est encore à venir : l'agent le garde ou le
       // déplace. Dans le fuseau de SON navigateur (lib/heureRappel.mjs).
       date_rappel: commande.date_rappel && new Date(commande.date_rappel) > new Date() ? versChampLocal(commande.date_rappel) : '',
-      prixUnitaire: prixUnit
     })
   }
 
@@ -1530,23 +1528,23 @@ export default function CentreAppelAgent() {
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Quantité</label>
+                    {/* La quantité ne touche JAMAIS le prix (03/11) : le prix est le
+                        total de l'offre (2 unités = 45 000, 3 = 58 000), pas
+                        quantité × prix unitaire. L'agent saisit le nouveau total. */}
                     <div className="flex items-center border-b border-[#C9C1B1]">
                       <button type="button" onClick={() => {
-                        const newQty = Math.max(1, formData.quantite - 1);
-                        setFormData({...formData, quantite: newQty, prix: newQty * formData.prixUnitaire});
+                        setFormData({...formData, quantite: Math.max(1, formData.quantite - 1)});
                       }} className="px-2 py-2 text-[#1B2632] font-bold">-</button>
                       <input
                         type="number"
                         value={formData.quantite}
                         onChange={(e) => {
-                          const newQty = parseInt(e.target.value) || 1;
-                          setFormData({...formData, quantite: newQty, prix: newQty * formData.prixUnitaire});
+                          setFormData({...formData, quantite: parseInt(e.target.value) || 1});
                         }}
                         className="w-full text-center py-2 font-bold text-sm text-[#1B2632] outline-none bg-transparent"
                       />
                       <button type="button" onClick={() => {
-                        const newQty = formData.quantite + 1;
-                        setFormData({...formData, quantite: newQty, prix: newQty * formData.prixUnitaire});
+                        setFormData({...formData, quantite: formData.quantite + 1});
                       }} className="px-2 py-2 text-[#1B2632] font-bold">+</button>
                     </div>
                   </div>
@@ -1559,11 +1557,13 @@ export default function CentreAppelAgent() {
                     step="0.01"
                     value={formData.prix}
                     onChange={(e) => {
-                      const newPrix = parseFloat(e.target.value) || 0;
-                      setFormData({...formData, prix: newPrix, prixUnitaire: newPrix / (formData.quantite || 1)});
+                      setFormData({...formData, prix: parseFloat(e.target.value) || 0});
                     }}
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
+                  <p className="mt-1 text-[11px] text-[#1B2632]/50">
+                    Le prix total ne change pas tout seul : si la quantité change, saisissez le total de l&apos;offre.
+                  </p>
                 </div>
               </div>
 
