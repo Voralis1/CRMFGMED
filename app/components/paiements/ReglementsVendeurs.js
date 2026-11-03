@@ -22,11 +22,13 @@ const STATUTS = {
 }
 const METHODES = { especes: 'Espèces', virement: 'Virement', cheque: 'Chèque' }
 
-// Le montant d'une commande dans un relevé = son prix, JAMAIS prix × quantité :
-// le prix est déjà le total de la commande (« Montant à encaisser », offres
-// dégressives : 3 unités = 58 000). Multiplier payait le vendeur trop
-// (FG0000000197 : 174 000 au lieu de 58 000, REG-000003, 03/11).
-const montantLigne = (c) => Number(c.prix || 0)
+// Le montant d'une commande dans un relevé = ce que le livreur a RÉELLEMENT
+// encaissé (montant_encaisse, reglement_sur_encaisse.sql, sa décision 03/11) ;
+// le prix seulement tant que la vue n'a pas cette colonne. JAMAIS prix ×
+// quantité : le prix est déjà le total de la commande (offres dégressives :
+// 3 unités = 58 000) — multiplier payait le vendeur trop (FG0000000197 :
+// 174 000 au lieu de 58 000, REG-000003, 03/11).
+const montantLigne = (c) => Number(c.montant_encaisse ?? c.prix ?? 0)
 
 function Statut({ valeur }) {
   const s = STATUTS[valeur] || { label: valeur || '—', classe: 'border-[#C9C1B1] text-[#1B2632]/60 bg-white' }
@@ -209,8 +211,8 @@ export default function ReglementsVendeurs() {
     if ((data || []).length === 0) {
       annonce(
         brouillon.debut || brouillon.fin
-          ? "Aucune commande livrée à régler pour ce vendeur sur cette période. Essayez sans dates."
-          : "Aucune commande livrée à régler pour ce vendeur.",
+          ? "Aucune commande à régler pour ce vendeur sur cette période (livrée ET argent remis au bureau). Essayez sans dates."
+          : "Aucune commande à régler pour ce vendeur. Une commande livrée n'apparaît ici qu'une fois son argent remis au bureau (« Valider la remise »).",
         'erreur',
       )
     }
