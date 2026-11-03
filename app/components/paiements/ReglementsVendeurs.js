@@ -234,50 +234,27 @@ export default function ReglementsVendeurs() {
 
     setEnregistrement(true)
 
-    // `periode_debut` et `periode_fin` ne peuvent pas être vides en base. Si
-    // on n'a pas saisi de dates, on prend celles des commandes retenues : le
-    // relevé dit alors exactement ce qu'il couvre.
-    const dates = retenues.map((c) => String(c.updated_at || '').slice(0, 10)).filter(Boolean).sort()
-    const aujourdhui = new Date().toISOString().slice(0, 10)
-
-    const { data, error } = await supabase.from('reglements').insert([{
-      tenant_id: tenantKey,
-      vendeur_id: brouillon.vendeur_id,
-      periode_debut: brouillon.debut || dates[0] || aujourdhui,
-      periode_fin: brouillon.fin || dates[dates.length - 1] || aujourdhui,
-      methode: brouillon.methode,
-      devise: devises[0] === '—' ? null : devises[0],
-      nb_commandes: retenues.length,
-      total_ventes: totalRetenu,
-      net_a_payer: totalRetenu,   // pas de frais pour l'instant
-      cree_par: user?.id,
-    }]).select()
-
-    if (error) { setEnregistrement(false); return annonce('Création refusée : ' + error.message, 'erreur') }
-
-    const releveId = data[0].id
-    const { error: errLignes } = await supabase.from('reglements_commandes').insert(
-      retenues.map((c) => ({
-        commande_id: c.commande_id,
-        reglement_id: releveId,
-        tenant_id: tenantKey,
-        montant: montantLigne(c),
-      })),
-    )
+    // UN appel = une transaction (reglement_atomique.sql, 03/11) : le relevé ET
+    // ses commandes, ou rien. Avant, la page créait le relevé puis ses lignes
+    // en deux requêtes : une 2e ratée (ou un double clic) laissait un relevé
+    // avec un total et aucune commande. La base vérifie chaque commande (livrée,
+    // argent remis, de ce vendeur, dans aucun relevé), refuse deux devises, et
+    // calcule elle-même le total (l'encaissé). Sans dates, la période = celles
+    // des commandes retenues.
+    const { data, error } = await supabase.rpc('etablir_releve', {
+      p_tenant: tenantKey,
+      p_vendeur: brouillon.vendeur_id,
+      p_commandes: retenues.map((c) => c.commande_id),
+      p_methode: brouillon.methode,
+      p_debut: brouillon.debut || null,
+      p_fin: brouillon.fin || null,
+    })
 
     setEnregistrement(false)
+    if (error) return annonce('Relevé refusé : ' + error.message, 'erreur')
 
-    if (errLignes) {
-      // Le relevé existe mais il est vide : le dire, sinon il traîne comme
-      // une ligne à zéro que personne ne comprend.
-      return annonce(
-        'Relevé créé, mais ses commandes ont été refusées : ' + errLignes.message +
-        ' — supprimez-le et recommencez.',
-        'erreur',
-      )
-    }
-
-    annonce(`Relevé établi : ${retenues.length} commande${retenues.length > 1 ? 's' : ''}.`, 'succes')
+    const r = data?.[0]
+    annonce(`Relevé ${r?.reference || ''} établi : ${r?.nb_commandes ?? retenues.length} commande${(r?.nb_commandes ?? retenues.length) > 1 ? 's' : ''}.`, 'succes')
     setModale(false)
     charger()
   }
