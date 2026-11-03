@@ -111,64 +111,51 @@ export default function SuperAdminRoles() {
     setSubmitting(true)
     setMessage({ text: '', type: '' })
 
-    try {
-      await supabase.from('role_permissions').delete().eq('role_id', selectedRole.id)
-      
-      if (rolePerms.length > 0) {
-        const permsToInsert = rolePerms.map(permCode => ({
-          role_id: selectedRole.id,
-          permission_code: permCode
-        }))
-        const { error: permError } = await supabase.from('role_permissions').insert(permsToInsert)
-        if (permError) throw permError
-      }
-
+    // UN appel = une transaction (roles_permissions_garde.sql, 03/11). Avant, la page
+    // supprimait toutes les lignes du rôle PUIS insérait la liste : un insert raté
+    // laissait le rôle sans aucune permission (super_admin compris, qui perdait
+    // menu_gestion_roles et ne pouvait plus rouvrir cet écran).
+    // La base refuse une liste vide, un code inconnu, et un super_admin incomplet ;
+    // son message s'affiche tel quel.
+    const { error } = await supabase.rpc('remplacer_permissions_role', {
+      p_role: selectedRole.id,
+      p_codes: rolePerms,
+    })
+    if (error) {
+      console.error("Erreur mise à jour perms :", JSON.stringify(error, null, 2))
+      setMessage({ text: error.message || "Erreur lors de la mise à jour.", type: 'error' })
+    } else {
       setMessage({ text: 'Permissions mises à jour !', type: 'success' })
       setTimeout(() => { setIsEditModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
-    } catch (error) {
-      console.error("Erreur mise à jour perms :", JSON.stringify(error, null, 2))
-      setMessage({ text: "Erreur lors de la mise à jour.", type: 'error' })
-    } finally {
-      setSubmitting(false)
     }
+    setSubmitting(false)
   }
 
-  // --- SUPPRIMER UN RÔLE (nouveau, seul ajout) ---
+  // --- SUPPRIMER UN RÔLE ---
+  // UNE requête : ses permissions partent avec lui (cascade) ou rien ne part.
+  // La base refuse un rôle système (le code les lit par leur nom) et un rôle qu'un
+  // compte porte encore — sans ce refus, user_roles.role_id passait à NULL et ces
+  // comptes perdaient toutes leurs permissions sans un mot (ON DELETE SET NULL).
   const handleDeleteRole = async (role) => {
     const confirmation = window.confirm(
-      `Supprimer définitivement le rôle "${role.nom}" ?\n\nCette action est irréversible. Si des utilisateurs ont encore ce rôle, la suppression sera refusée automatiquement.`
+      `Supprimer définitivement le rôle "${role.nom}" ?\n\nCette action est irréversible. Si des utilisateurs ont encore ce rôle, la suppression sera refusée.`
     )
     if (!confirmation) return
 
     setSuppressionEnCours(role.id)
-    try {
-      // On retire d'abord ses permissions liées, pour ne pas laisser
-      // de lignes orphelines dans role_permissions
-      await supabase.from('role_permissions').delete().eq('role_id', role.id)
-
-      const { error } = await supabase.from('roles').delete().eq('id', role.id)
-
-      if (error) {
-        // Code Postgres 23503 = violation de clé étrangère :
-        // des utilisateurs (user_roles) référencent encore ce rôle
-        if (error.code === '23503') {
-          alert(
-            `Impossible de supprimer "${role.nom}" : des utilisateurs ont encore ce rôle.\n\nRéassignez-les à un autre rôle avant de le supprimer.`
-          )
-        } else {
-          throw error
-        }
-        return
-      }
-
-      setRoles(roles.filter((r) => r.id !== role.id))
-    } catch (error) {
+    const { error } = await supabase.from('roles').delete().eq('id', role.id)
+    if (error) {
       console.error("Erreur suppression rôle :", JSON.stringify(error, null, 2))
-      alert("Erreur lors de la suppression du rôle.")
-    } finally {
-      setSuppressionEnCours(null)
+      alert(error.message || "Erreur lors de la suppression du rôle.")
+    } else {
+      setRoles(roles.filter((r) => r.id !== role.id))
     }
+    setSuppressionEnCours(null)
   }
+
+  // Le rôle super_admin détient toutes les permissions : la base l'impose
+  // (une nouvelle permission lui est donnée, aucune ne peut lui être retirée).
+  const estSuperAdminRole = selectedRole?.nom === 'super_admin'
 
   if (authLoading || permsLoading || !hasPermission('menu_gestion_roles')) {
     return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
@@ -207,6 +194,11 @@ export default function SuperAdminRoles() {
                   >
                     Gérer les permissions
                   </button>
+                  {role.is_system ? (
+                    <span className="px-3 py-2 text-xs font-semibold text-gray-400" title="Le code de l'application lit ce rôle par son nom : il ne se supprime pas.">
+                      Rôle système
+                    </span>
+                  ) : (
                   <button
                     onClick={() => handleDeleteRole(role)}
                     disabled={suppressionEnCours === role.id}
@@ -215,6 +207,7 @@ export default function SuperAdminRoles() {
                   >
                     {suppressionEnCours === role.id ? '…' : 'Supprimer'}
                   </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -281,13 +274,19 @@ export default function SuperAdminRoles() {
             <form onSubmit={handleUpdateRolePermissions} className="flex flex-col flex-1 overflow-hidden">
               {message.text && <div className={`mb-4 p-3 rounded-lg text-sm font-medium ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{message.text}</div>}
 
+              {estSuperAdminRole && (
+                <div className="mb-4 p-3 rounded-lg text-sm bg-[#EEE9DF] text-[#1B2632]">
+                  Le rôle super_admin détient toutes les permissions : la base l'impose. Une nouvelle permission lui est donnée automatiquement, aucune ne peut lui être retirée.
+                </div>
+              )}
               <div className="flex-1 overflow-y-auto pr-2">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-4">
                   {permissions.map((perm) => (
                     <label key={perm.code} className="flex items-start gap-3 p-3 border border-gray-100 rounded-xl hover:bg-gray-50 cursor-pointer transition-colors">
                       <input
                         type="checkbox"
-                        checked={rolePerms.includes(perm.code)}
+                        checked={estSuperAdminRole || rolePerms.includes(perm.code)}
+                        disabled={estSuperAdminRole}
                         onChange={() => togglePermission(perm.code)}
                         className="mt-1 w-4 h-4 text-[#1B2632] rounded border-gray-300 focus:ring-[#1B2632]"
                       />
@@ -303,7 +302,7 @@ export default function SuperAdminRoles() {
 
               <div className="flex gap-3 pt-6 mt-2 border-t border-gray-100">
                 <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl transition-colors cursor-pointer">Annuler</button>
-                <button type="submit" disabled={submitting} className="flex-1 py-3 bg-[#1B2632] hover:bg-[#2C3E50] text-white font-semibold rounded-xl transition-colors cursor-pointer">
+                <button type="submit" disabled={submitting || estSuperAdminRole} className="flex-1 py-3 bg-[#1B2632] hover:bg-[#2C3E50] text-white font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
                   {submitting ? 'Enregistrement...' : 'Enregistrer les permissions'}
                 </button>
               </div>
