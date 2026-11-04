@@ -37,65 +37,31 @@ Deno.serve(handle(async (req) => {
     }
   }
 
-  // Une livraison close ne se rejoue pas : le montant declare irait une
-  // seconde fois dans la caisse du livreur.
-  if (['livre', 'retour', 'annule'].includes(livraison.statut)) {
-    throw new HttpError(400, `Cette livraison est déjà close (${livraison.statut})`)
-  }
-
   let montant = 0
   if (statut === 'livre') {
     montant = Number(montant_a_encaisser)
     if (!Number.isFinite(montant) || montant < 0) throw new HttpError(400, 'montant invalide')
   }
 
-  const { error: erreurUpdate } = await sb
-    .from('livraisons')
-    .update({
-      statut,
-      // Le motif vaut pour un retour comme pour une annulation : dans les
-      // deux cas, quelqu'un voudra savoir pourquoi.
-      motif_retour: ['retour', 'annule'].includes(statut) ? (motif_retour || null) : null,
-      date_livraison: statut === 'livre' ? new Date().toISOString() : null,
-    })
-    .eq('id', livraison_id)
-  if (erreurUpdate) throw new HttpError(400, erreurUpdate.message)
+  // La livraison, sa copie sur la commande et le paiement : UNE transaction
+  // (enregistrer_livraison, livraison_atomique.sql, 04/11). Avant, trois
+  // écritures séparées : si le paiement échouait, la commande restait
+  // « livrée », le stock sorti, et aucun paiement — l'argent n'était dans
+  // aucune caisse. La fonction refuse aussi une livraison déjà close et un
+  // second paiement, avec un message clair.
+  const { data: lignes, error } = await sb.rpc('enregistrer_livraison', {
+    p_livraison: livraison_id,
+    p_statut: statut,
+    p_motif: motif_retour ?? null,
+    p_montant: statut === 'livre' ? montant : null,
+  })
+  if (error) throw new HttpError(400, error.message)
 
-  await sb
-    .from('commandes')
-    .update({ statut_livraison: statut, updated_at: new Date().toISOString() })
-    .eq('id', livraison.commande_id)
-    .eq('tenant_id', livraison.tenant_id)
-
+  const r = Array.isArray(lignes) ? lignes[0] : lignes
   let paiement = null
-  if (statut === 'livre') {
-    const { data: dejaPaye } = await sb
-      .from('paiements')
-      .select('id')
-      .eq('commande_id', livraison.commande_id)
-      .maybeSingle()
-    if (dejaPaye) throw new HttpError(400, 'Un paiement existe déjà pour cette commande')
-
-    const { data: nouveauPaiement, error: erreurPaiement } = await sb
-      .from('paiements')
-      .insert({
-        commande_id: livraison.commande_id,
-        livreur_id: livraison.livreur_id,
-        tenant_id: livraison.tenant_id,
-        montant,
-        methode: 'cod',
-        statut: 'en_attente',
-      })
-      .select()
-      .single()
-    if (erreurPaiement) throw new HttpError(400, 'Erreur création paiement: ' + erreurPaiement.message)
-
-    paiement = nouveauPaiement
-    await sb
-      .from('commandes')
-      .update({ statut_paiement: 'en_attente' })
-      .eq('id', livraison.commande_id)
-      .eq('tenant_id', livraison.tenant_id)
+  if (r?.paiement_id) {
+    const { data } = await sb.from('paiements').select('*').eq('id', r.paiement_id).maybeSingle()
+    paiement = data
   }
 
   return json({ status: 'ok', livraison_id, paiement })
