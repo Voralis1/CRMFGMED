@@ -61,7 +61,8 @@ export default function ParametresAdmin() {
 
   // --- États Zones ---
   const [listeZones, setListeZones] = useState([]);
-  const [nouvelleZone, setNouvelleZone] = useState({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" });
+  // Pas de frais de livraison (04/11, sa décision) : les livreurs sont salariés. La colonne reste en base, à 0.
+  const [nouvelleZone, setNouvelleZone] = useState({ id: null, nom_zone: "", pays_id: "" });
   const [isEditingZone, setIsEditingZone] = useState(false);
 
   // --- États Statuts ---
@@ -212,21 +213,21 @@ export default function ParametresAdmin() {
   async function ajouterZone(e) {
     e.preventDefault();
     if (!tenantId) return;
-    if (!nouvelleZone.nom_zone || !nouvelleZone.frais_livraison || !nouvelleZone.pays_id) return afficherMessage("Tous les champs sont obligatoires.", "erreur");
+    if (!nouvelleZone.nom_zone || !nouvelleZone.pays_id) return afficherMessage("Le pays et le nom de la zone sont obligatoires.", "erreur");
 
     if (isEditingZone) {
-      const { error } = await supabase.from("zones").update({ nom_zone: nouvelleZone.nom_zone.trim(), frais_livraison: parseFloat(nouvelleZone.frais_livraison), pays_id: nouvelleZone.pays_id }).eq("id", nouvelleZone.id).eq("tenant_id", tenantId);
+      const { error } = await supabase.from("zones").update({ nom_zone: nouvelleZone.nom_zone.trim(), pays_id: nouvelleZone.pays_id }).eq("id", nouvelleZone.id).eq("tenant_id", tenantId);
       if (error) afficherMessage("Erreur lors de la modification.", "erreur");
       else { afficherMessage("Zone modifiée.", "succes"); annulerEditionZone(); chargerDonnees(); }
     } else {
-      const { error } = await supabase.from("zones").insert([{ nom_zone: nouvelleZone.nom_zone.trim(), frais_livraison: parseFloat(nouvelleZone.frais_livraison), pays_id: nouvelleZone.pays_id, tenant_id: tenantId }]);
+      const { error } = await supabase.from("zones").insert([{ nom_zone: nouvelleZone.nom_zone.trim(), pays_id: nouvelleZone.pays_id, tenant_id: tenantId }]);
       if (error) afficherMessage("Erreur lors de l'ajout.", "erreur");
-      else { afficherMessage("Zone ajoutée.", "succes"); setNouvelleZone({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" }); chargerDonnees(); }
+      else { afficherMessage("Zone ajoutée.", "succes"); setNouvelleZone({ id: null, nom_zone: "", pays_id: "" }); chargerDonnees(); }
     }
   }
 
-  function preparerModificationZone(zone) { setNouvelleZone({ id: zone.id, nom_zone: zone.nom_zone || "", frais_livraison: zone.frais_livraison || "", pays_id: zone.pays_id || "" }); setIsEditingZone(true); }
-  function annulerEditionZone() { setNouvelleZone({ id: null, nom_zone: "", frais_livraison: "", pays_id: "" }); setIsEditingZone(false); }
+  function preparerModificationZone(zone) { setNouvelleZone({ id: zone.id, nom_zone: zone.nom_zone || "", pays_id: zone.pays_id || "" }); setIsEditingZone(true); }
+  function annulerEditionZone() { setNouvelleZone({ id: null, nom_zone: "", pays_id: "" }); setIsEditingZone(false); }
   async function supprimerZone(id) { if (!tenantId || !window.confirm("Supprimer cette zone ?")) return; await supabase.from("zones").delete().eq("id", id).eq("tenant_id", tenantId); chargerDonnees(); }
 
   // =====================================================================
@@ -607,12 +608,12 @@ export default function ParametresAdmin() {
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">
-                  {isEditingZone ? "Modifier la zone de livraison" : "Zones et Tarifs de Livraison"}
+                  {isEditingZone ? "Modifier la zone de livraison" : "Zones de livraison"}
                 </h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Associez chaque zone géographique à son tarif et à son pays.</p>
+                <p className="text-sm text-[#1B2632]/60 mt-1">Chaque zone appartient à un pays. Le livreur d&apos;une zone reçoit les commandes de cette ville.</p>
               </div>
 
-              <form onSubmit={ajouterZone} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+              <form onSubmit={ajouterZone} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
                   <select value={nouvelleZone.pays_id} onChange={(e) => setNouvelleZone({...nouvelleZone, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
@@ -623,10 +624,6 @@ export default function ParametresAdmin() {
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom de la zone</label>
                   <input type="text" placeholder="ex: Province Sud" value={nouvelleZone.nom_zone} onChange={(e) => setNouvelleZone({...nouvelleZone, nom_zone: e.target.value})} className="fg-input" required />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais de livraison</label>
-                  <input type="number" placeholder="Montant" value={nouvelleZone.frais_livraison} onChange={(e) => setNouvelleZone({...nouvelleZone, frais_livraison: e.target.value})} className="fg-input" required />
                 </div>
                 <div className="flex gap-2">
                   <button type="submit" className="fg-btn-primary w-full">
@@ -646,21 +643,19 @@ export default function ParametresAdmin() {
                     <tr>
                       <th>Zone</th>
                       <th>Pays</th>
-                      <th>Frais de livraison</th>
                       <th className="text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chargement ? (
-                      <tr><td colSpan="4" className="text-center py-6">Chargement...</td></tr>
+                      <tr><td colSpan="3" className="text-center py-6">Chargement...</td></tr>
                     ) : listeZones.length === 0 ? (
-                      <tr><td colSpan="4" className="text-center py-6 text-gray-400">Aucune zone configurée.</td></tr>
+                      <tr><td colSpan="3" className="text-center py-6 text-gray-400">Aucune zone configurée.</td></tr>
                     ) : (
                       listeZones.map((z) => (
                         <tr key={z.id} className="hover:bg-[#EEE9DF]/20">
                           <td className="font-medium">{z.nom_zone}</td>
                           <td><span className="fg-badge">{z.pays?.nom || 'N/A'}</span></td>
-                          <td><span className="fg-badge dark">{z.frais_livraison} {z.pays?.devise}</span></td>
                           <td className="text-right flex items-center justify-end gap-2">
                             <button onClick={() => preparerModificationZone(z)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
                               Modifier

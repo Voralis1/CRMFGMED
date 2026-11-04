@@ -186,9 +186,9 @@ export default function LivraisonsPage() {
       }
       setNomAffiche(nom || user.email)
 
-      // Le livreur : les noms des zones (son filtre), pas leurs tarifs (30/10).
+      // Les noms des zones seulement : plus de frais de livraison (04/11, livreurs salariés).
       const { data: zones } = await supabase
-        .from('zones').select(estLivreur ? 'id, nom_zone' : 'id, nom_zone, frais_livraison, frais_retour')
+        .from('zones').select('id, nom_zone')
         .eq('tenant_id', tenantId).order('nom_zone')
       setListeZones(zones || [])
 
@@ -268,10 +268,10 @@ export default function LivraisonsPage() {
       : estSeller
         ? `${COLONNES_COMMANDE_VENDEUR},
           pays(nom, devise),
-          zones(nom_zone, frais_livraison, frais_retour)`
+          zones(nom_zone)`
         : `*,
           pays(nom, devise),
-          zones(nom_zone, frais_livraison, frais_retour)`
+          zones(nom_zone)`
 
     let r = supabase
       .from('livraisons')
@@ -988,19 +988,16 @@ export default function LivraisonsPage() {
                     {estLivreur && zoneDetail?.nom_zone && <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />}
                   </CarteDetail>
 
-                  {/* Les tarifs de zone : pas pour le livreur (30/10) — il ne les reçoit
-                      même plus. Son nom de zone est dans la carte Client. */}
+                  {/* La zone de la commande (pour le bureau ; le livreur a la sienne dans
+                      la carte Client). Plus de frais de livraison ni de retour (04/11,
+                      livreurs salariés). */}
                   {!estLivreur && (
-                  <CarteDetail titre="Tarifs de la zone">
+                  <CarteDetail titre="Zone de livraison">
                     {zoneDetail ? (
-                      <>
-                        <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />
-                        <LigneDetail label="Frais livraison" valeur={zoneDetail.frais_livraison} mono />
-                        <LigneDetail label="Frais retour" valeur={zoneDetail.frais_retour ?? 0} mono />
-                      </>
+                      <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />
                     ) : (
                       <p className="text-xs text-[#8a5a1f] bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-lg px-3 py-2.5 font-medium">
-                        Aucune zone tarifaire pour « {detail.commandes?.ville_zone || 'non spécifiée'} ».
+                        Aucune zone pour « {detail.commandes?.ville_zone || 'non spécifiée'} ».
                       </p>
                     )}
                   </CarteDetail>
