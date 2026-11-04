@@ -234,6 +234,8 @@ export default function GestionCommandesPage() {
   const [verdictsImport, setVerdictsImport] = useState(null)
   const [modaleImport, setModaleImport] = useState(false)
   const [importCibleId, setImportCibleId] = useState('')
+  // Le vendeur du fichier, choisi par un responsable (04/11). Un seller importe pour lui-même.
+  const [importVendeurId, setImportVendeurId] = useState('')
   const [importAide, setImportAide] = useState(true)
   const [importFichier, setImportFichier] = useState(null)
   const [importEnCours, setImportEnCours] = useState(false)
@@ -261,7 +263,7 @@ export default function GestionCommandesPage() {
   const [creationLoading, setCreationLoading] = useState(false)
   const [newCmd, setNewCmd] = useState({
     client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '',
-    produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: ''
+    produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '', vendeur_id: ''
   })
 
   // REDIRECTION SÉCURISÉE
@@ -802,6 +804,15 @@ export default function GestionCommandesPage() {
   // CRÉATION MANUELLE
   async function handleCreateCommande(e) {
     e.preventDefault()
+
+    // Le vendeur de la commande (04/11, sa décision) : un seller crée pour
+    // lui-même ; un manager / admin CHOISIT le vendeur — avant, il devenait
+    // lui-même le « vendeur » et la commande n'entrait dans aucun relevé.
+    const vendeurId = estSeller ? (user?.id || null) : (newCmd.vendeur_id || null)
+    if (!vendeurId) {
+      alert('Choisissez le vendeur de cette commande.')
+      return
+    }
     setCreationLoading(true)
 
     const refusPays = await refusPaysSansEntrepot(newCmd.pays_id)
@@ -827,7 +838,7 @@ export default function GestionCommandesPage() {
       commentaire_1: newCmd.commentaire_1,
       source: 'manuel',
       agent_id: newCmd.agent_id || null,
-      vendeur_id: user?.id || null,
+      vendeur_id: vendeurId,
       tenant_id: tenantKey
     }])
 
@@ -837,7 +848,7 @@ export default function GestionCommandesPage() {
       alert("Erreur lors de la création : " + error.message)
     } else {
       setIsCreateModalOpen(false)
-      setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '' })
+      setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '', vendeur_id: '' })
       chargerCommandes(0)
       setPageActuelle(0)
     }
@@ -933,15 +944,13 @@ export default function GestionCommandesPage() {
 
   // IMPORT EXCEL / CSV
   //
-  // À qui appartiennent les commandes importées : à la personne qui importe.
-  // Pas de colonne « vendeur » dans le fichier — on sait déjà qui est connecté,
-  // et une colonne de plus serait une colonne de plus à se tromper.
-  //
-  // Un responsable n'est pas un vendeur : quand c'est lui qui importe, les
-  // commandes n'appartiennent à personne en particulier et seuls les
-  // responsables les verront.
+  // À qui appartiennent les commandes importées : un seller importe pour
+  // lui-même ; un responsable CHOISIT le vendeur du fichier (04/11, sa
+  // décision — avant, ses imports n'avaient aucun vendeur et n'entraient dans
+  // aucun relevé). Pas de colonne « vendeur » dans le fichier : un fichier =
+  // un vendeur, choisi une fois, comme l'entrepôt.
   function vendeurDeLImport() {
-    return estSeller ? (user?.id || null) : null
+    return estSeller ? (user?.id || null) : (importVendeurId || null)
   }
 
   // Le choix part VIDE, même quand il n'y en a qu'un : une valeur remplie
@@ -949,6 +958,7 @@ export default function GestionCommandesPage() {
   // CLAUDE.md). Un fichier = un entrepôt (ou un pays), choisi une fois.
   function ouvrirImport() {
     setImportCibleId('')
+    setImportVendeurId('')
     setImportFichier(null)
     setApercu(null)
     setImportResultat(null)
@@ -1078,6 +1088,10 @@ export default function GestionCommandesPage() {
   }
 
   async function lancerImport() {
+    if (!vendeurDeLImport()) {
+      setImportResultat({ erreur: 'Choisissez le vendeur de ce fichier.' })
+      return
+    }
     if (!importFichier || !tenantKey) return
     const cible = cibleImport
     // Sans pays, impossible de savoir quel agent doit recevoir les leads :
@@ -1836,6 +1850,21 @@ export default function GestionCommandesPage() {
                     </div>
                   </div>
 
+                  {!estSeller && (
+                    <div className="border-t border-[#C9C1B1] pt-4 mt-4">
+                      <label htmlFor="nouvelle-commande-vendeur" className="block text-xs font-semibold text-[#1B2632] mb-1.5">Vendeur <span className="text-[#A35139]">*</span></label>
+                      <select id="nouvelle-commande-vendeur" required value={newCmd.vendeur_id} onChange={(e) => setNewCmd({...newCmd, vendeur_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
+                        <option value="">Choisir le vendeur…</option>
+                        {listeSellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
+                      </select>
+                      <p className="text-[11px] text-[#1B2632]/60 mt-1.5">
+                        {listeSellers.length === 0
+                          ? "Aucun vendeur dans cette entreprise : créez d'abord un compte vendeur."
+                          : 'Le vendeur pour qui la commande est traitée : il la verra et sera payé dans son relevé.'}
+                      </p>
+                    </div>
+                  )}
+
                   {peutChoisirAgent && (
                     <div className="border-t border-[#C9C1B1] pt-4 mt-4">
                       <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Assigner un agent immédiatement (Optionnel)</label>
@@ -1919,6 +1948,27 @@ export default function GestionCommandesPage() {
                     </p>
                   )}
                 </fieldset>
+
+                {/* Le vendeur du fichier : seulement pour un responsable (un seller importe
+                    pour lui-même). Obligatoire : sans vendeur, ces commandes n'entreraient
+                    dans aucun relevé. */}
+                {!estSeller && (
+                  <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
+                    <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
+                      Vendeur <span className="text-[#A35139]">*</span>
+                    </legend>
+                    <select id="import-vendeur" className="cm-input" value={importVendeurId}
+                      onChange={(e) => { setImportVendeurId(e.target.value); setImportResultat(null) }}>
+                      <option value="">Choisissez le vendeur de ce fichier...</option>
+                      {listeSellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
+                    </select>
+                    {listeSellers.length === 0 && (
+                      <p className="text-[11px] text-[#A35139] mt-2 font-medium">
+                        Aucun vendeur dans cette entreprise : créez d&apos;abord un compte vendeur.
+                      </p>
+                    )}
+                  </fieldset>
+                )}
 
                 {importCibleId && (
                   <>
@@ -2125,7 +2175,7 @@ export default function GestionCommandesPage() {
                         className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
                         Fermer
                       </button>
-                      <button onClick={lancerImport} disabled={!importFichier || importEnCours || !cibleImport || colonnesManquantes.length > 0 || fichierSansLigne || verdictBloque}
+                      <button onClick={lancerImport} disabled={!importFichier || importEnCours || !cibleImport || (!estSeller && !importVendeurId) || colonnesManquantes.length > 0 || fichierSansLigne || verdictBloque}
                         className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer">
                         {importEnCours ? 'Import en cours...' : 'Importer'}
                       </button>
