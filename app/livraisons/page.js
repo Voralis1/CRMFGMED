@@ -1053,8 +1053,11 @@ export default function LivraisonsPage() {
                             <select className="lv-input" value={statutChoisi}
                               onChange={(e) => setStatutChoisi(e.target.value)}>
                               {/* On ne propose pas le statut actuel : « Expédiée »
-                                  sur une livraison déjà expédiée ne veut rien dire. */}
-                              {STATUTS_SAISISSABLES.filter((s) => s !== detail.statut).map((s) => (
+                                  sur une livraison déjà expédiée ne veut rien dire.
+                                  « Livré » seulement après « Expédiée » (sa décision
+                                  05/11, livraison_expediee_avant.sql : la base refuse
+                                  aussi) — c'est là que le stock est vérifié et sorti. */}
+                              {STATUTS_SAISISSABLES.filter((s) => s !== detail.statut && !(s === 'livre' && detail.statut !== 'expedie')).map((s) => (
                                 <option key={s} value={s}>{STATUTS[s].label}</option>
                               ))}
                             </select>
