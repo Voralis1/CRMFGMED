@@ -473,6 +473,13 @@ export default function CentreAppelAgent() {
   const statutsRappel = sansPending.filter((s) => !s.ferme_le_lead && s.necessite_rappel)
   const statutsBas = sansPending.filter((s) => !s.ferme_le_lead && !s.necessite_rappel)
   const statutsSuivis = sansPending.filter((s) => s.ferme_le_lead && s.declenche_assignation)
+  //   · en pause : « Rupture de stock » et « Produit non reconnu » (05/11, règles
+  //     de stock). Ils ferment sans envoyer au livreur, mais RESTENT dans la
+  //     liste, agent compris : il doit les voir. La base les remet « En
+  //     attente » d'elle-même quand le stock revient / le produit est relié.
+  //     Reconnus par leur code (stock_regles.sql), stable.
+  const CODES_PAUSE = ['rupture', 'produit_inconnu']
+  const statutsPause = sansPending.filter((s) => CODES_PAUSE.includes(s.code))
 
   // Les filtres de l'écran, posés sur une requête neuve. La liste, ses
   // comptes ET le bouton « Remonter » passent par ici : le bouton remonte
@@ -539,7 +546,7 @@ export default function CentreAppelAgent() {
   // L'AGENT n'y voit pas les Unreached : un lead qu'il n'a pas joint sort de
   // sa liste jusqu'à ce qu'un responsable le remonte. Ses rappels et ses
   // confirmées pas encore livrées restent.
-  const nomsBasPour = (agentId) => [...(agentId ? [] : statutsBas), ...statutsSuivis].map((s) => s.nom)
+  const nomsBasPour = (agentId) => [...(agentId ? [] : statutsBas), ...statutsSuivis, ...statutsPause].map((s) => s.nom)
   const groupeBas = (q, agentId, maintenant, avecFiltreAgent, produit) => {
     const nomsBas = nomsBasPour(agentId)
     return appliquerFiltres(q, agentId, 'created_at', avecFiltreAgent, produit)
@@ -629,7 +636,7 @@ export default function CentreAppelAgent() {
     const { data: zonesListDB } = await supabase.from('zones').select('*').eq('tenant_id', tenantKey)
     setListeZones(zonesListDB || [])
 
-    const COLONNES = `id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, quantite, prix, statut_confirmation, statut_livraison, remonte_le, date_rappel, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`
+    const COLONNES = `id, lead_id, agent_id, date_commande, created_at, updated_at, source, produit, produit_id, quantite, prix, statut_confirmation, statut_livraison, remonte_le, date_rappel, client_nom, client_telephone, ville_zone, adresse, zone_id, pays_id, notes, pays(id, nom, code, devise)`
 
     // UNE liste, deux groupes, chacun sa pagination.
     //
@@ -877,6 +884,18 @@ export default function CentreAppelAgent() {
     if (resultat.error) {
       setErreurEnvoi(resultat.error)
       return
+    }
+
+    // Les règles de stock (05/11) peuvent changer une confirmation en pause :
+    // le dire tout de suite à l'agent, sinon il croit avoir confirmé.
+    if (statutsDeLaCommande.some((s) => s.nom === statutChoisi && s.declenche_assignation)) {
+      const { data: apres } = await supabase.from('commandes')
+        .select('statut_confirmation').eq('id', commandeSelectionnee.id).maybeSingle()
+      if (apres?.statut_confirmation === 'Rupture de stock') {
+        alert(`Commande mise en « Rupture de stock » : pas assez de « ${formData.produit} » disponible dans l'entrepôt. Elle reviendra « En attente » toute seule quand le stock reviendra.`)
+      } else if (apres?.statut_confirmation === 'Produit non reconnu') {
+        alert(`Commande mise en « Produit non reconnu » : le CRM ne trouve pas « ${formData.produit} » au catalogue. Prévenez un responsable pour relier le produit.`)
+      }
     }
 
     // On ferme, on n'enchaîne pas. Sauter au lead suivant ouvrait un dossier
@@ -1525,6 +1544,13 @@ export default function CentreAppelAgent() {
                         className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                       />
                     </div>
+                    {/* Règles de stock (05/11) : sans produit reconnu, la base refuse la
+                        confirmation (la commande passe « Produit non reconnu »). */}
+                    {commandeSelectionnee && !commandeSelectionnee.produit_id && (
+                      <p className="mt-1.5 text-[11px] font-semibold text-[#A35139]">
+                        Produit non reconnu : la confirmation est impossible tant qu&apos;un responsable n&apos;a pas relié ce produit au catalogue.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Quantité</label>
