@@ -48,11 +48,20 @@ export default function ParametresAdmin() {
   // Les entrepôts suivent la règle d'écriture ; le nom reste, il est utilisé
   // partout plus bas dans la page.
   const peutGererEntrepots = peutModifier;
+  // Frais vendeurs (frais_vendeurs.sql) : l'ADMIN seul les écrit (sa décision
+  // 05/11) ; manager et ceo les lisent. La base refuse déjà les autres.
+  const peutModifierFrais = ['admin', 'super_admin'].includes(monRole);
   const router = useRouter();
 
   const [ongletActif, setOngletActif] = useState("produits");
   const [chargement, setChargement] = useState(true);
   const [message, setMessage] = useState({ texte: "", type: "" });
+
+  // --- États Frais vendeurs ---
+  const [listeTarifs, setListeTarifs] = useState([]);
+  const [listeVendeurs, setListeVendeurs] = useState([]);
+  const TARIF_VIDE = { pays_id: "", vendeur_id: "", frais_commande: "", frais_livraison: "", frais_upsell_unite: "", valide_depuis: "" };
+  const [nouveauTarif, setNouveauTarif] = useState(TARIF_VIDE);
 
   // --- États Pays ---
   const [listePays, setListePays] = useState([]);
@@ -128,6 +137,16 @@ export default function ParametresAdmin() {
       .select("id, created_at, type_mouvement, quantite, notes, produit_id, produit_nom, produit_code, entrepots(nom), produits(product, code)")
       .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(MOUVEMENTS_AFFICHES);
     if (mouvementsData) setListeMouvements(mouvementsData);
+
+    // Table absente (frais_vendeurs.sql pas encore lancé) : l'onglet reste vide.
+    const { data: tarifsData } = await supabase.from("tarifs_vendeurs")
+      .select("id, pays_id, vendeur_id, frais_commande, frais_livraison, frais_upsell_unite, valide_depuis, pays(nom, devise)")
+      .eq("tenant_id", tenantId).order("valide_depuis", { ascending: false });
+    setListeTarifs(tarifsData || []);
+
+    const { data: vendeursData } = await supabase.from("user_roles")
+      .select("user_id, nom, email, role").eq("tenant_id", tenantId);
+    setListeVendeurs((vendeursData || []).filter((v) => String(v.role || '').toLowerCase() === 'seller'));
 
     setChargement(false);
   }
@@ -402,6 +421,47 @@ export default function ParametresAdmin() {
     setTimeout(() => setMessage({ texte: "", type: "" }), 5000);
   }
 
+  // --- FRAIS VENDEURS ---
+  // On n'écrase jamais une ligne : un changement de frais = une nouvelle ligne
+  // avec sa date de début. Les relevés déjà établis gardent leurs frais.
+  async function ajouterTarif(e) {
+    e.preventDefault();
+    if (!tenantId || !peutModifierFrais) return;
+    const t = nouveauTarif;
+    if (!t.pays_id) return afficherMessage("Choisissez un pays.", "erreur");
+    const montants = [t.frais_commande, t.frais_livraison, t.frais_upsell_unite].map((x) => Number(x || 0));
+    if (montants.some((x) => !Number.isFinite(x) || x < 0)) return afficherMessage("Montants invalides.", "erreur");
+    const ligne = {
+      tenant_id: tenantId, pays_id: t.pays_id, vendeur_id: t.vendeur_id || null,
+      frais_commande: montants[0], frais_livraison: montants[1], frais_upsell_unite: montants[2],
+    };
+    if (t.valide_depuis) ligne.valide_depuis = t.valide_depuis;
+    const { error } = await supabase.from("tarifs_vendeurs").insert([ligne]);
+    if (error) {
+      afficherMessage(error.code === "23505" ? "Une ligne existe déjà pour ce pays, ce vendeur et cette date." : "Erreur : " + error.message, "erreur");
+      return;
+    }
+    afficherMessage("Frais enregistrés.", "succes");
+    setNouveauTarif(TARIF_VIDE);
+    chargerDonnees();
+  }
+
+  async function supprimerTarif(id) {
+    if (!tenantId || !peutModifierFrais) return;
+    if (!window.confirm("Supprimer cette ligne de frais ? Les relevés déjà établis ne changent pas.")) return;
+    const { data, error } = await supabase.from("tarifs_vendeurs").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
+    if (error) return afficherMessage("Erreur : " + error.message, "erreur");
+    if (!data || data.length === 0) return afficherMessage("Suppression refusée.", "erreur");
+    afficherMessage("Ligne supprimée.", "succes");
+    chargerDonnees();
+  }
+
+  const nomVendeurTarif = (id) => {
+    if (!id) return "Tous les vendeurs";
+    const v = listeVendeurs.find((x) => x.user_id === id);
+    return v ? (v.nom || v.email) : "Vendeur supprimé";
+  };
+
   // --- ICÔNES DES ONGLETS ---
   const TAB_ICONS = {
     pays: (
@@ -432,6 +492,11 @@ export default function ParametresAdmin() {
     stocks: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+      </svg>
+    ),
+    frais: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>
       </svg>
     ),
   };
@@ -504,6 +569,7 @@ export default function ParametresAdmin() {
           <TabButton id="produits" label="Catalogue Produits" />
           {peutGererEntrepots && <TabButton id="entrepots" label="Entrepôts" />}
           <TabButton id="stocks" label="Mouvements de Stock" />
+          <TabButton id="frais" label="Frais vendeurs" />
         </div>
       </header>
 
@@ -1039,6 +1105,105 @@ export default function ParametresAdmin() {
                           <td className="text-sm text-gray-700">{LIBELLE_MOUVEMENT[m.type_mouvement] || m.type_mouvement}</td>
                           <td className="text-right font-bold text-[#1B2632]">{m.quantite}</td>
                           <td className="text-sm text-gray-600">{m.notes || ""}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- ONGLET FRAIS VENDEURS (frais_vendeurs.sql) --- */}
+        {ongletActif === "frais" && (
+          <div className="flex flex-col gap-6">
+            <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
+              <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
+                <h2 className="text-xl font-bold text-[#1B2632]">Frais vendeurs</h2>
+                <p className="text-sm text-[#1B2632]/60 mt-1">
+                  Retenus sur chaque lead livré : frais commande + frais livraison + upsell × (unités − 1).
+                  Une ligne « Tous les vendeurs » vaut pour le pays ; une ligne d&apos;un vendeur la remplace pour lui.
+                  Pour changer un montant, ajoutez une ligne avec sa date de début : les relevés déjà établis ne changent pas.
+                </p>
+              </div>
+
+              {peutModifierFrais ? (
+                <form onSubmit={ajouterTarif} className="grid grid-cols-1 md:grid-cols-7 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                    <select required value={nouveauTarif.pays_id} onChange={(e) => setNouveauTarif({ ...nouveauTarif, pays_id: e.target.value })} className="fg-input cursor-pointer">
+                      <option value="">Choisir</option>
+                      {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Vendeur</label>
+                    <select value={nouveauTarif.vendeur_id} onChange={(e) => setNouveauTarif({ ...nouveauTarif, vendeur_id: e.target.value })} className="fg-input cursor-pointer">
+                      <option value="">Tous les vendeurs</option>
+                      {listeVendeurs.map((v) => (<option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais commande</label>
+                    <input type="number" min="0" step="any" required value={nouveauTarif.frais_commande} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_commande: e.target.value })} className="fg-input" placeholder="1000" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais livraison</label>
+                    <input type="number" min="0" step="any" required value={nouveauTarif.frais_livraison} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_livraison: e.target.value })} className="fg-input" placeholder="12000" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Upsell / unité en +</label>
+                    <input type="number" min="0" step="any" required value={nouveauTarif.frais_upsell_unite} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_upsell_unite: e.target.value })} className="fg-input" placeholder="1500" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Valide depuis</label>
+                    <input type="date" value={nouveauTarif.valide_depuis} onChange={(e) => setNouveauTarif({ ...nouveauTarif, valide_depuis: e.target.value })} className="fg-input" />
+                  </div>
+                  <button type="submit" className="fg-btn-primary w-full">Ajouter</button>
+                </form>
+              ) : (
+                <p className="text-xs text-[#1B2632]/50 mb-6">Seul l&apos;administrateur modifie les frais vendeurs.</p>
+              )}
+              {peutModifierFrais && (
+                <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">Date vide = à partir d&apos;aujourd&apos;hui. Elle compte au jour de la livraison du lead.</p>
+              )}
+
+              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                <table className="fg-table w-full min-w-[760px]">
+                  <thead>
+                    <tr>
+                      <th>Pays</th><th>Vendeur</th>
+                      <th className="text-right">Frais commande</th><th className="text-right">Frais livraison</th>
+                      <th className="text-right">Upsell / unité</th><th>Valide depuis</th>
+                      {peutModifierFrais && <th className="text-right">Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listeTarifs.length === 0 && (
+                      <tr><td colSpan={peutModifierFrais ? 7 : 6} className="text-center py-6 text-gray-400">
+                        Aucun frais saisi : aucun relevé vendeur ne peut être établi.
+                      </td></tr>
+                    )}
+                    {listeTarifs.map((t) => {
+                      const devise = t.pays?.devise || "";
+                      const m = (x) => `${Number(x || 0).toLocaleString("fr-FR")} ${devise}`;
+                      return (
+                        <tr key={t.id} className="hover:bg-[#EEE9DF]/20">
+                          <td className="font-bold text-[#1B2632]">{t.pays?.nom || "-"}</td>
+                          <td>{nomVendeurTarif(t.vendeur_id)}</td>
+                          <td className="text-right font-mono">{m(t.frais_commande)}</td>
+                          <td className="text-right font-mono">{m(t.frais_livraison)}</td>
+                          <td className="text-right font-mono">{m(t.frais_upsell_unite)}</td>
+                          <td>{new Date(t.valide_depuis + "T00:00:00").toLocaleDateString("fr-FR")}</td>
+                          {peutModifierFrais && (
+                            <td className="text-right">
+                              <button onClick={() => supprimerTarif(t.id)}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#A35139]/40 bg-white text-[#A35139] hover:bg-[#A35139]/10 transition-colors cursor-pointer">
+                                Supprimer
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}

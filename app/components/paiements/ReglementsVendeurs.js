@@ -71,6 +71,9 @@ export default function ReglementsVendeurs() {
   const [enAttenteDeReglement, setEnAttenteDeReglement] = useState(null)
   const [fiche, setFiche] = useState(null)
   const [lignes, setLignes] = useState([])
+  // Charges du relevé : saisies à la main, avec une note (frais_vendeurs.sql).
+  const [charges, setCharges] = useState({ montant: '', note: '' })
+  const [chargesEnCours, setChargesEnCours] = useState(false)
 
   const [modale, setModale] = useState(false)
   const [brouillon, setBrouillon] = useState({ vendeur_id: '', debut: '', fin: '', methode: 'especes' })
@@ -168,9 +171,12 @@ export default function ReglementsVendeurs() {
   async function ouvrirFiche(r) {
     setFiche(r)
     setLignes([])
+    setCharges({ montant: r.frais_divers ? String(r.frais_divers) : '', note: r.frais_divers_note || '' })
+    // Les frais de chaque ligne sont COPIÉS par la base à l'établissement
+    // (etablir_releve) : on les lit, on ne les recalcule jamais ici.
     const { data, error } = await supabase
       .from('reglements_commandes')
-      .select('commande_id, montant, commandes(lead_id, client_nom, produit, quantite, prix, updated_at)')
+      .select('commande_id, montant, quantite, total_commande, frais_commande, frais_livraison, frais_upsell, net, commandes(lead_id, client_nom, produit, quantite, prix, updated_at)')
       .eq('reglement_id', r.id)
     if (error) { annonce('Détail illisible : ' + error.message, 'erreur'); return }
     setLignes(data || [])
@@ -259,8 +265,39 @@ export default function ReglementsVendeurs() {
     charger()
   }
 
+  // Ce qui est tapé diffère de ce qui est enregistré : sans ce repère, changer
+  // seulement la note ne montrait rien, et « Marquer payé » la perdait (05/11).
+  const chargesModifiees = !!fiche && (
+    Number(charges.montant || 0) !== Number(fiche.frais_divers || 0)
+    || charges.note.trim() !== (fiche.frais_divers_note || '')
+  )
+  const chargesSaisies = !!fiche && (Number(fiche.frais_divers || 0) > 0 || !!fiche.frais_divers_note)
+
+  // La base recalcule « à payer » elle-même et refuse un relevé payé.
+  // Rend true si c'est enregistré.
+  async function enregistrerCharges() {
+    if (!fiche) return false
+    const montant = Number(charges.montant || 0)
+    if (!Number.isFinite(montant) || montant < 0) { annonce('Montant des charges invalide.', 'erreur'); return false }
+    if (montant > 0 && !charges.note.trim()) { annonce('Écrivez à quoi correspondent ces charges.', 'erreur'); return false }
+    setChargesEnCours(true)
+    const { error } = await supabase.rpc('fixer_charges_releve', {
+      p_reglement: fiche.id, p_montant: montant, p_note: charges.note,
+    })
+    setChargesEnCours(false)
+    if (error) { annonce('Refusé : ' + error.message, 'erreur'); return false }
+    const { data } = await supabase.from('reglements').select('*').eq('id', fiche.id).single()
+    if (data) setFiche(data)
+    annonce('Charges enregistrées.', 'succes')
+    charger()
+    return true
+  }
+
   async function marquerPaye(r) {
     if (!window.confirm(`Marquer ${r.reference} comme payé ?\n\nAprès cela, ses montants et ses commandes ne pourront plus changer.`)) return
+    // Les charges tapées et pas encore enregistrées partent d'abord : rien de
+    // ce qui est à l'écran n'est perdu au paiement.
+    if (chargesModifiees && !(await enregistrerCharges())) return
     const { data, error } = await supabase
       .from('reglements').update({ statut: 'paye' })
       .eq('id', r.id).eq('tenant_id', tenantKey).select()
@@ -494,7 +531,7 @@ export default function ReglementsVendeurs() {
                 </div>
 
                 <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
-                  <table className="w-full min-w-[640px] text-left text-sm">
+                  <table className="w-full min-w-[900px] text-left text-sm">
                     <thead>
                       <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#A35139] font-bold">
                         <th className="px-4 py-3">Lead ID</th>
@@ -502,20 +539,28 @@ export default function ReglementsVendeurs() {
                         <th className="px-4 py-3">Produit</th>
                         <th className="px-4 py-3 text-center">Qté</th>
                         <th className="px-4 py-3">Livrée le</th>
-                        <th className="px-4 py-3 text-right">Montant</th>
+                        <th className="px-4 py-3 text-right">Total</th>
+                        <th className="px-4 py-3 text-right">Frais cmd</th>
+                        <th className="px-4 py-3 text-right">Livraison</th>
+                        <th className="px-4 py-3 text-right">Upsell</th>
+                        <th className="px-4 py-3 text-right">Net</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#C9C1B1]/30">
                       {lignes.length === 0 ? (
-                        <tr><td colSpan="6" className="px-4 py-8 text-center text-[#1B2632]/50">Aucune commande rattachée.</td></tr>
+                        <tr><td colSpan="10" className="px-4 py-8 text-center text-[#1B2632]/50">Aucune commande rattachée.</td></tr>
                       ) : lignes.map((l) => (
                         <tr key={l.commande_id}>
                           <td className="px-4 py-3 font-mono text-xs text-[#A35139]">{l.commandes?.lead_id || '—'}</td>
                           <td className="px-4 py-3 text-[#1B2632]">{l.commandes?.client_nom || '—'}</td>
                           <td className="px-4 py-3 text-[#1B2632]">{l.commandes?.produit || '—'}</td>
-                          <td className="px-4 py-3 text-center font-mono">{l.commandes?.quantite ?? 1}</td>
+                          <td className="px-4 py-3 text-center font-mono">{qteLigne(l)}</td>
                           <td className="px-4 py-3 text-[#1B2632]/60 whitespace-nowrap">{jour(l.commandes?.updated_at)}</td>
-                          <td className="px-4 py-3 text-right font-mono font-semibold">{sou(l.montant)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(l.total_commande ?? l.montant)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(l.frais_commande)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(l.frais_livraison)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(l.frais_upsell)}</td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold">{sou(l.net ?? l.montant)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -523,27 +568,55 @@ export default function ReglementsVendeurs() {
                       <tr className="border-t-2 border-dashed border-[#C9C1B1] font-bold text-[#1B2632]">
                         <td className="px-4 py-3" colSpan="3">Total</td>
                         <td className="px-4 py-3 text-center font-mono">
-                          {lignes.reduce((s, l) => s + (l.commandes?.quantite || 1), 0)}
+                          {lignes.reduce((s, l) => s + qteLigne(l), 0)}
                         </td>
                         <td></td>
                         <td className="px-4 py-3 text-right font-mono">{sou(fiche.total_ventes)}</td>
+                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_confirmation)}</td>
+                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_livraison)}</td>
+                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_upsell)}</td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          {sou(Number(fiche.total_ventes || 0) - Number(fiche.frais_confirmation || 0) - Number(fiche.frais_livraison || 0) - Number(fiche.frais_upsell || 0))}
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex flex-col sm:flex-row sm:justify-between gap-6">
+                  {/* Charges : à la main, avec une note, tant que le relevé n'est pas payé. */}
+                  {peutGerer && fiche.statut !== 'paye' ? (
+                    <div className="w-full sm:w-[360px] flex flex-col gap-2 p-4 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl sans-impression">
+                      <label className="rg-label">Charges ({fiche.devise || ''})</label>
+                      <input type="number" min="0" step="any" className="rg-input" value={charges.montant}
+                        onChange={(e) => setCharges({ ...charges, montant: e.target.value })} placeholder="0" />
+                      <label className="rg-label mt-1">Note (obligatoire si charges)</label>
+                      <input type="text" className="rg-input" value={charges.note}
+                        onChange={(e) => setCharges({ ...charges, note: e.target.value })} placeholder="Ex. : publicité, emballage…" />
+                      <button onClick={enregistrerCharges} disabled={chargesEnCours || !chargesModifiees}
+                        className={`mt-1 px-5 py-2 rounded-xl text-sm font-bold transition-colors ${
+                          chargesModifiees || !chargesSaisies
+                            ? 'bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40'
+                            : 'bg-green-50 text-green-800 border border-green-200'}`}>
+                        {chargesEnCours ? 'Enregistrement...'
+                          : chargesModifiees || !chargesSaisies ? 'Enregistrer les charges' : 'Charges enregistrées ✓'}
+                      </button>
+                    </div>
+                  ) : <div />}
                   <div className="w-full sm:w-[340px] flex flex-col gap-2">
                     <LigneTotal label="Total des ventes" valeur={sou(fiche.total_ventes)} devise={fiche.devise} />
-                    {/* Les frais restent à zéro tant qu'ils ne sont pas décidés.
-                        On les montre quand même : le vendeur voit qu'on ne lui
-                        retient rien, au lieu de se demander ce qui manque. */}
-                    <LigneTotal label="Frais retenus" valeur={sou(
-                      Number(fiche.frais_confirmation || 0) + Number(fiche.frais_livraison || 0) +
-                      Number(fiche.frais_service || 0) + Number(fiche.frais_divers || 0),
-                    )} devise={fiche.devise} />
+                    <LigneTotal label="Frais commande" valeur={'− ' + sou(fiche.frais_confirmation)} devise={fiche.devise} />
+                    <LigneTotal label="Frais livraison" valeur={'− ' + sou(fiche.frais_livraison)} devise={fiche.devise} />
+                    <LigneTotal label="Frais upsell" valeur={'− ' + sou(fiche.frais_upsell)} devise={fiche.devise} />
+                    {Number(fiche.frais_service || 0) > 0 && (
+                      <LigneTotal label="Frais de service" valeur={'− ' + sou(fiche.frais_service)} devise={fiche.devise} />
+                    )}
+                    <LigneTotal label="Charges" valeur={'− ' + sou(fiche.frais_divers)} devise={fiche.devise} />
+                    {fiche.frais_divers_note && (
+                      <p className="px-4 text-sm text-[#1B2632] text-right">Note : {fiche.frais_divers_note}</p>
+                    )}
                     <div className="flex justify-between items-baseline px-4 py-3 bg-[#EEE9DF] rounded-xl mt-1">
-                      <span className="text-sm font-bold text-[#1B2632]">Net à payer</span>
+                      <span className="text-sm font-bold text-[#1B2632]">À payer</span>
                       <span className="text-xl font-bold text-[#1B2632] font-mono">
                         {sou(fiche.net_a_payer)} <span className="text-xs font-sans text-[#1B2632]/50">{fiche.devise || ''}</span>
                       </span>
@@ -555,6 +628,14 @@ export default function ReglementsVendeurs() {
                   <p className="text-sm text-[#1B2632]/70 italic border-t border-[#C9C1B1]/50 pt-4">{fiche.note}</p>
                 )}
               </div>
+
+              {/* Le message s'affiche ICI : celui du haut de page est caché
+                  derrière la fenêtre du relevé. */}
+              {message.texte && (
+                <div className={`mx-8 mb-4 px-4 py-3 rounded-xl text-sm font-medium sans-impression ${
+                  message.type === 'succes' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
+                }`}>{message.texte}</div>
+              )}
 
               <div className="flex flex-col sm:flex-row justify-end gap-3 px-8 py-5 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-b-2xl sans-impression">
                 <button onClick={() => window.print()}
@@ -701,6 +782,12 @@ export default function ReglementsVendeurs() {
       )}
     </div>
   )
+}
+
+// La quantité copiée sur la ligne à l'établissement ; avant le 05/11 elle
+// n'existait pas : on lit celle de la commande.
+function qteLigne(l) {
+  return Number(l.quantite ?? l.commandes?.quantite ?? 1) || 1
 }
 
 function Ligne({ label, valeur, mono }) {
