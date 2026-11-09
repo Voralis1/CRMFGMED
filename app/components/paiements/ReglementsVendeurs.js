@@ -22,6 +22,11 @@ const STATUTS = {
 }
 const METHODES = { especes: 'Espèces', virement: 'Virement', cheque: 'Chèque' }
 
+// Les ajustements d'un relevé (retenues_releve.sql, 09/11). Le sens suit le
+// type ; seule la correction le laisse choisir (la base fait la même règle).
+const TYPES_AJUST = { penalite: 'Pénalité', remboursement: 'Remboursement', correction: 'Correction', autre: 'Autre' }
+const AJUST_VIDE = { type: 'penalite', montant: '', sens: '', note: '' }
+
 // Le montant d'une commande dans un relevé = ce que le livreur a RÉELLEMENT
 // encaissé (montant_encaisse, reglement_sur_encaisse.sql, sa décision 03/11) ;
 // le prix seulement tant que la vue n'a pas cette colonne. JAMAIS prix ×
@@ -71,9 +76,14 @@ export default function ReglementsVendeurs() {
   const [enAttenteDeReglement, setEnAttenteDeReglement] = useState(null)
   const [fiche, setFiche] = useState(null)
   const [lignes, setLignes] = useState([])
-  // Charges du relevé : saisies à la main, avec une note (frais_vendeurs.sql).
-  const [charges, setCharges] = useState({ montant: '', note: '' })
-  const [chargesEnCours, setChargesEnCours] = useState(false)
+  // Le bas du relevé (retenues_releve.sql, 09/11) : crédit d'expédition à la
+  // main (date, kg, prix au kg et montant, TOUS tapés, un par relevé) et des
+  // lignes d'ajustement.
+  const [credit, setCredit] = useState({ date: '', poids: '', prix: '', montant: '', note: '' })
+  const [creditEnCours, setCreditEnCours] = useState(false)
+  const [ajustements, setAjustements] = useState([])
+  const [nouvelAjust, setNouvelAjust] = useState(AJUST_VIDE)
+  const [ajustEnCours, setAjustEnCours] = useState(false)
 
   const [modale, setModale] = useState(false)
   const [brouillon, setBrouillon] = useState({ vendeur_id: '', debut: '', fin: '', methode: 'especes' })
@@ -129,6 +139,14 @@ export default function ReglementsVendeurs() {
 
   useEffect(() => { if (tenantKey && !permsLoading) charger() }, [tenantKey, permsLoading, charger])
 
+  // L'email de qui a établi / payé (sa décision 09/11). La base ne laisse
+  // lire au vendeur que SON compte : pour lui, rien n'est trouvé, rien ne
+  // s'affiche — les emails de l'équipe ne lui sont jamais montrés.
+  const emailDe = useCallback((id) => {
+    if (!id) return null
+    return personnel.find((x) => x.user_id === id)?.email || null
+  }, [personnel])
+
   const nomVendeur = useCallback((id) => {
     if (!id) return '—'
     const v = personnel.find((x) => x.user_id === id)
@@ -149,6 +167,25 @@ export default function ReglementsVendeurs() {
       return true
     })
   }, [releves, recherche, filtreStatut, filtreVendeur, nomVendeur])
+
+  // Le résumé du relevé PAR PRODUIT (sa demande 09/11, comme les factures
+  // Storeino) : unités vendues, total, frais, paiement. Additionné depuis les
+  // lignes (frais copiés à l'établissement) — rien n'est recalculé.
+  const parProduit = useMemo(() => {
+    const m = new Map()
+    for (const l of lignes) {
+      const nom = nomProduit(l)
+      const x = m.get(nom) || { nom, qte: 0, total: 0, fc: 0, fl: 0, fu: 0, net: 0 }
+      x.qte += qteLigne(l)
+      x.total += Number(l.total_commande ?? l.montant ?? 0)
+      x.fc += Number(l.frais_commande || 0)
+      x.fl += Number(l.frais_livraison || 0)
+      x.fu += Number(l.frais_upsell || 0)
+      x.net += Number(l.net ?? l.montant ?? 0)
+      m.set(nom, x)
+    }
+    return [...m.values()].sort((a, b) => b.total - a.total)
+  }, [lignes])
 
   // Les totaux ne sont pas additionnés entre devises : un total qui mélange
   // dirhams et dollars ne veut rien dire.
@@ -171,12 +208,20 @@ export default function ReglementsVendeurs() {
   async function ouvrirFiche(r) {
     setFiche(r)
     setLignes([])
-    setCharges({ montant: r.frais_divers ? String(r.frais_divers) : '', note: r.frais_divers_note || '' })
+    setCredit({
+      date: r.credit_expedition_date || '',
+      poids: r.credit_expedition_poids != null ? String(r.credit_expedition_poids) : '',
+      prix: r.credit_expedition_prix_kg != null ? String(r.credit_expedition_prix_kg) : '',
+      montant: r.credit_expedition_poids != null ? String(r.credit_expedition) : '',
+      note: r.credit_expedition_note || '',
+    })
+    setNouvelAjust(AJUST_VIDE)
+    chargerAjustements(r.id)
     // Les frais de chaque ligne sont COPIÉS par la base à l'établissement
     // (etablir_releve) : on les lit, on ne les recalcule jamais ici.
     const { data, error } = await supabase
       .from('reglements_commandes')
-      .select('commande_id, montant, quantite, total_commande, frais_commande, frais_livraison, frais_upsell, net, commandes(lead_id, client_nom, produit, quantite, prix, updated_at)')
+      .select('commande_id, montant, quantite, total_commande, frais_commande, frais_livraison, frais_upsell, net, commandes(lead_id, client_nom, produit, quantite, prix, updated_at, produits(product))')
       .eq('reglement_id', r.id)
     if (error) { annonce('Détail illisible : ' + error.message, 'erreur'); return }
     setLignes(data || [])
@@ -265,39 +310,99 @@ export default function ReglementsVendeurs() {
     charger()
   }
 
-  // Ce qui est tapé diffère de ce qui est enregistré : sans ce repère, changer
-  // seulement la note ne montrait rien, et « Marquer payé » la perdait (05/11).
-  const chargesModifiees = !!fiche && (
-    Number(charges.montant || 0) !== Number(fiche.frais_divers || 0)
-    || charges.note.trim() !== (fiche.frais_divers_note || '')
-  )
-  const chargesSaisies = !!fiche && (Number(fiche.frais_divers || 0) > 0 || !!fiche.frais_divers_note)
+  async function chargerAjustements(id) {
+    const { data, error } = await supabase
+      .from('reglements_ajustements')
+      .select('id, type, montant, en_plus, note, cree_par, cree_le')
+      .eq('reglement_id', id).order('cree_le')
+    if (error) { setAjustements([]); return }
+    setAjustements(data || [])
+  }
 
-  // La base recalcule « à payer » elle-même et refuse un relevé payé.
-  // Rend true si c'est enregistré.
-  async function enregistrerCharges() {
-    if (!fiche) return false
-    const montant = Number(charges.montant || 0)
-    if (!Number.isFinite(montant) || montant < 0) { annonce('Montant des charges invalide.', 'erreur'); return false }
-    if (montant > 0 && !charges.note.trim()) { annonce('Écrivez à quoi correspondent ces charges.', 'erreur'); return false }
-    setChargesEnCours(true)
-    const { error } = await supabase.rpc('fixer_charges_releve', {
-      p_reglement: fiche.id, p_montant: montant, p_note: charges.note,
-    })
-    setChargesEnCours(false)
-    if (error) { annonce('Refusé : ' + error.message, 'erreur'); return false }
-    const { data } = await supabase.from('reglements').select('*').eq('id', fiche.id).single()
+  // Après chaque changement : l'en-tête recalculé par la base, les lignes, la liste.
+  async function rechargerFiche(id) {
+    const { data } = await supabase.from('reglements').select('*').eq('id', id).single()
     if (data) setFiche(data)
-    annonce('Charges enregistrées.', 'succes')
+    await chargerAjustements(id)
     charger()
+  }
+
+  // Ce qui est tapé diffère de ce qui est enregistré : le bouton le montre, et
+  // « Marquer payé » l'enregistre d'abord (rien de tapé n'est perdu, 05/11).
+  const creditModifie = !!fiche && (
+    credit.date !== (fiche.credit_expedition_date || '')
+    || (credit.poids === '' ? fiche.credit_expedition_poids != null : Number(credit.poids) !== Number(fiche.credit_expedition_poids))
+    || (credit.prix === '' ? fiche.credit_expedition_prix_kg != null : Number(credit.prix) !== Number(fiche.credit_expedition_prix_kg))
+    || (credit.montant === '' ? fiche.credit_expedition_poids != null : Number(credit.montant) !== Number(fiche.credit_expedition))
+    || credit.note.trim() !== (fiche.credit_expedition_note || '')
+  )
+  const creditSaisi = !!fiche && Number(fiche.credit_expedition || 0) > 0
+  const ajustTape = nouvelAjust.montant !== '' || nouvelAjust.note.trim() !== ''
+
+  // Tout est tapé (le montant n'est pas calculé, sa décision 09/11) ; la base
+  // refuse un relevé payé et recalcule « à payer ». Tout vide = pas d'expédition.
+  async function enregistrerCredit() {
+    if (!fiche) return false
+    const champs = [credit.date, credit.poids, credit.prix, credit.montant]
+    const vide = champs.every((x) => x === '')
+    const poids = Number(credit.poids), prix = Number(credit.prix), montant = Number(credit.montant)
+    if (!vide) {
+      if (champs.some((x) => x === '')) {
+        annonce('Crédit d\u2019expédition : donnez la date, le poids, le prix au kg ET le montant (ou videz tout).', 'erreur'); return false
+      }
+      if (![poids, prix, montant].every(Number.isFinite) || poids <= 0 || prix < 0 || montant < 0) {
+        annonce('Crédit d\u2019expédition : poids, prix au kg ou montant invalide.', 'erreur'); return false
+      }
+    }
+    setCreditEnCours(true)
+    const { error } = await supabase.rpc('fixer_credit_expedition', {
+      p_reglement: fiche.id,
+      p_date: vide ? null : credit.date,
+      p_poids: vide ? null : poids,
+      p_prix_kg: vide ? null : prix,
+      p_montant: vide ? null : montant,
+      p_note: credit.note,
+    })
+    setCreditEnCours(false)
+    if (error) { annonce('Refusé : ' + error.message, 'erreur'); return false }
+    annonce(vide ? 'Pas d\u2019expédition sur ce relevé.' : 'Crédit d\u2019expédition enregistré.', 'succes')
+    await rechargerFiche(fiche.id)
     return true
+  }
+
+  async function ajouterAjustement() {
+    if (!fiche) return
+    const a = nouvelAjust
+    const montant = Number(a.montant)
+    if (a.montant === '' || !Number.isFinite(montant) || montant <= 0) return annonce('Le montant doit être plus grand que 0.', 'erreur')
+    if (!a.note.trim()) return annonce('Écrivez la raison de cet ajustement.', 'erreur')
+    if (a.type === 'correction' && !a.sens) return annonce('Correction : retenue au vendeur ou rendue au vendeur ?', 'erreur')
+    setAjustEnCours(true)
+    const { error } = await supabase.rpc('ajouter_ajustement', {
+      p_reglement: fiche.id, p_type: a.type, p_montant: montant,
+      p_en_plus: a.type === 'correction' ? a.sens === 'plus' : null, p_note: a.note,
+    })
+    setAjustEnCours(false)
+    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    setNouvelAjust(AJUST_VIDE)
+    annonce('Ajustement ajouté.', 'succes')
+    await rechargerFiche(fiche.id)
+  }
+
+  async function retirerAjustement(a) {
+    if (!fiche || !window.confirm(`Retirer « ${TYPES_AJUST[a.type] || a.type} — ${a.note} » ?`)) return
+    const { error } = await supabase.rpc('retirer_ajustement', { p_ajustement: a.id })
+    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    annonce('Ajustement retiré.', 'succes')
+    await rechargerFiche(fiche.id)
   }
 
   async function marquerPaye(r) {
     if (!window.confirm(`Marquer ${r.reference} comme payé ?\n\nAprès cela, ses montants et ses commandes ne pourront plus changer.`)) return
-    // Les charges tapées et pas encore enregistrées partent d'abord : rien de
-    // ce qui est à l'écran n'est perdu au paiement.
-    if (chargesModifiees && !(await enregistrerCharges())) return
+    // Rien de ce qui est tapé n'est perdu au paiement : le crédit modifié part
+    // d'abord ; un ajustement tapé mais pas ajouté arrête (on ne devine pas).
+    if (ajustTape) return annonce('Un ajustement est tapé mais pas ajouté : cliquez « Ajouter » ou videz-le.', 'erreur')
+    if (creditModifie && !(await enregistrerCredit())) return
     const { data, error } = await supabase
       .from('reglements').update({ statut: 'paye' })
       .eq('id', r.id).eq('tenant_id', tenantKey).select()
@@ -528,82 +633,144 @@ export default function ReglementsVendeurs() {
                     valeur={fiche.date_paiement ? jourHeure(fiche.date_paiement) : 'Pas encore payé'}
                   />
                   <Ligne label="Nombre de commandes" valeur={String(fiche.nb_commandes)} />
+                  {emailDe(fiche.cree_par) && <Ligne label="Établi par" valeur={emailDe(fiche.cree_par)} />}
+                  {emailDe(fiche.paye_par) && <Ligne label="Marqué payé par" valeur={emailDe(fiche.paye_par)} />}
                 </div>
 
+                {/* Résumé par produit (sa décision 09/11 : plus de détail par lead —
+                    un relevé de la semaine se lit par produit). */}
                 <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-left text-sm">
+                  <table className="w-full min-w-[760px] text-left text-sm">
                     <thead>
                       <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#A35139] font-bold">
-                        <th className="px-4 py-3">Lead ID</th>
-                        <th className="px-4 py-3">Client</th>
                         <th className="px-4 py-3">Produit</th>
-                        <th className="px-4 py-3 text-center">Qté</th>
-                        <th className="px-4 py-3">Livrée le</th>
-                        <th className="px-4 py-3 text-right">Total</th>
-                        <th className="px-4 py-3 text-right">Frais cmd</th>
-                        <th className="px-4 py-3 text-right">Livraison</th>
+                        <th className="px-4 py-3 text-center">Qté vendue</th>
+                        <th className="px-4 py-3 text-right">Total des ventes</th>
+                        <th className="px-4 py-3 text-right">Frais confirmation</th>
+                        <th className="px-4 py-3 text-right">Frais livraison</th>
                         <th className="px-4 py-3 text-right">Upsell</th>
-                        <th className="px-4 py-3 text-right">Net</th>
+                        <th className="px-4 py-3 text-right">Paiement</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#C9C1B1]/30">
-                      {lignes.length === 0 ? (
-                        <tr><td colSpan="10" className="px-4 py-8 text-center text-[#1B2632]/50">Aucune commande rattachée.</td></tr>
-                      ) : lignes.map((l) => (
-                        <tr key={l.commande_id}>
-                          <td className="px-4 py-3 font-mono text-xs text-[#A35139]">{l.commandes?.lead_id || '—'}</td>
-                          <td className="px-4 py-3 text-[#1B2632]">{l.commandes?.client_nom || '—'}</td>
-                          <td className="px-4 py-3 text-[#1B2632]">{l.commandes?.produit || '—'}</td>
-                          <td className="px-4 py-3 text-center font-mono">{qteLigne(l)}</td>
-                          <td className="px-4 py-3 text-[#1B2632]/60 whitespace-nowrap">{jour(l.commandes?.updated_at)}</td>
-                          <td className="px-4 py-3 text-right font-mono">{sou(l.total_commande ?? l.montant)}</td>
-                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(l.frais_commande)}</td>
-                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(l.frais_livraison)}</td>
-                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(l.frais_upsell)}</td>
-                          <td className="px-4 py-3 text-right font-mono font-semibold">{sou(l.net ?? l.montant)}</td>
+                      {parProduit.length === 0 ? (
+                        <tr><td colSpan="7" className="px-4 py-6 text-center text-[#1B2632]/50">Aucune commande rattachée.</td></tr>
+                      ) : parProduit.map((x) => (
+                        <tr key={x.nom}>
+                          <td className="px-4 py-3 font-semibold text-[#1B2632]">{x.nom}</td>
+                          <td className="px-4 py-3 text-center font-mono">{x.qte}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(x.total)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(x.fc)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(x.fl)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-[#1B2632]/70">{sou(x.fu)}</td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold">{sou(x.net)}</td>
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-dashed border-[#C9C1B1] font-bold text-[#1B2632]">
-                        <td className="px-4 py-3" colSpan="3">Total</td>
-                        <td className="px-4 py-3 text-center font-mono">
-                          {lignes.reduce((s, l) => s + qteLigne(l), 0)}
-                        </td>
-                        <td></td>
-                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.total_ventes)}</td>
-                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_confirmation)}</td>
-                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_livraison)}</td>
-                        <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_upsell)}</td>
-                        <td className="px-4 py-3 text-right font-mono">
-                          {sou(Number(fiche.total_ventes || 0) - Number(fiche.frais_confirmation || 0) - Number(fiche.frais_livraison || 0) - Number(fiche.frais_upsell || 0))}
-                        </td>
-                      </tr>
-                    </tfoot>
+                    {parProduit.length > 0 && (
+                      <tfoot>
+                        <tr className="border-t-2 border-dashed border-[#C9C1B1] font-bold text-[#1B2632]">
+                          <td className="px-4 py-3">Total</td>
+                          <td className="px-4 py-3 text-center font-mono">{parProduit.reduce((t, x) => t + x.qte, 0)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(fiche.total_ventes)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_confirmation)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_livraison)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_upsell)}</td>
+                          <td className="px-4 py-3 text-right font-mono">{sou(parProduit.reduce((t, x) => t + x.net, 0))}</td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
 
+                {/* Retenues et ajustements (retenues_releve.sql) : visibles par tous,
+                    vendeur compris ; ajout / retrait seulement avant « payé ». */}
+                {(ajustements.length > 0 || (peutGerer && fiche.statut !== 'paye')) && (
+                  <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
+                    <div className="px-4 py-3 bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#A35139] font-bold">Ajustements</div>
+                    {ajustements.length === 0 ? (
+                      <p className="px-4 py-4 text-sm text-[#1B2632]/50">Aucun ajustement.</p>
+                    ) : (
+                      <table className="w-full min-w-[640px] text-left text-sm">
+                        <tbody className="divide-y divide-[#C9C1B1]/30">
+                          {ajustements.map((a) => (
+                            <tr key={a.id}>
+                              <td className="px-4 py-2.5 font-semibold text-[#1B2632] whitespace-nowrap">{TYPES_AJUST[a.type] || a.type}</td>
+                              <td className="px-4 py-2.5 text-[#1B2632]">{a.note}</td>
+                              <td className="px-4 py-2.5 text-xs text-[#1B2632]/50 whitespace-nowrap">
+                                {emailDe(a.cree_par) ? `${emailDe(a.cree_par)} · ` : ''}{jourHeure(a.cree_le)}
+                              </td>
+                              <td className={`px-4 py-2.5 text-right font-mono font-semibold whitespace-nowrap ${a.en_plus ? 'text-green-700' : 'text-[#A35139]'}`}>
+                                {a.en_plus ? '+ ' : '− '}{sou(a.montant)}
+                              </td>
+                              {peutGerer && fiche.statut !== 'paye' && (
+                                <td className="px-2 py-2.5 text-right sans-impression">
+                                  <button onClick={() => retirerAjustement(a)} title="Retirer"
+                                    className="w-7 h-7 rounded-full text-[#A35139] hover:bg-[#A35139]/10">×</button>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {peutGerer && fiche.statut !== 'paye' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-[150px_120px_1fr_auto] gap-2 p-3 border-t border-dashed border-[#C9C1B1] bg-[#faf9f7] sans-impression">
+                        <select className="rg-input" value={nouvelAjust.type}
+                          onChange={(e) => setNouvelAjust({ ...nouvelAjust, type: e.target.value, sens: '' })}>
+                          {Object.entries(TYPES_AJUST).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                        <input type="number" min="0" step="any" className="rg-input" placeholder="Montant" value={nouvelAjust.montant}
+                          onChange={(e) => setNouvelAjust({ ...nouvelAjust, montant: e.target.value })} />
+                        <div className="flex gap-2">
+                          {nouvelAjust.type === 'correction' && (
+                            <select className="rg-input !w-[170px]" value={nouvelAjust.sens}
+                              onChange={(e) => setNouvelAjust({ ...nouvelAjust, sens: e.target.value })}>
+                              <option value="">Sens…</option>
+                              <option value="moins">− retenue au vendeur</option>
+                              <option value="plus">+ rendue au vendeur</option>
+                            </select>
+                          )}
+                          <input type="text" className="rg-input" placeholder="Note (obligatoire)" value={nouvelAjust.note}
+                            onChange={(e) => setNouvelAjust({ ...nouvelAjust, note: e.target.value })} />
+                        </div>
+                        <button onClick={ajouterAjustement} disabled={ajustEnCours}
+                          className="px-5 py-2 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40">
+                          {ajustEnCours ? '...' : 'Ajouter'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row sm:justify-between gap-6">
-                  {/* Charges : à la main, avec une note, tant que le relevé n'est pas payé. */}
+                  {/* Crédit d'expédition : à la main (sa décision 09/11), 0 = aucun. */}
                   {peutGerer && fiche.statut !== 'paye' ? (
                     <div className="w-full sm:w-[360px] flex flex-col gap-2 p-4 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl sans-impression">
-                      <label className="rg-label">Charges ({fiche.devise || ''})</label>
-                      <input type="number" min="0" step="any" className="rg-input" value={charges.montant}
-                        onChange={(e) => setCharges({ ...charges, montant: e.target.value })} placeholder="0" />
-                      <label className="rg-label mt-1">Note (obligatoire si charges)</label>
-                      <input type="text" className="rg-input" value={charges.note}
-                        onChange={(e) => setCharges({ ...charges, note: e.target.value })} placeholder="Ex. : publicité, emballage…" />
-                      <button onClick={enregistrerCharges} disabled={chargesEnCours || !chargesModifiees}
+                      <label className="rg-label !mb-0">Crédit d&apos;expédition ({fiche.devise || ''})</label>
+                      <input type="date" className="rg-input" value={credit.date} title="Date de l'expédition"
+                        onChange={(e) => setCredit({ ...credit, date: e.target.value })} />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="number" min="0" step="any" className="rg-input" placeholder="Poids (kg)" value={credit.poids}
+                          onChange={(e) => setCredit({ ...credit, poids: e.target.value })} />
+                        <input type="number" min="0" step="any" className="rg-input" placeholder="Prix par kg" value={credit.prix}
+                          onChange={(e) => setCredit({ ...credit, prix: e.target.value })} />
+                      </div>
+                      <input type="number" min="0" step="any" className="rg-input" placeholder="Montant" value={credit.montant}
+                        onChange={(e) => setCredit({ ...credit, montant: e.target.value })} />
+                      <input type="text" className="rg-input" value={credit.note} placeholder="Note (transport, trajet…) — facultatif"
+                        onChange={(e) => setCredit({ ...credit, note: e.target.value })} />
+                      <button onClick={enregistrerCredit} disabled={creditEnCours || !creditModifie}
                         className={`mt-1 px-5 py-2 rounded-xl text-sm font-bold transition-colors ${
-                          chargesModifiees || !chargesSaisies
+                          creditModifie || !creditSaisi
                             ? 'bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40'
                             : 'bg-green-50 text-green-800 border border-green-200'}`}>
-                        {chargesEnCours ? 'Enregistrement...'
-                          : chargesModifiees || !chargesSaisies ? 'Enregistrer les charges' : 'Charges enregistrées ✓'}
+                        {creditEnCours ? 'Enregistrement...'
+                          : creditModifie || !creditSaisi ? 'Enregistrer le crédit' : 'Crédit enregistré ✓'}
                       </button>
                     </div>
                   ) : <div />}
-                  <div className="w-full sm:w-[340px] flex flex-col gap-2">
+                  <div className="w-full sm:w-[360px] flex flex-col gap-2">
                     <LigneTotal label="Total des ventes" valeur={sou(fiche.total_ventes)} devise={fiche.devise} />
                     <LigneTotal label="Frais commande" valeur={'− ' + sou(fiche.frais_confirmation)} devise={fiche.devise} />
                     <LigneTotal label="Frais livraison" valeur={'− ' + sou(fiche.frais_livraison)} devise={fiche.devise} />
@@ -611,10 +778,18 @@ export default function ReglementsVendeurs() {
                     {Number(fiche.frais_service || 0) > 0 && (
                       <LigneTotal label="Frais de service" valeur={'− ' + sou(fiche.frais_service)} devise={fiche.devise} />
                     )}
-                    <LigneTotal label="Charges" valeur={'− ' + sou(fiche.frais_divers)} devise={fiche.devise} />
-                    {fiche.frais_divers_note && (
-                      <p className="px-4 text-sm text-[#1B2632] text-right">Note : {fiche.frais_divers_note}</p>
+                    <LigneTotal label="Crédit d'expédition" valeur={'− ' + sou(fiche.credit_expedition)} devise={fiche.devise} />
+                    {fiche.credit_expedition_poids != null && (
+                      <p className="px-4 text-sm text-[#1B2632] text-right">
+                        {fiche.credit_expedition_date && `Expédition du ${jour(fiche.credit_expedition_date)} — `}
+                        {Number(fiche.credit_expedition_poids).toLocaleString('fr-FR')} kg × {sou(fiche.credit_expedition_prix_kg)} / kg
+                        {fiche.credit_expedition_note && ` — ${fiche.credit_expedition_note}`}
+                      </p>
                     )}
+                    <LigneTotal label="Ajustements"
+                      valeur={(Number(fiche.frais_divers || 0) < 0 ? '+ ' : '− ') + sou(Math.abs(Number(fiche.frais_divers || 0)))} devise={fiche.devise} />
+                    <LigneTotal label={`Frais de transfert (${Number(fiche.frais_transfert_pct || 0).toLocaleString('fr-FR')} %)`}
+                      valeur={'− ' + sou(fiche.frais_transfert)} devise={fiche.devise} />
                     <div className="flex justify-between items-baseline px-4 py-3 bg-[#EEE9DF] rounded-xl mt-1">
                       <span className="text-sm font-bold text-[#1B2632]">À payer</span>
                       <span className="text-xl font-bold text-[#1B2632] font-mono">
@@ -782,6 +957,11 @@ export default function ReglementsVendeurs() {
       )}
     </div>
   )
+}
+
+// Le nom du produit du catalogue (produit_id) ; à défaut, le texte de la commande.
+function nomProduit(l) {
+  return l.commandes?.produits?.product || l.commandes?.produit || '—'
 }
 
 // La quantité copiée sur la ligne à l'établissement ; avant le 05/11 elle

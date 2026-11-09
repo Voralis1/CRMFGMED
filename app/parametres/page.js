@@ -60,7 +60,7 @@ export default function ParametresAdmin() {
   // --- États Frais vendeurs ---
   const [listeTarifs, setListeTarifs] = useState([]);
   const [listeVendeurs, setListeVendeurs] = useState([]);
-  const TARIF_VIDE = { pays_id: "", vendeur_id: "", frais_commande: "", frais_livraison: "", frais_upsell_unite: "", valide_depuis: "" };
+  const TARIF_VIDE = { pays_id: "", vendeur_id: "", frais_commande: "", frais_livraison: "", frais_upsell_unite: "", frais_transfert_pct: "", valide_depuis: "" };
   const [nouveauTarif, setNouveauTarif] = useState(TARIF_VIDE);
 
   // --- États Pays ---
@@ -140,7 +140,7 @@ export default function ParametresAdmin() {
 
     // Table absente (frais_vendeurs.sql pas encore lancé) : l'onglet reste vide.
     const { data: tarifsData } = await supabase.from("tarifs_vendeurs")
-      .select("id, pays_id, vendeur_id, frais_commande, frais_livraison, frais_upsell_unite, valide_depuis, pays(nom, devise)")
+      .select("id, pays_id, vendeur_id, frais_commande, frais_livraison, frais_upsell_unite, frais_transfert_pct, valide_depuis, pays(nom, devise)")
       .eq("tenant_id", tenantId).order("valide_depuis", { ascending: false });
     setListeTarifs(tarifsData || []);
 
@@ -431,9 +431,13 @@ export default function ParametresAdmin() {
     if (!t.pays_id) return afficherMessage("Choisissez un pays.", "erreur");
     const montants = [t.frais_commande, t.frais_livraison, t.frais_upsell_unite].map((x) => Number(x || 0));
     if (montants.some((x) => !Number.isFinite(x) || x < 0)) return afficherMessage("Montants invalides.", "erreur");
+    // Frais de transfert (retenues_releve.sql, 09/11) : un %, 0 = aucun.
+    const pct = Number(t.frais_transfert_pct || 0);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return afficherMessage("Frais de transfert : un pourcentage entre 0 et 100.", "erreur");
     const ligne = {
       tenant_id: tenantId, pays_id: t.pays_id, vendeur_id: t.vendeur_id || null,
       frais_commande: montants[0], frais_livraison: montants[1], frais_upsell_unite: montants[2],
+      frais_transfert_pct: pct,
     };
     if (t.valide_depuis) ligne.valide_depuis = t.valide_depuis;
     const { error } = await supabase.from("tarifs_vendeurs").insert([ligne]);
@@ -1129,7 +1133,7 @@ export default function ParametresAdmin() {
               </div>
 
               {peutModifierFrais ? (
-                <form onSubmit={ajouterTarif} className="grid grid-cols-1 md:grid-cols-7 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+                <form onSubmit={ajouterTarif} className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
                     <select required value={nouveauTarif.pays_id} onChange={(e) => setNouveauTarif({ ...nouveauTarif, pays_id: e.target.value })} className="fg-input cursor-pointer">
@@ -1157,6 +1161,10 @@ export default function ParametresAdmin() {
                     <input type="number" min="0" step="any" required value={nouveauTarif.frais_upsell_unite} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_upsell_unite: e.target.value })} className="fg-input" placeholder="1500" />
                   </div>
                   <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais de transfert (%)</label>
+                    <input type="number" min="0" max="100" step="any" value={nouveauTarif.frais_transfert_pct} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_transfert_pct: e.target.value })} className="fg-input" placeholder="0" />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Valide depuis</label>
                     <input type="date" value={nouveauTarif.valide_depuis} onChange={(e) => setNouveauTarif({ ...nouveauTarif, valide_depuis: e.target.value })} className="fg-input" />
                   </div>
@@ -1166,22 +1174,22 @@ export default function ParametresAdmin() {
                 <p className="text-xs text-[#1B2632]/50 mb-6">Seul l&apos;administrateur modifie les frais vendeurs.</p>
               )}
               {peutModifierFrais && (
-                <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">Date vide = à partir d&apos;aujourd&apos;hui. Elle compte au jour de la livraison du lead.</p>
+                <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">Date vide = à partir d&apos;aujourd&apos;hui. Elle compte au jour de la livraison du lead (au jour du relevé pour le transfert). Transfert vide = 0 %.</p>
               )}
 
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
-                <table className="fg-table w-full min-w-[760px]">
+                <table className="fg-table w-full min-w-[860px]">
                   <thead>
                     <tr>
                       <th>Pays</th><th>Vendeur</th>
                       <th className="text-right">Frais commande</th><th className="text-right">Frais livraison</th>
-                      <th className="text-right">Upsell / unité</th><th>Valide depuis</th>
+                      <th className="text-right">Upsell / unité</th><th className="text-right">Transfert</th><th>Valide depuis</th>
                       {peutModifierFrais && <th className="text-right">Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {listeTarifs.length === 0 && (
-                      <tr><td colSpan={peutModifierFrais ? 7 : 6} className="text-center py-6 text-gray-400">
+                      <tr><td colSpan={peutModifierFrais ? 8 : 7} className="text-center py-6 text-gray-400">
                         Aucun frais saisi : aucun relevé vendeur ne peut être établi.
                       </td></tr>
                     )}
@@ -1195,6 +1203,7 @@ export default function ParametresAdmin() {
                           <td className="text-right font-mono">{m(t.frais_commande)}</td>
                           <td className="text-right font-mono">{m(t.frais_livraison)}</td>
                           <td className="text-right font-mono">{m(t.frais_upsell_unite)}</td>
+                          <td className="text-right font-mono">{Number(t.frais_transfert_pct || 0).toLocaleString("fr-FR")} %</td>
                           <td>{new Date(t.valide_depuis + "T00:00:00").toLocaleDateString("fr-FR")}</td>
                           {peutModifierFrais && (
                             <td className="text-right">
