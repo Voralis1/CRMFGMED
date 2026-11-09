@@ -59,6 +59,9 @@ export default function ReglementsVendeurs() {
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
   const peutGerer = hasPermission('gerer_reglements')
+  // « Marquer payé » = la validation : admin et super admin (sa décision 09/11).
+  // La base refuse aussi tout autre compte (reglements_garde).
+  const peutPayer = hasPermission('payer_reglements')
 
   const [releves, setReleves] = useState([])
   const [personnel, setPersonnel] = useState([])
@@ -823,10 +826,12 @@ export default function ReglementsVendeurs() {
                       className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-red-700 border border-red-300 hover:bg-red-50 transition-colors">
                       Supprimer
                     </button>
-                    <button onClick={() => marquerPaye(fiche)}
-                      className="px-6 py-2.5 rounded-xl text-sm font-bold bg-green-600 text-white hover:bg-green-700 transition-colors">
-                      Marquer payé
-                    </button>
+                    {peutPayer && (
+                      <button onClick={() => marquerPaye(fiche)}
+                        className="px-6 py-2.5 rounded-xl text-sm font-bold bg-green-600 text-white hover:bg-green-700 transition-colors">
+                        Marquer payé
+                      </button>
+                    )}
                   </>
                 )}
               </div>
