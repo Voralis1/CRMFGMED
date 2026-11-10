@@ -393,6 +393,19 @@ export default function ExpeditionsPage() {
     // l'arrivée. L'envoyer depuis le formulaire d'un vendeur l'écraserait avec
     // une valeur vide à chaque correction.
 
+    // Une expédition REÇUE ne perd pas de produit (expedition_suppression_recue.sql,
+    // 10/11) : son stock est entré, le retirer laisserait le stock faux. On le
+    // dit AVANT d'enregistrer quoi que ce soit — la base le refuse aussi.
+    const enEdition = idEnEdition ? expeditions.find((x) => x.id === idEnEdition) : null
+    if (enEdition?.entrepot_reception_id) {
+      const gardes = new Set(lignes.filter((l) => !l.supprime && l.produit_id).map((l) => l.produit_id))
+      const { data: recues } = await supabase.from('expeditions_produits')
+        .select('produit_id').eq('expedition_id', idEnEdition).not('produit_id', 'is', null)
+      if ((recues || []).some((r) => !gardes.has(r.produit_id))) {
+        return annonce('Cette expédition est déjà reçue : un produit ne se retire pas. Corrigez sa quantité si elle est fausse.', 'erreur')
+      }
+    }
+
     setEnregistrement(true)
     const requete = idEnEdition
       ? supabase.from('expeditions').update(donnees).eq('id', idEnEdition).eq('tenant_id', tenantKey).select()
@@ -945,7 +958,8 @@ export default function ExpeditionsPage() {
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
                             </button>
                           )}
-                          {(peutConfirmer || enAttente) && peutCreer && (
+                          {/* Reçue = stock entré : elle ne se supprime plus (T19, 10/11). */}
+                          {(peutConfirmer || enAttente) && peutCreer && !e.entrepot_reception_id && (
                             <button
                               onClick={() => supprimer(e)} title="Supprimer"
                               className="w-8 h-8 rounded-lg flex items-center justify-center text-[#1B2632]/50 hover:text-red-600 hover:bg-red-50 transition-colors"
