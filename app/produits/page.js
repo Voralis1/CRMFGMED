@@ -468,11 +468,11 @@ export default function ProduitsPage() {
 
     if (error) {
       setEnregistrement(false)
-      // idx_produits_code_unique : un code par entreprise (casse et espaces ignorés).
+      // idx_produits_code_unique : un code par VENDEUR depuis le 10/11 (T14 —
+      // produits_par_vendeur.sql ; casse et espaces ignorés). Deux vendeurs
+      // peuvent avoir chacun leur « clearzal ».
       if (error.code === '23505' && String(error.message).includes('idx_produits_code_unique')) {
-        // Rien sur l'autre produit : un vendeur ne voit que les siens, et le
-        // code peut être celui d'un produit qu'il n'a pas le droit de voir.
-        return annonce('Ce code est déjà utilisé dans l\u2019entreprise. Choisissez-en un autre.', 'erreur')
+        return annonce('Ce vendeur a déjà un produit avec ce code. Choisissez-en un autre.', 'erreur')
       }
       return annonce('Enregistrement refusé : ' + error.message, 'erreur')
     }

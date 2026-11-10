@@ -303,7 +303,7 @@ export default function GestionCommandesPage() {
       // Le catalogue, pour tout le monde : la RLS de `produits` fait le tri
       // (un vendeur ne reçoit que les siens). Le stock, lui, n'est jamais
       // chargé : voir verdictsImport.
-      supabase.from('produits').select('id, code, product, image_chemin').eq('tenant_id', tenantKey),
+      supabase.from('produits').select('id, code, product, image_chemin, vendeur_id').eq('tenant_id', tenantKey),
     ])
     if (agentsData) setAgents(agentsData)
     if (paysData) setListePays(paysData)
@@ -418,11 +418,14 @@ export default function GestionCommandesPage() {
       nomEntrepot: cibleImport.nom,
       enStock,
       duVendeur: estSeller,
+      // Le vendeur du fichier (10/11, T14) : ses produits d'abord, puis ceux
+      // sans vendeur — comme la base qui reliera chaque commande.
+      vendeurId: estSeller ? (user?.id || null) : (importVendeurId || null),
     })
       .then((liste) => { if (!annule) setVerdictsImport({ etat: 'pret', liste }) })
       .catch(() => { if (!annule) setVerdictsImport({ etat: 'erreur', liste: [] }) })
     return () => { annule = true }
-  }, [apercu, cibleImport, catalogue, enStock, estSeller])
+  }, [apercu, cibleImport, catalogue, enStock, estSeller, user?.id, importVendeurId])
 
   const produitsRefuses = (verdictsImport?.liste || []).filter((v) => !v.ok)
   const produitsEnRupture = (verdictsImport?.liste || []).filter((v) => v.cas === 'rupture')

@@ -437,6 +437,7 @@ export interface ProduitCatalogue {
   id: string
   product: string
   code: string | null
+  vendeur_id?: string | null
 }
 
 // sansAccents vient de ./pays.ts (partagé avec l'écran Commandes).
@@ -492,6 +493,34 @@ export function resoudreArticles(
       prix: a.prix,
       code,
     })
+  }
+  return { articles, inconnus }
+}
+
+// Le catalogue d'un VENDEUR (10/11, T14 — sa règle : « le même nom chez deux
+// vendeurs = deux produits ») : d'abord SES produits, puis ceux sans vendeur
+// (utilisables par tous, sa réponse du 10/11) ; jamais ceux d'un autre vendeur.
+// Même ordre que la base (produit_de_commande_vendeur, produits_par_vendeur.sql),
+// qui pose produit_id : le texte écrit ici doit être celui qu'elle retrouvera.
+// Sans vendeur connu : tout le catalogue, comme avant.
+export function resoudreArticlesVendeur(
+  lus: ArticleLu[],
+  catalogue: ProduitCatalogue[],
+  vendeurId: string | null,
+): { articles: Article[]; inconnus: string[] } {
+  if (!vendeurId) return resoudreArticles(lus, catalogue)
+  const siens = catalogue.filter((p) => p.vendeur_id === vendeurId)
+  const partages = catalogue.filter((p) => !p.vendeur_id)
+  const articles: Article[] = []
+  const inconnus: string[] = []
+  for (const a of lus) {
+    let r = resoudreArticles([a], siens)
+    if (r.inconnus.length > 0) {
+      const r2 = resoudreArticles([a], partages)
+      if (r2.inconnus.length === 0) r = r2
+    }
+    articles.push(...r.articles)
+    inconnus.push(...r.inconnus)
   }
   return { articles, inconnus }
 }
@@ -590,7 +619,7 @@ async function chargerCache(sb: SupabaseClient, tenantId: string, cache: Cache) 
     cache.sellers = data ?? []
   }
   if (!cache.produits) {
-    const { data } = await sb.from('produits').select('id, product, code').eq('tenant_id', tenantId)
+    const { data } = await sb.from('produits').select('id, product, code, vendeur_id').eq('tenant_id', tenantId)
     cache.produits = data ?? []
   }
 }
@@ -706,7 +735,7 @@ export async function importerLigne(
 
   // --- quels produits ? -----------------------------------------------------
   // Par code, puis par nom sans accents, sinon rien — voir resoudreArticles().
-  const { articles, inconnus } = resoudreArticles(lead.articles ?? [], cache.produits ?? [])
+  const { articles, inconnus } = resoudreArticlesVendeur(lead.articles ?? [], cache.produits ?? [], vendeurId ?? null)
   const note = inconnus.length > 0 ? `Produit non reconnu : ${inconnus.join(', ')}` : undefined
 
   const { data: commande, error } = await sb.from('commandes').insert({
