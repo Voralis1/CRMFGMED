@@ -498,15 +498,16 @@ export function resoudreArticles(
 
 // La clé qui décide « déjà vu ou pas ».
 //
-// Si la source fournit un identifiant, c'est lui — PRÉFIXÉ par la source
-// quand le lead arrive par une source : "SHOP1-727". Deux boutiques d'une même
-// entreprise numérotent chacune depuis 1 ; sans préfixe, la commande 727 de la
-// seconde était prise pour un doublon de la première et perdue sans bruit.
-// L'unicité est `unique (tenant_id, vendeur, source, lead_id)` depuis le 27/10
-// (lead_id_par_vendeur_source.sql, coalesce sur les deux colonnes qui peuvent
-// être NULL) ; « déjà vu ? » dans importerLigne cherche avec la même portée
-// pour un numéro de boutique. Un identifiant qui porte déjà
-// le préfixe (la boutique renvoie le nôtre) n'est pas préfixé deux fois.
+// Si la source fournit un identifiant, c'est lui, TEL QUEL (sa décision 10/11,
+// T18) : la commande 9985 de la boutique reste « 9985 » dans le CRM — c'est le
+// numéro que le vendeur et le client citent. Le préfixe de la source
+// (« MABOUTIQUE-9985 ») n'est plus ajouté : il servait à séparer deux
+// boutiques qui numérotent chacune depuis 1, et l'unicité le fait déjà —
+// `unique (tenant_id, vendeur, source, lead_id)` depuis le 27/10
+// (lead_id_par_vendeur_source.sql) ; « déjà vu ? » dans importerLigne cherche
+// avec la même portée. Les commandes reçues AVANT le 10/11 gardent leur
+// préfixe : « déjà vu ? » cherche aussi cette forme (clesAnciennes), pour
+// qu'un ré-envoi d'une ancienne commande ne la crée pas une seconde fois.
 //
 // Sans identifiant, on en fabrique un
 // STABLE à partir du téléphone, du produit et du jour. Avant, on tirait un
@@ -518,15 +519,20 @@ export function resoudreArticles(
 // formulaire ; et un doublon qu'on fusionne coûte moins cher qu'un client
 // appelé deux fois. Cette clé-là n'est PAS préfixée : le même client qui
 // commande le même produit le même jour sur deux boutiques reste un doublon.
+// La forme d'AVANT le 10/11 (« PREFIXE-numéro ») : cherchée aussi par « déjà
+// vu ? ». Rien si la source n'a pas de préfixe, ou si le numéro le porte déjà.
+export function clesAnciennes(lead: LeadNormalise, prefixe: string | null = null): string[] {
+  if (!lead.lead_id || !prefixe) return []
+  if (lead.lead_id.toUpperCase().startsWith(prefixe.toUpperCase() + '-')) return []
+  return [`${prefixe}-${lead.lead_id}`]
+}
+
 export async function cleExterne(
   tenantId: string,
   lead: LeadNormalise,
-  prefixe: string | null = null,
+  _prefixe: string | null = null,   // gardé pour les appelants ; plus utilisé (10/11)
 ): Promise<string> {
-  if (lead.lead_id) {
-    if (!prefixe || lead.lead_id.toUpperCase().startsWith(prefixe.toUpperCase() + '-')) return lead.lead_id
-    return `${prefixe}-${lead.lead_id}`
-  }
+  if (lead.lead_id) return lead.lead_id
   const jour = new Date().toISOString().slice(0, 10)
   const empreinte = await sha256Hex(
     [tenantId, lead.client_telephone ?? '', (lead.produit ?? '').toLowerCase(), jour].join('|'),
@@ -684,8 +690,10 @@ export async function importerLigne(
   // l'index, et WooCommerce coupe un webhook après ~5 refus. limit(1) : une
   // ligne suffit à dire « déjà vu » — et pour un numéro de boutique, la
   // portée exacte garantit qu'il ne peut y en avoir qu'une.
+  const cles = [cle, ...clesAnciennes(lead, ctx.prefixeLead ?? null)]
   let dejaVu = sb.from('commandes')
-    .select('id').eq('tenant_id', ctx.tenantId).eq('lead_id', cle)
+    .select('id, lead_id').eq('tenant_id', ctx.tenantId)
+  dejaVu = cles.length > 1 ? dejaVu.in('lead_id', cles) : dejaVu.eq('lead_id', cle)
   if (lead.lead_id) {
     dejaVu = vendeurId ? dejaVu.eq('vendeur_id', vendeurId) : dejaVu.is('vendeur_id', null)
     dejaVu = ctx.sourceId ? dejaVu.eq('source_id', ctx.sourceId) : dejaVu.is('source_id', null)
@@ -693,7 +701,7 @@ export async function importerLigne(
   const { data: dejaVus } = await dejaVu.limit(1)
   const existant = dejaVus?.[0] ?? null
   if (existant) {
-    return conclure({ statut: 'doublon', lead_id: cle }, existant.id)
+    return conclure({ statut: 'doublon', lead_id: existant.lead_id ?? cle }, existant.id)
   }
 
   // --- quels produits ? -----------------------------------------------------
