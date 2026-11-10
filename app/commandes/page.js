@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 // Le verdict produit de l'import CSV : une fonction, vendeur et responsable.
-import { verdictProduits, commandesEnRupture, produitDuCatalogue } from '../../lib/verdictImport.mjs'
+import { verdictProduits, commandesEnRupture, produitDeCommande } from '../../lib/verdictImport.mjs'
 import VignetteProduit from '../components/VignetteProduit'
 // Les noms des colonnes, la même table que l'API.
 import { cleNormalisee } from '../../supabase/functions/_shared/champs.ts'
@@ -439,12 +439,12 @@ export default function GestionCommandesPage() {
   // porte), jamais écrite sur la commande : une note de stock serait fausse
   // dès le premier réassort. Seulement les commandes pas encore livrées, qui
   // ont un entrepôt (sans entrepôt, stock_note dit déjà pourquoi).
-  // L'image du produit d'une commande (26/10). La commande porte son produit
-  // en TEXTE : on le retrouve comme la base (code, puis nom, sans accents —
-  // produitDuCatalogue = produit_de_commande). Non reconnu → pas d'image, et
-  // rien n'est dessiné.
+  // L'image du produit d'une commande (26/10). Par son LIEN (produit_id) d'abord
+  // (10/11, T9 : le texte d'une commande de boutique n'est ni un code ni un nom
+  // du catalogue), puis par son texte comme la base (code, puis nom, sans
+  // accents). Non reconnu → pas d'image, et rien n'est dessiné.
   const imageDuProduit = useCallback(
-    (texte) => produitDuCatalogue(texte, catalogue).produit?.image_chemin || null,
+    (commande) => produitDeCommande(commande, catalogue).produit?.image_chemin || null,
     [catalogue],
   )
 
@@ -1711,7 +1711,7 @@ export default function GestionCommandesPage() {
                           <tbody>
                             <tr>
                               <td className="px-3 py-2.5">
-                                <VignetteProduit chemin={imageDuProduit(cmd.produit)} taille={36} vide="rien" alt={cmd.produit || ''} />
+                                <VignetteProduit chemin={imageDuProduit(cmd)} taille={36} vide="rien" alt={cmd.produit || ''} />
                               </td>
                               <td className="px-3 py-2.5 text-[#1B2632]">
                                 {/* L'entrepôt est fixé par la base (resoudre_entrepot_commande),
@@ -2269,7 +2269,7 @@ export default function GestionCommandesPage() {
                       <tr className="border-t border-[#C9C1B1]/30">
                         <td className="px-5 py-3 font-semibold text-[#1B2632]">
                           <span className="flex items-center gap-3">
-                            <VignetteProduit chemin={imageDuProduit(detail.produit)} taille={48} vide="rien" alt={detail.produit || ''} />
+                            <VignetteProduit chemin={imageDuProduit(detail)} taille={48} vide="rien" alt={detail.produit || ''} />
                             {detail.produit || '—'}
                           </span>
                         </td>

@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 import VignetteProduit from '../components/VignetteProduit'
-import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
+import { produitDeCommande } from '../../lib/verdictImport.mjs'
 // Le vendeur : la commande sans l'agent ni qui l'a remontée (02/11).
 import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
 
@@ -262,7 +262,7 @@ export default function LivraisonsPage() {
     // tarifs de zone, ni la date de création de la livraison.
     // Les autres comptes (responsables, vendeur) : inchangé ici.
     const colonnesCommande = estLivreur
-      ? `id, client_nom, client_telephone, adresse, ville_zone, zone_id, produit, quantite, prix, tracking_number,
+      ? `id, client_nom, client_telephone, adresse, ville_zone, zone_id, produit, produit_id, quantite, prix, tracking_number,
           pays(nom, devise),
           zones(nom_zone)`
       : estSeller
@@ -357,13 +357,19 @@ export default function LivraisonsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, permsLoading, construireRequete, page, parPage, estLivreur])
 
-  // Le livreur : les produits de ses livraisons affichées, retrouvés par leur
-  // code ou leur nom (comme produitDuCatalogue, sans casse) — pour l'image.
+  // Le livreur : les produits de ses livraisons affichées — par leur LIEN
+  // (produit_id, 10/11 T9 : le texte d'une commande de boutique n'est ni un code
+  // ni un nom), et par leur code ou leur nom (comme produitDuCatalogue, sans
+  // casse) pour les anciennes commandes — pour l'image.
   async function chargerProduitsDuLivreur(lignes) {
     const textes = [...new Set(lignes.map((l) => (l.commandes?.produit || '').trim()).filter(Boolean))]
-    if (textes.length === 0) { setCatalogue([]); return }
+    const ids = [...new Set(lignes.map((l) => l.commandes?.produit_id).filter(Boolean))]
+    if (textes.length === 0 && ids.length === 0) { setCatalogue([]); return }
     const propre = (t) => t.replace(/[,()"\\*%]/g, '')
-    const conditions = textes.flatMap((t) => [`code.ilike.${propre(t)}`, `product.ilike.${propre(t)}`]).join(',')
+    const conditions = [
+      ...(ids.length > 0 ? [`id.in.(${ids.join(',')})`] : []),
+      ...textes.flatMap((t) => [`code.ilike.${propre(t)}`, `product.ilike.${propre(t)}`]),
+    ].join(',')
     const { data } = await supabase.from('produits').select('id, code, product, image_chemin')
       .eq('tenant_id', tenantId).or(conditions)
     setCatalogue(data || [])
@@ -1023,7 +1029,7 @@ export default function LivraisonsPage() {
                               base (code, puis nom). Non reconnu → pas d'image. */}
                           <span className="flex items-center gap-3">
                             <VignetteProduit
-                              chemin={produitDuCatalogue(detail.commandes?.produit, catalogue).produit?.image_chemin}
+                              chemin={produitDeCommande(detail.commandes, catalogue).produit?.image_chemin}
                               taille={64} vide="rien" alt={detail.commandes?.produit || ''} />
                             {detail.commandes?.produit || '—'}
                           </span>

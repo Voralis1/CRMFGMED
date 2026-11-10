@@ -12,7 +12,7 @@ import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import SelectAgent, { AUCUN_AGENT, nomFiltreAgent as nomDuFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 // Le filtre produit par PRODUIT (produit_id), partagé avec Commandes.
 import { NON_RECONNU, filtrerParProduit, nomProduitFiltre, optionsProduit } from '../../lib/filtreProduit.mjs'
-import { produitDuCatalogue } from '../../lib/verdictImport.mjs'
+import { produitDuCatalogue, produitDeCommande } from '../../lib/verdictImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
@@ -1532,10 +1532,13 @@ export default function CentreAppelAgent() {
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Produit</label>
                     <div className="flex items-center gap-3">
-                      {/* Le texte du champ, retrouvé comme la base (code, puis nom) :
-                          s'il est corrigé pendant l'appel, l'image suit. Non reconnu → rien. */}
+                      {/* Le LIEN de la commande d'abord (10/11, T9), tant que le texte
+                          n'a pas été changé pendant l'appel ; texte corrigé → retrouvé
+                          comme la base (code, puis nom), l'image suit. Non reconnu → rien. */}
                       <VignetteProduit
-                        chemin={produitDuCatalogue(formData.produit, catalogue).produit?.image_chemin}
+                        chemin={(formData.produit === (commandeSelectionnee?.produit || '')
+                          ? produitDeCommande(commandeSelectionnee, catalogue)
+                          : produitDuCatalogue(formData.produit, catalogue)).produit?.image_chemin}
                         taille={48} vide="rien" alt={formData.produit || ''} />
                       <input
                         type="text"
