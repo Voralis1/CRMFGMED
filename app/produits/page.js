@@ -138,6 +138,10 @@ export default function ProduitsPage() {
   const [skusProduit, setSkusProduit] = useState([])
   const [sources, setSources] = useState([])
   const [skusInconnus, setSkusInconnus] = useState([])
+  // Les SKU proposés par un vendeur, en attente d'un manager / admin (11/11,
+  // option C, sku_propositions.sql) : le vendeur PROPOSE, le responsable APPROUVE.
+  const [propositions, setPropositions] = useState([])
+  const [panneauPropositions, setPanneauPropositions] = useState(false)
   const [panneauSku, setPanneauSku] = useState(false)
   const [nouveauSku, setNouveauSku] = useState({ sku: '', pack: '1', source: '' })
   const [choixInconnu, setChoixInconnu] = useState({})   // { cle: { produit, pack } }
@@ -197,6 +201,16 @@ export default function ProduitsPage() {
         .from('v_pays_livrables').select('pays_id, nom').eq('tenant_id', tenantKey).order('nom')
       setPaysLivrables(paysDB || [])
 
+      // Ses boutiques, ses SKU inconnus, ses propositions (sku_propositions.sql).
+      const { data: sesSources } = await supabase
+        .from('sources_import').select('id, nom, vendeur_id').eq('tenant_id', tenantKey)
+      setSources(sesSources || [])
+      const { data: sesInconnus } = await supabase.rpc('skus_inconnus_du_vendeur', { p_tenant: tenantKey })
+      setSkusInconnus(sesInconnus || [])
+      const { data: sesPropositions } = await supabase.from('propositions_sku')
+        .select('id, source_id, sku, produit_id, multiplicateur, propose_par, propose_le').order('propose_le')
+      setPropositions(sesPropositions || [])
+
       setChargement(false)
       return
     }
@@ -227,6 +241,10 @@ export default function ProduitsPage() {
     setSources(sourcesDB || [])
     const { data: inconnusDB } = await supabase.rpc('skus_inconnus', { p_tenant: tenantKey })
     setSkusInconnus(inconnusDB || [])
+    const { data: propositionsDB } = await supabase.from('propositions_sku')
+      .select('id, source_id, sku, produit_id, multiplicateur, propose_par, propose_le')
+      .eq('tenant_id', tenantKey).order('propose_le')
+    setPropositions(propositionsDB || [])
 
     const regroupe = {}
     for (const s of stocks || []) {
@@ -322,8 +340,7 @@ export default function ProduitsPage() {
   const SENS = { entree: 1, retour_ok: 1, ajustement: 1, sortie: -1, retour_defaut: -1 }
 
   async function chargerSkusProduit(produitId) {
-    const { data } = await supabase.from('correspondances_sku')
-      .select('id, sku, multiplicateur, source_id, titre_vu').eq('produit_id', produitId).order('sku')
+    const { data } = await supabase.rpc('skus_du_produit', { p_produit: produitId })
     setSkusProduit(data || [])
   }
 
@@ -333,6 +350,16 @@ export default function ProduitsPage() {
     if (!source || !sku.trim() || !produit) return annonce('Boutique, SKU et produit sont obligatoires.', 'erreur')
     const n = parseInt(pack, 10)
     if (!(n >= 1 && n <= 100)) return annonce('Le pack doit être un nombre d\u2019unités entre 1 et 100.', 'erreur')
+    if (estSeller) {
+      const { error: eProp } = await supabase.rpc('proposer_sku', {
+        p_source: source, p_sku: sku.trim(), p_produit: produit, p_multiplicateur: n,
+      })
+      if (eProp) return annonce('Proposition refusée : ' + eProp.message, 'erreur')
+      annonce(`SKU « ${sku.trim()} » proposé : un manager ou un admin doit l\u2019approuver.`, 'succes')
+      setNouveauSku({ sku: '', pack: '1', source: '' })
+      charger()
+      return
+    }
     const { data, error } = await supabase.rpc('ajouter_correspondance_sku', {
       p_source: source, p_sku: sku.trim(), p_produit: produit, p_multiplicateur: n,
     })
@@ -341,6 +368,45 @@ export default function ProduitsPage() {
     annonce(`SKU « ${sku.trim()} » ajouté${relies ? ` : ${relies} lead${relies > 1 ? 's' : ''} relié${relies > 1 ? 's' : ''}` : ''}.`, 'succes')
     setNouveauSku({ sku: '', pack: '1', source: '' })
     if (ficheOuverte?.id === produit) await chargerSkusProduit(produit)
+    charger()
+  }
+
+  // Les SKU tapés dans le formulaire du produit, après son enregistrement : un
+  // responsable les ajoute (les leads qui attendent sont reliés), un vendeur les
+  // PROPOSE. Rend le texte à ajouter au message.
+  async function traiterSkusFormulaire(produitId, vendeurProduit) {
+    const lignes = skusFormulaire.filter((x) => x.sku.trim())
+    if (lignes.length === 0) return ''
+    const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === vendeurProduit)
+    const source = sourceFormulaire || (boutiques.length === 1 ? boutiques[0].id : '')
+    if (!source) return ' SKU non ajoutés : choisissez la boutique.'
+    const refus = []
+    let relies = 0
+    for (const x of lignes) {
+      const args = { p_source: source, p_sku: x.sku.trim(), p_produit: produitId, p_multiplicateur: parseInt(x.pack, 10) || 1 }
+      const { data: r, error: eSku } = await supabase.rpc(estSeller ? 'proposer_sku' : 'ajouter_correspondance_sku', args)
+      if (eSku) refus.push(`${x.sku.trim()} (${eSku.message})`)
+      else if (!estSeller) relies += r?.[0]?.commandes_reliees ?? 0
+    }
+    const faits = lignes.length - refus.length
+    return (faits > 0
+      ? (estSeller ? ` ${faits} SKU proposé(s) : un manager ou un admin doit les approuver.` : ` ${faits} SKU ajouté(s)${relies ? `, ${relies} lead(s) relié(s)` : ''}.`)
+      : '') + (refus.length ? ` SKU refusé(s) : ${refus.join(' ; ')}.` : '')
+  }
+
+  async function approuverSku(x) {
+    const { data, error } = await supabase.rpc('approuver_sku', { p_proposition: x.id })
+    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    annonce(`SKU « ${x.sku} » approuvé${data ? ` : ${data} lead${data > 1 ? 's' : ''} relié${data > 1 ? 's' : ''}` : ''}.`, 'succes')
+    if (ficheOuverte) await chargerSkusProduit(ficheOuverte.id)
+    charger()
+  }
+
+  async function refuserSku(x) {
+    if (!window.confirm(estSeller ? `Retirer votre proposition « ${x.sku} » ?` : `Refuser le SKU « ${x.sku} » ?`)) return
+    const { error } = await supabase.rpc('refuser_sku', { p_proposition: x.id })
+    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    annonce(estSeller ? 'Proposition retirée.' : `SKU « ${x.sku} » refusé.`, 'succes')
     charger()
   }
 
@@ -356,7 +422,7 @@ export default function ProduitsPage() {
     setFicheOuverte(p)
     setMouvements([])
     setSkusProduit([])
-    if (!estSeller) chargerSkusProduit(p.id)
+    chargerSkusProduit(p.id)
 
     // Pas d'historique pour un vendeur : la fiche ne l'affiche pas, et la
     // base refuserait la lecture.
@@ -576,6 +642,7 @@ export default function ProduitsPage() {
       // l'entrepôt contient encore de la marchandise n'est pas retiré, et le
       // taire ferait croire à un détachement qui n'a pas eu lieu.
       const r = Array.isArray(bilan) ? bilan[0] : bilan
+      const avisSkuVendeur = await traiterSkusFormulaire(data[0].id, user?.id)
       if (r?.gardes_pleins > 0) {
         annonce(fin(
           `Produit enregistré. ${r.gardes_pleins} entrepôt${r.gardes_pleins > 1 ? 's gardés' : ' gardé'} :`
@@ -583,7 +650,8 @@ export default function ProduitsPage() {
           'erreur',
         )
       } else {
-        annonce(fin(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.'), avisImage ? 'erreur' : 'succes')
+        annonce(fin((idEnEdition ? 'Produit modifié.' : 'Produit ajouté.') + avisSkuVendeur),
+          avisImage || avisSkuVendeur.includes('refusé') || avisSkuVendeur.includes('non ajoutés') ? 'erreur' : 'succes')
       }
 
       setModaleOuverte(false)
@@ -621,30 +689,7 @@ export default function ProduitsPage() {
       await supabase.from('stocks').delete().in('id', vides.map((st) => st.id))
     }
 
-    // Les SKU de boutique tapés dans le formulaire : la base les relie au produit
-    // et relie tout de suite les leads qui les attendaient (sku_ecran.sql).
-    const skusATraiter = skusFormulaire.filter((x) => x.sku.trim())
-    let avisSku = ''
-    if (skusATraiter.length > 0 && !estSeller) {
-      const vendeurProduit = data[0].vendeur_id
-      const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === vendeurProduit)
-      const source = sourceFormulaire || (boutiques.length === 1 ? boutiques[0].id : '')
-      if (!source) {
-        avisSku = ' SKU non ajoutés : choisissez la boutique.'
-      } else {
-        const refus = []
-        let relies = 0
-        for (const x of skusATraiter) {
-          const { data: r, error: eSku } = await supabase.rpc('ajouter_correspondance_sku', {
-            p_source: source, p_sku: x.sku.trim(), p_produit: produitId, p_multiplicateur: parseInt(x.pack, 10) || 1,
-          })
-          if (eSku) refus.push(`${x.sku.trim()} (${eSku.message})`)
-          else relies += r?.[0]?.commandes_reliees ?? 0
-        }
-        avisSku = (skusATraiter.length - refus.length > 0 ? ` ${skusATraiter.length - refus.length} SKU ajouté(s)${relies ? `, ${relies} lead(s) relié(s)` : ''}.` : '')
-          + (refus.length ? ` SKU refusé(s) : ${refus.join(' ; ')}.` : '')
-      }
-    }
+    const avisSku = await traiterSkusFormulaire(produitId, data[0].vendeur_id)
 
     setEnregistrement(false)
 
@@ -868,7 +913,13 @@ export default function ProduitsPage() {
           </button>
 
           <div className="flex items-center gap-2 ml-auto">
-            {!estSeller && skusInconnus.length > 0 && (
+            {!estSeller && propositions.length > 0 && (
+              <button onClick={() => setPanneauPropositions(true)}
+                className="px-4 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors">
+                {propositions.length} SKU à valider
+              </button>
+            )}
+            {skusInconnus.length > 0 && (
               <button onClick={() => setPanneauSku(true)}
                 className="px-4 py-2.5 rounded-xl text-sm font-bold bg-[#FFB162]/20 text-[#8a5a1f] border border-[#FFB162] hover:bg-[#FFB162]/30 transition-colors">
                 {skusInconnus.length} SKU inconnu{skusInconnus.length > 1 ? 's' : ''}
@@ -1107,7 +1158,7 @@ export default function ProduitsPage() {
                   {skusInconnus.map((x) => {
                     const cle = `${x.source_id}|${x.sku}`
                     const c = choixInconnu[cle] || { produit: '', pack: '1' }
-                    const produitsVendeur = produits.filter((p) => p.vendeur_id && p.vendeur_id === x.vendeur_id)
+                    const produitsVendeur = produits.filter((p) => p.vendeur_id && p.vendeur_id === (estSeller ? user?.id : x.vendeur_id))
                     return (
                       <div key={cle} className="py-3 grid grid-cols-1 md:grid-cols-[1.2fr_1fr_80px_auto] gap-2 items-center">
                         <div>
@@ -1122,9 +1173,52 @@ export default function ProduitsPage() {
                         </select>
                         <input type="number" min="1" max="100" className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" title="Unités dans le pack"
                           value={c.pack} onChange={(e) => setChoixInconnu({ ...choixInconnu, [cle]: { ...c, pack: e.target.value } })} />
-                        {peutGerer && (
+                        {(peutGerer || estSeller) && (
                           <button onClick={() => ajouterSku(x.source_id, x.sku, c.produit, c.pack)}
-                            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">Relier</button>
+                            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">{estSeller ? 'Proposer' : 'Relier'}</button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {panneauPropositions && (
+        <>
+          <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setPanneauPropositions(false)} />
+          <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center pointer-events-none">
+            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[900px] my-8 p-6 pointer-events-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-[#1B2632]">SKU proposés par les vendeurs</h2>
+                <button onClick={() => setPanneauPropositions(false)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139]">✕</button>
+              </div>
+              <p className="text-sm text-[#1B2632]/60 mb-4">
+                Vérifiez le nombre d&apos;unités du pack : il fait la quantité, donc le stock et les frais upsell du relevé.
+                Approuver relie tout de suite les leads qui attendent ce SKU.
+              </p>
+              {propositions.length === 0 ? (
+                <p className="text-sm text-[#1B2632]/50">Aucune proposition.</p>
+              ) : (
+                <div className="flex flex-col divide-y divide-[#C9C1B1]/40">
+                  {propositions.map((x) => {
+                    const pr = produits.find((p) => p.id === x.produit_id)
+                    return (
+                      <div key={x.id} className="py-3 grid grid-cols-1 md:grid-cols-[1.2fr_1.2fr_70px_auto] gap-2 items-center">
+                        <div>
+                          <p className="font-mono text-sm text-[#A35139]">{x.sku}</p>
+                          <p className="text-[11px] text-[#1B2632]/40">{sources.find((s2) => s2.id === x.source_id)?.nom || '—'} · {nomVendeur(x.propose_par) || '—'} · {new Date(x.propose_le).toLocaleDateString('fr-FR')}</p>
+                        </div>
+                        <p className="text-sm text-[#1B2632]">{pr ? `${pr.code ? pr.code + ' — ' : ''}${pr.product}` : '—'}</p>
+                        <p className="text-sm font-mono text-center">× {x.multiplicateur}</p>
+                        {peutGerer && (
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={() => refuserSku(x)} className="px-3 py-2 rounded-lg text-sm font-semibold border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10">Refuser</button>
+                            <button onClick={() => approuverSku(x)} className="px-4 py-2 rounded-lg text-sm font-bold bg-green-600 text-white hover:bg-green-700">Approuver</button>
+                          </div>
                         )}
                       </div>
                     )
@@ -1184,8 +1278,9 @@ export default function ProduitsPage() {
                   )}
                 </div>
 
-                {/* Les SKU de boutique de ce produit (11/11, T20). */}
-                {!estSeller && (
+                {/* Les SKU de boutique de ce produit (11/11, T20) — le vendeur les voit
+                    aussi, et PROPOSE les siens (sku_propositions.sql). */}
+                {(
                   <div className="border-t border-[#C9C1B1]/50 pt-5">
                     <p className="text-[11px] font-bold uppercase tracking-widest text-[#1B2632]/40 mb-2">SKU boutique</p>
                     {skusProduit.length === 0 ? (
@@ -1199,7 +1294,7 @@ export default function ProduitsPage() {
                               <td className="py-2 text-center font-mono">× {m.multiplicateur}</td>
                               <td className="py-2 text-[#1B2632]/60">{sources.find((x) => x.id === m.source_id)?.nom || '—'}</td>
                               <td className="py-2 text-xs text-[#1B2632]/40 truncate max-w-[260px]">{m.titre_vu || ''}</td>
-                              {peutGerer && (
+                              {peutGerer && !estSeller && (
                                 <td className="py-2 text-right">
                                   <button onClick={() => retirerSku(m)} title="Retirer" className="w-7 h-7 rounded-full text-[#A35139] hover:bg-[#A35139]/10">×</button>
                                 </td>
@@ -1208,6 +1303,25 @@ export default function ProduitsPage() {
                           ))}
                         </tbody>
                       </table>
+                    )}
+                    {propositions.filter((x) => x.produit_id === ficheOuverte.id).length > 0 && (
+                      <div className="mb-3 flex flex-col gap-1">
+                        {propositions.filter((x) => x.produit_id === ficheOuverte.id).map((x) => (
+                          <div key={x.id} className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-[#FFB162]/10 border border-[#FFB162]/40">
+                            <span className="font-mono text-[#A35139]">{x.sku}</span>
+                            <span className="font-mono">× {x.multiplicateur}</span>
+                            <span className="text-xs text-[#8a5a1f]">en attente de validation</span>
+                            <span className="ml-auto flex gap-2">
+                              {!estSeller && peutGerer && (
+                                <button onClick={() => approuverSku(x)} className="px-3 py-1 rounded-lg text-xs font-bold bg-green-600 text-white">Approuver</button>
+                              )}
+                              {(estSeller || peutGerer) && (
+                                <button onClick={() => refuserSku(x)} className="px-3 py-1 rounded-lg text-xs font-semibold border border-[#A35139]/40 text-[#A35139]">{estSeller ? 'Retirer' : 'Refuser'}</button>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                     {peutGerer && (() => {
                       const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === ficheOuverte.vendeur_id)
@@ -1226,7 +1340,7 @@ export default function ProduitsPage() {
                             {boutiques.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
                           </select>
                           <button onClick={() => ajouterSku(nouveauSku.source || (boutiques.length === 1 ? boutiques[0].id : ''), nouveauSku.sku, ficheOuverte.id, nouveauSku.pack)}
-                            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">Ajouter</button>
+                            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">{estSeller ? 'Proposer' : 'Ajouter'}</button>
                         </div>
                       )
                     })()}
@@ -1549,11 +1663,14 @@ export default function ProduitsPage() {
                 )}
 
                 {/* SKU de boutique dès la création (11/11) : facultatif. */}
-                {!estSeller && peutGerer && (() => {
-                  const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === formulaire.vendeur_id)
+                {peutGerer && (() => {
+                  const vendeurDuProduit = estSeller ? user?.id : formulaire.vendeur_id
+                  const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === vendeurDuProduit)
                   return (
-                    <Champ label="SKU boutique" aide="Facultatif. Le SKU exactement comme la boutique l'envoie, et le nombre d'unités du pack. Les leads qui l'attendent sont reliés à l'enregistrement.">
-                      {!formulaire.vendeur_id ? (
+                    <Champ label="SKU boutique" aide={estSeller
+                      ? "Facultatif. Le SKU exactement comme la boutique l'envoie, et le nombre d'unités du pack. Un manager ou un admin l'approuve avant qu'il relie vos leads."
+                      : "Facultatif. Le SKU exactement comme la boutique l'envoie, et le nombre d'unités du pack. Les leads qui l'attendent sont reliés à l'enregistrement."}>
+                      {!vendeurDuProduit ? (
                         <p className="text-xs text-[#1B2632]/50">Choisissez d&apos;abord le vendeur.</p>
                       ) : boutiques.length === 0 ? (
                         <p className="text-xs text-[#1B2632]/50">Ce vendeur n&apos;a pas de boutique (source) branchée.</p>
