@@ -128,6 +128,18 @@ export default function ProduitsPage() {
   const [stocks, setStocks] = useState([])
   const [mouvements, setMouvements] = useState([])
   const [ficheOuverte, setFicheOuverte] = useState(null)
+  // Les SKU de boutique (11/11, T20, sku_ecran.sql) : ceux du produit ouvert,
+  // les boutiques de l'entreprise, et les SKU reçus sans correspondance.
+  const [skusProduit, setSkusProduit] = useState([])
+  const [sources, setSources] = useState([])
+  const [skusInconnus, setSkusInconnus] = useState([])
+  const [panneauSku, setPanneauSku] = useState(false)
+  const [nouveauSku, setNouveauSku] = useState({ sku: '', pack: '1', source: '' })
+  const [choixInconnu, setChoixInconnu] = useState({})   // { cle: { produit, pack } }
+  // Les SKU tapés DANS le formulaire du produit (création ou modification) :
+  // ajoutés après l'enregistrement du produit (11/11).
+  const [skusFormulaire, setSkusFormulaire] = useState([])   // [{ sku, pack }]
+  const [sourceFormulaire, setSourceFormulaire] = useState('')
   const [modaleOuverte, setModaleOuverte] = useState(false)
   const [enregistrement, setEnregistrement] = useState(false)
   const [formulaire, setFormulaire] = useState(VIDE)
@@ -202,6 +214,14 @@ export default function ProduitsPage() {
       .eq('tenant_id', tenantKey).eq('role', 'seller')
     setVendeurs(vendeursDB || [])
 
+    // Les boutiques (sources) et les SKU qui attendent — responsables seulement :
+    // la base refuse les autres (sku_ecran.sql). Une erreur (SQL pas lancé) ne
+    // bloque pas l'écran.
+    const { data: sourcesDB } = await supabase
+      .from('sources_import').select('id, nom, vendeur_id').eq('tenant_id', tenantKey)
+    setSources(sourcesDB || [])
+    const { data: inconnusDB } = await supabase.rpc('skus_inconnus', { p_tenant: tenantKey })
+    setSkusInconnus(inconnusDB || [])
 
     const regroupe = {}
     for (const s of stocks || []) {
@@ -286,9 +306,42 @@ export default function ProduitsPage() {
   // calculé depuis le début ne garantirait pas si un mouvement manquait.
   const SENS = { entree: 1, retour_ok: 1, ajustement: 1, sortie: -1, retour_defaut: -1 }
 
+  async function chargerSkusProduit(produitId) {
+    const { data } = await supabase.from('correspondances_sku')
+      .select('id, sku, multiplicateur, source_id, titre_vu').eq('produit_id', produitId).order('sku')
+    setSkusProduit(data || [])
+  }
+
+  // Ajouter un SKU : la base le relie au produit ET relie tout de suite les
+  // leads qui l'attendaient (ajouter_correspondance_sku). Rend leur nombre.
+  async function ajouterSku(source, sku, produit, pack) {
+    if (!source || !sku.trim() || !produit) return annonce('Boutique, SKU et produit sont obligatoires.', 'erreur')
+    const n = parseInt(pack, 10)
+    if (!(n >= 1 && n <= 100)) return annonce('Le pack doit être un nombre d\u2019unités entre 1 et 100.', 'erreur')
+    const { data, error } = await supabase.rpc('ajouter_correspondance_sku', {
+      p_source: source, p_sku: sku.trim(), p_produit: produit, p_multiplicateur: n,
+    })
+    if (error) return annonce('SKU refusé : ' + error.message, 'erreur')
+    const relies = data?.[0]?.commandes_reliees ?? 0
+    annonce(`SKU « ${sku.trim()} » ajouté${relies ? ` : ${relies} lead${relies > 1 ? 's' : ''} relié${relies > 1 ? 's' : ''}` : ''}.`, 'succes')
+    setNouveauSku({ sku: '', pack: '1', source: '' })
+    if (ficheOuverte?.id === produit) await chargerSkusProduit(produit)
+    charger()
+  }
+
+  async function retirerSku(m) {
+    if (!window.confirm(`Retirer le SKU « ${m.sku} » ?`)) return
+    const { error } = await supabase.rpc('retirer_correspondance_sku', { p_correspondance: m.id })
+    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    annonce(`SKU « ${m.sku} » retiré.`, 'succes')
+    if (ficheOuverte) await chargerSkusProduit(ficheOuverte.id)
+  }
+
   async function ouvrirFiche(p) {
     setFicheOuverte(p)
     setMouvements([])
+    setSkusProduit([])
+    if (!estSeller) chargerSkusProduit(p.id)
 
     // Pas d'historique pour un vendeur : la fiche ne l'affiche pas, et la
     // base refuserait la lecture.
@@ -347,11 +400,15 @@ export default function ProduitsPage() {
     setEntrepotsChoisis([])
     setPaysChoisis([])
     setIdEnEdition(null)
+    setSkusFormulaire([])
+    setSourceFormulaire('')
     setModaleOuverte(true)
   }
 
   async function ouvrirEdition(p) {
     oublierImage()
+    setSkusFormulaire([])
+    setSourceFormulaire('')
     setImageActuelle(p.image_chemin || null)
     setFormulaire({
       product: p.product || '', code: p.code || '', code_variante: p.code_variante || '',
@@ -549,6 +606,31 @@ export default function ProduitsPage() {
       await supabase.from('stocks').delete().in('id', vides.map((st) => st.id))
     }
 
+    // Les SKU de boutique tapés dans le formulaire : la base les relie au produit
+    // et relie tout de suite les leads qui les attendaient (sku_ecran.sql).
+    const skusATraiter = skusFormulaire.filter((x) => x.sku.trim())
+    let avisSku = ''
+    if (skusATraiter.length > 0 && !estSeller) {
+      const vendeurProduit = data[0].vendeur_id
+      const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === vendeurProduit)
+      const source = sourceFormulaire || (boutiques.length === 1 ? boutiques[0].id : '')
+      if (!source) {
+        avisSku = ' SKU non ajoutés : choisissez la boutique.'
+      } else {
+        const refus = []
+        let relies = 0
+        for (const x of skusATraiter) {
+          const { data: r, error: eSku } = await supabase.rpc('ajouter_correspondance_sku', {
+            p_source: source, p_sku: x.sku.trim(), p_produit: produitId, p_multiplicateur: parseInt(x.pack, 10) || 1,
+          })
+          if (eSku) refus.push(`${x.sku.trim()} (${eSku.message})`)
+          else relies += r?.[0]?.commandes_reliees ?? 0
+        }
+        avisSku = (skusATraiter.length - refus.length > 0 ? ` ${skusATraiter.length - refus.length} SKU ajouté(s)${relies ? `, ${relies} lead(s) relié(s)` : ''}.` : '')
+          + (refus.length ? ` SKU refusé(s) : ${refus.join(' ; ')}.` : '')
+      }
+    }
+
     setEnregistrement(false)
 
     if (pleins.length > 0) {
@@ -561,7 +643,7 @@ export default function ProduitsPage() {
       return
     }
 
-    annonce(fin(idEnEdition ? 'Produit modifié.' : 'Produit ajouté.'), avisImage ? 'erreur' : 'succes')
+    annonce(fin((idEnEdition ? 'Produit modifié.' : 'Produit ajouté.') + avisSku), avisImage || avisSku.includes('refusé') || avisSku.includes('non ajoutés') ? 'erreur' : 'succes')
     setModaleOuverte(false)
     charger()
   }
@@ -771,6 +853,12 @@ export default function ProduitsPage() {
           </button>
 
           <div className="flex items-center gap-2 ml-auto">
+            {!estSeller && skusInconnus.length > 0 && (
+              <button onClick={() => setPanneauSku(true)}
+                className="px-4 py-2.5 rounded-xl text-sm font-bold bg-[#FFB162]/20 text-[#8a5a1f] border border-[#FFB162] hover:bg-[#FFB162]/30 transition-colors">
+                {skusInconnus.length} SKU inconnu{skusInconnus.length > 1 ? 's' : ''}
+              </button>
+            )}
             <button onClick={exporter} className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm">
               Exporter CSV
             </button>
@@ -984,6 +1072,55 @@ export default function ProduitsPage() {
         </div>
       </div>
 
+      {panneauSku && (
+        <>
+          <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setPanneauSku(false)} />
+          <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center pointer-events-none">
+            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[900px] my-8 p-6 pointer-events-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-[#1B2632]">SKU inconnus</h2>
+                <button onClick={() => setPanneauSku(false)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139]">✕</button>
+              </div>
+              <p className="text-sm text-[#1B2632]/60 mb-4">
+                La boutique a envoyé ces SKU, et le CRM ne sait pas à quel produit ils correspondent : leurs leads attendent en
+                « Produit non reconnu ». Choisissez le produit et le nombre d&apos;unités du pack — les leads sont reliés tout de suite.
+              </p>
+              {skusInconnus.length === 0 ? (
+                <p className="text-sm text-[#1B2632]/50">Aucun SKU inconnu.</p>
+              ) : (
+                <div className="flex flex-col divide-y divide-[#C9C1B1]/40">
+                  {skusInconnus.map((x) => {
+                    const cle = `${x.source_id}|${x.sku}`
+                    const c = choixInconnu[cle] || { produit: '', pack: '1' }
+                    const produitsVendeur = produits.filter((p) => p.vendeur_id && p.vendeur_id === x.vendeur_id)
+                    return (
+                      <div key={cle} className="py-3 grid grid-cols-1 md:grid-cols-[1.2fr_1fr_80px_auto] gap-2 items-center">
+                        <div>
+                          <p className="font-mono text-sm text-[#A35139]">{x.sku}</p>
+                          <p className="text-xs text-[#1B2632]/60 truncate">{x.titre || '—'}</p>
+                          <p className="text-[11px] text-[#1B2632]/40">{x.source_nom} · {x.nb_commandes} lead{x.nb_commandes > 1 ? 's' : ''} en attente</p>
+                        </div>
+                        <select className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" value={c.produit}
+                          onChange={(e) => setChoixInconnu({ ...choixInconnu, [cle]: { ...c, produit: e.target.value } })}>
+                          <option value="">Produit...</option>
+                          {produitsVendeur.map((p) => <option key={p.id} value={p.id}>{p.code ? `${p.code} — ` : ''}{p.product}</option>)}
+                        </select>
+                        <input type="number" min="1" max="100" className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" title="Unités dans le pack"
+                          value={c.pack} onChange={(e) => setChoixInconnu({ ...choixInconnu, [cle]: { ...c, pack: e.target.value } })} />
+                        {peutGerer && (
+                          <button onClick={() => ajouterSku(x.source_id, x.sku, c.produit, c.pack)}
+                            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">Relier</button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {ficheOuverte && (
         <>
           <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setFicheOuverte(null)} />
@@ -1031,6 +1168,55 @@ export default function ProduitsPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Les SKU de boutique de ce produit (11/11, T20). */}
+                {!estSeller && (
+                  <div className="border-t border-[#C9C1B1]/50 pt-5">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-[#1B2632]/40 mb-2">SKU boutique</p>
+                    {skusProduit.length === 0 ? (
+                      <p className="text-sm text-[#1B2632]/50 mb-2">Aucun SKU de boutique pour ce produit.</p>
+                    ) : (
+                      <table className="w-full text-sm mb-3">
+                        <tbody className="divide-y divide-[#C9C1B1]/30">
+                          {skusProduit.map((m) => (
+                            <tr key={m.id}>
+                              <td className="py-2 font-mono text-[#A35139]">{m.sku}</td>
+                              <td className="py-2 text-center font-mono">× {m.multiplicateur}</td>
+                              <td className="py-2 text-[#1B2632]/60">{sources.find((x) => x.id === m.source_id)?.nom || '—'}</td>
+                              <td className="py-2 text-xs text-[#1B2632]/40 truncate max-w-[260px]">{m.titre_vu || ''}</td>
+                              {peutGerer && (
+                                <td className="py-2 text-right">
+                                  <button onClick={() => retirerSku(m)} title="Retirer" className="w-7 h-7 rounded-full text-[#A35139] hover:bg-[#A35139]/10">×</button>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {peutGerer && (() => {
+                      const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === ficheOuverte.vendeur_id)
+                      if (!ficheOuverte.vendeur_id) return <p className="text-xs text-[#1B2632]/50">Un SKU de boutique se rattache au produit d&apos;un vendeur : ce produit n&apos;en a pas.</p>
+                      if (boutiques.length === 0) return <p className="text-xs text-[#1B2632]/50">Le vendeur de ce produit n&apos;a pas de boutique (source) branchée.</p>
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-[1fr_90px_1fr_auto] gap-2">
+                          <input className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" placeholder="SKU (ex. clearzal-AO-3)"
+                            value={nouveauSku.sku} onChange={(e) => setNouveauSku({ ...nouveauSku, sku: e.target.value })} />
+                          <input type="number" min="1" max="100" className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" title="Unités dans le pack"
+                            value={nouveauSku.pack} onChange={(e) => setNouveauSku({ ...nouveauSku, pack: e.target.value })} />
+                          <select className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm"
+                            value={nouveauSku.source || (boutiques.length === 1 ? boutiques[0].id : '')}
+                            onChange={(e) => setNouveauSku({ ...nouveauSku, source: e.target.value })}>
+                            {boutiques.length > 1 && <option value="">Boutique...</option>}
+                            {boutiques.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
+                          </select>
+                          <button onClick={() => ajouterSku(nouveauSku.source || (boutiques.length === 1 ? boutiques[0].id : ''), nouveauSku.sku, ficheOuverte.id, nouveauSku.pack)}
+                            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">Ajouter</button>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
 
                 {/* Stock par entrepôt et historique : masqués au vendeur. Une
                     section vide lui ferait croire que le produit n'est nulle
@@ -1346,6 +1532,41 @@ export default function ProduitsPage() {
                     )}
                   </Champ>
                 )}
+
+                {/* SKU de boutique dès la création (11/11) : facultatif. */}
+                {!estSeller && peutGerer && (() => {
+                  const boutiques = sources.filter((x) => x.vendeur_id && x.vendeur_id === formulaire.vendeur_id)
+                  return (
+                    <Champ label="SKU boutique" aide="Facultatif. Le SKU exactement comme la boutique l'envoie, et le nombre d'unités du pack. Les leads qui l'attendent sont reliés à l'enregistrement.">
+                      {!formulaire.vendeur_id ? (
+                        <p className="text-xs text-[#1B2632]/50">Choisissez d&apos;abord le vendeur.</p>
+                      ) : boutiques.length === 0 ? (
+                        <p className="text-xs text-[#1B2632]/50">Ce vendeur n&apos;a pas de boutique (source) branchée.</p>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {boutiques.length > 1 && (
+                            <select className="ch-input" value={sourceFormulaire} onChange={(e) => setSourceFormulaire(e.target.value)}>
+                              <option value="">Boutique...</option>
+                              {boutiques.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
+                            </select>
+                          )}
+                          {skusFormulaire.map((x, i) => (
+                            <div key={i} className="grid grid-cols-[1fr_80px_auto] gap-2">
+                              <input className="ch-input" placeholder="ex. clearzal-AO-3" value={x.sku}
+                                onChange={(e) => setSkusFormulaire(skusFormulaire.map((y, j) => (j === i ? { ...y, sku: e.target.value } : y)))} />
+                              <input type="number" min="1" max="100" className="ch-input" title="Unités dans le pack" value={x.pack}
+                                onChange={(e) => setSkusFormulaire(skusFormulaire.map((y, j) => (j === i ? { ...y, pack: e.target.value } : y)))} />
+                              <button type="button" onClick={() => setSkusFormulaire(skusFormulaire.filter((_, j) => j !== i))}
+                                className="w-9 rounded-lg text-[#A35139] hover:bg-[#A35139]/10">×</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => setSkusFormulaire([...skusFormulaire, { sku: '', pack: '1' }])}
+                            className="self-start text-sm font-semibold text-[#A35139] hover:underline">+ Ajouter un SKU</button>
+                        </div>
+                      )}
+                    </Champ>
+                  )
+                })()}
               </div>
 
               <div className="px-8 py-8 flex justify-center">

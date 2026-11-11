@@ -87,6 +87,8 @@ export default function ReglementsVendeurs() {
   const [ajustements, setAjustements] = useState([])
   const [nouvelAjust, setNouvelAjust] = useState(AJUST_VIDE)
   const [ajustEnCours, setAjustEnCours] = useState(false)
+  // L'équivalent en MAD (11/11, P8, facultatif) : un taux tapé à la main.
+  const [tauxMad, setTauxMad] = useState('')
 
   const [modale, setModale] = useState(false)
   const [brouillon, setBrouillon] = useState({ vendeur_id: '', debut: '', fin: '', methode: 'especes' })
@@ -219,6 +221,7 @@ export default function ReglementsVendeurs() {
       note: r.credit_expedition_note || '',
     })
     setNouvelAjust(AJUST_VIDE)
+    setTauxMad(r.taux_mad != null ? String(r.taux_mad) : '')
     chargerAjustements(r.id)
     // Les frais de chaque ligne sont COPIÉS par la base à l'établissement
     // (etablir_releve) : on les lit, on ne les recalcule jamais ici.
@@ -373,6 +376,20 @@ export default function ReglementsVendeurs() {
     return true
   }
 
+  const tauxModifie = !!fiche && (tauxMad === '' ? fiche.taux_mad != null : Number(tauxMad) !== Number(fiche.taux_mad))
+
+  // Le taux MAD : la base vérifie (> 0, relevé non payé, droits). Vide = enlevé.
+  async function enregistrerTaux() {
+    if (!fiche) return false
+    const t = tauxMad === '' ? null : Number(tauxMad)
+    if (t !== null && (!Number.isFinite(t) || t <= 0)) { annonce('Le taux MAD doit être plus grand que 0 (ou vide).', 'erreur'); return false }
+    const { error } = await supabase.rpc('fixer_taux_mad', { p_reglement: fiche.id, p_taux: t })
+    if (error) { annonce('Refusé : ' + error.message, 'erreur'); return false }
+    annonce(t === null ? 'Équivalent MAD retiré.' : 'Taux MAD enregistré.', 'succes')
+    await rechargerFiche(fiche.id)
+    return true
+  }
+
   async function ajouterAjustement() {
     if (!fiche) return
     const a = nouvelAjust
@@ -406,6 +423,7 @@ export default function ReglementsVendeurs() {
     // d'abord ; un ajustement tapé mais pas ajouté arrête (on ne devine pas).
     if (ajustTape) return annonce('Un ajustement est tapé mais pas ajouté : cliquez « Ajouter » ou videz-le.', 'erreur')
     if (creditModifie && !(await enregistrerCredit())) return
+    if (tauxModifie && !(await enregistrerTaux())) return
     const { data, error } = await supabase
       .from('reglements').update({ statut: 'paye' })
       .eq('id', r.id).eq('tenant_id', tenantKey).select()
@@ -799,6 +817,23 @@ export default function ReglementsVendeurs() {
                         {sou(fiche.net_a_payer)} <span className="text-xs font-sans text-[#1B2632]/50">{fiche.devise || ''}</span>
                       </span>
                     </div>
+                    {fiche.taux_mad != null && (
+                      <div className="flex justify-between items-baseline px-4">
+                        <span className="text-sm text-[#1B2632]/60">Équivalent MAD <span className="text-xs">(taux {Number(fiche.taux_mad).toLocaleString('fr-FR', { maximumFractionDigits: 6 })} MAD pour 1 {fiche.devise || ''})</span></span>
+                        <span className="text-sm font-mono font-semibold text-[#1B2632]">{sou(Number(fiche.net_a_payer || 0) * Number(fiche.taux_mad))} <span className="text-xs text-[#1B2632]/40">MAD</span></span>
+                      </div>
+                    )}
+                    {/* L'équivalent MAD est pour information (sa décision 11/11) : il ne
+                        change aucun montant, il reste modifiable même payé. */}
+                    {peutGerer && (
+                      <div className="flex items-center gap-2 px-4 sans-impression">
+                        <label className="text-xs text-[#1B2632]/60 whitespace-nowrap">Taux MAD (facultatif)</label>
+                        <input type="number" min="0" step="any" className="rg-input !py-1.5" placeholder={`MAD pour 1 ${fiche.devise || ''}`}
+                          value={tauxMad} onChange={(e) => setTauxMad(e.target.value)} />
+                        <button onClick={enregistrerTaux} disabled={!tauxModifie}
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#1B2632] text-white disabled:opacity-30">OK</button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
