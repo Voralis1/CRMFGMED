@@ -2,6 +2,7 @@ import './globals.css'
 import AppLayout from './components/AppLayout'
 import { AuthProvider } from './context/AuthContext'
 import { PermissionsProvider } from './context/PermissionsContext.js' // 🚀 Import ajouté
+import { EntrepotProvider } from './context/EntrepotContext'
 
 export const metadata = {
   title: 'CRM FGMED',
@@ -15,9 +16,12 @@ export default function RootLayout({ children }) {
         <AuthProvider>
           {/* 🚀 On englobe l'application avec les Permissions */}
           <PermissionsProvider>
-            <AppLayout>
-              {children}
-            </AppLayout>
+            {/* L'entrepôt regardé (11/11) : le filtre de tous les écrans. */}
+            <EntrepotProvider>
+              <AppLayout>
+                {children}
+              </AppLayout>
+            </EntrepotProvider>
           </PermissionsProvider>
         </AuthProvider>
       </body>

@@ -6,6 +6,8 @@ import NavBar from './NavBar'
 import { supabase } from '../../lib/supabaseClient'
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte global
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
+import { drapeau } from '../../lib/paysMonde'
 import { pageAutorisee, redirectionPour, regleDePage } from '../../lib/droitsPages.mjs'
 
 const LARGEUR_BUREAU = 768   // tailwind `md`
@@ -14,6 +16,7 @@ export default function AppLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [utilisateur, setUtilisateur] = useState({ nom: '' }) // Plus besoin de stocker le rôle ici
   const { estSuperAdmin, tenantId, tenantChoisi, setTenantChoisi, loading: authLoading } = useAuth()
+  const { entrepots, entrepotId, setEntrepotId } = useEntrepot()
   const [entreprises, setEntreprises] = useState([])
   
   // 🚀 Ajout de l'état isMounted pour éviter l'erreur "Hydration Mismatch"
@@ -176,6 +179,30 @@ export default function AppLayout({ children }) {
             <div className="hidden md:block" />
           )}
 
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {/* L'entrepôt regardé (11/11) : filtre tous les écrans. Les entrepôts de
+              l'entreprise regardée seulement ; pour un vendeur, les siens. */}
+          {entrepots.length > 0 && (
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-2xl border shadow-sm min-w-0 ${entrepotId ? 'bg-[#1B2632] border-[#1B2632] text-white' : 'bg-white border-[#C9C1B1]/40'}`}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${entrepotId ? 'text-[#FFB162]' : 'text-[#A35139]'}`}>
+                <path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 21h18"/>
+              </svg>
+              <select
+                value={entrepotId || ''}
+                onChange={(e) => setEntrepotId(e.target.value)}
+                title="Filtrer tous les écrans sur un entrepôt"
+                className={`max-w-[120px] sm:max-w-[220px] bg-transparent text-sm font-bold outline-none cursor-pointer truncate ${entrepotId ? 'text-white' : 'text-[#1B2632]'}`}
+              >
+                <option value="" className="text-[#1B2632]">Tous les entrepôts</option>
+                {entrepots.map((e) => (
+                  <option key={e.id} value={e.id} className="text-[#1B2632]">
+                    {drapeau(e.pays_code) ? `${drapeau(e.pays_code)} ` : ''}{e.nom}{e.pays_nom && e.pays_nom !== e.nom ? ` (${e.pays_nom})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex items-center gap-3 bg-white px-3 sm:px-4 py-2 rounded-2xl border border-[#C9C1B1]/40 shadow-sm min-w-0">
             <div className="w-9 h-9 shrink-0 rounded-full bg-[#1B2632] flex items-center justify-center text-white font-bold text-sm shadow-sm">
               {utilisateur.nom ? utilisateur.nom.charAt(0).toUpperCase() : 'U'}
@@ -189,6 +216,7 @@ export default function AppLayout({ children }) {
                 {roleNom} 
               </span>
             </div>
+          </div>
           </div>
         </header>
 

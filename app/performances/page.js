@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 // Le délai de première prise en charge enregistrée (02/11) : responsables seulement.
 import { SectionDelai } from '../components/DelaiPriseEnCharge'
@@ -55,6 +56,8 @@ function BarreTaux({ valeur, couleur }) {
 
 export default function PerformancesPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
+  // L'entrepôt regardé (en haut, 11/11) : les appels et livraisons de ses commandes.
+  const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
@@ -96,9 +99,13 @@ export default function PerformancesPage() {
     // signalé sur les autres pages (confirme / confirmee / Confirmée...).
     const [resAgents, resAppels, resLivreurs, resLivraisons, resStatuts] = await Promise.all([
       supabase.from('agents').select('id, nom, actif').eq('tenant_id', tenantId),
-      supabase.from('appels').select('agent_id, statut, created_at').eq('tenant_id', tenantId).gte('created_at', debut).lte('created_at', fin),
+      (entrepotId
+        ? supabase.from('appels').select('agent_id, statut, created_at, commandes!inner(entrepot_id)').eq('commandes.entrepot_id', entrepotId)
+        : supabase.from('appels').select('agent_id, statut, created_at')).eq('tenant_id', tenantId).gte('created_at', debut).lte('created_at', fin),
       supabase.from('livreurs').select('id, nom, telephone, zone, actif').eq('tenant_id', tenantId),
-      supabase.from('livraisons').select('livreur_id, statut, created_at').eq('tenant_id', tenantId).gte('created_at', debut).lte('created_at', fin),
+      (entrepotId
+        ? supabase.from('livraisons').select('livreur_id, statut, created_at, commandes!inner(entrepot_id)').eq('commandes.entrepot_id', entrepotId)
+        : supabase.from('livraisons').select('livreur_id, statut, created_at')).eq('tenant_id', tenantId).gte('created_at', debut).lte('created_at', fin),
       supabase.from('statuts').select('nom, declenche_assignation').eq('tenant_id', tenantId).eq('declenche_assignation', true),
     ])
 
@@ -143,7 +150,7 @@ export default function PerformancesPage() {
     setStatsLivreurs(livreursMap)
     setAvertissementLivraison(nomsConfirmes.length === 0)
     setChargement(false)
-  }, [tenantId, periode, dateDebutPerso, dateFinPerso])
+  }, [tenantId, periode, dateDebutPerso, dateFinPerso, entrepotId])
 
   useEffect(() => {
     if (tenantId) {

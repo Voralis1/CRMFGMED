@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { texteNormalise } from '../../lib/texteNormalise.mjs'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 
@@ -12,6 +13,10 @@ const TAILLE_PAGE = 50
 
 export default function AssignationLivreurPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
+  // L'entrepôt regardé (en haut, 11/11). La vue « à assigner » n'a pas de colonne
+  // entrepôt (vue sensible, §6.21 : pas touchée) : on filtre par SON pays — un
+  // entrepôt par pays, Paramètres l'impose. Les livraisons : par l'entrepôt.
+  const { entrepotId, entrepot } = useEntrepot()
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
@@ -82,10 +87,12 @@ export default function AssignationLivreurPage() {
     if (onglet === 'a_assigner') {
       // La vue ne renvoie que les commandes confirmées sans livraison : c'est la
       // base qui fait le calcul, la page ne télécharge plus la table `livraisons`.
-      const { data, error, count } = await supabase
+      let req = supabase
         .from('v_commandes_a_assigner')
         .select('*, pays(nom)', { count: 'exact' })
         .eq('tenant_id', tenantKey)
+      if (entrepot?.pays_id) req = req.eq('pays_id', entrepot.pays_id)
+      const { data, error, count } = await req
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(debut, fin)
@@ -99,11 +106,13 @@ export default function AssignationLivreurPage() {
       // Livraisons pas encore parties : on peut encore changer le livreur.
       // Une fois « Expédiée », la marchandise est chez lui — changer de nom
       // sur l'écran ne la déplacerait pas.
-      const { data, error, count } = await supabase
+      let req = supabase
         .from('livraisons')
-        .select('id, livreur_id, livreurs(nom), commandes(*, pays(nom))', { count: 'exact' })
+        .select(`id, livreur_id, livreurs(nom), ${entrepotId ? 'commandes!inner' : 'commandes'}(*, pays(nom))`, { count: 'exact' })
         .eq('tenant_id', tenantKey)
         .eq('statut', 'a_preparer')
+      if (entrepotId) req = req.eq('commandes.entrepot_id', entrepotId)
+      const { data, error, count } = await req
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
         .range(debut, fin)
@@ -130,13 +139,13 @@ export default function AssignationLivreurPage() {
 
   useEffect(() => {
     setSelection({}); setRefusParId({})
-  }, [pageActuelle, ongletActif])
+  }, [pageActuelle, ongletActif, entrepotId])
 
   useEffect(() => {
     if (!tenantKey) return
     chargerCommandes(pageActuelle, ongletActif)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageActuelle, ongletActif, tenantKey])
+  }, [pageActuelle, ongletActif, tenantKey, entrepotId])
 
   function choisirLivreur(commandeId, livreurId) {
     setLivreurChoisiParCommande((prec) => ({ ...prec, [commandeId]: livreurId }))

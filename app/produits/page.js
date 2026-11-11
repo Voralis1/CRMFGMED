@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import VignetteProduit from '../components/VignetteProduit'
 import { reduireImage, envoyerImage, retirerImage, urlImage } from '../../lib/imageProduit'
@@ -81,6 +82,10 @@ const pourNomDeFichier = (t) => String(t || '').normalize('NFD').replace(/[\u030
 
 export default function ProduitsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
+  // L'entrepôt regardé (en haut, 11/11) : les produits qui y ont une ligne de
+  // stock (produits_de_l_entrepot — le vendeur ne lit pas les stocks).
+  const { entrepotId } = useEntrepot()
+  const [produitsEntrepot, setProduitsEntrepot] = useState(null)   // Set des id, ou null = tous
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
@@ -254,9 +259,19 @@ export default function ProduitsPage() {
   // Le filtrage se fait sur la liste déjà chargée : un catalogue tient en
   // quelques dizaines de lignes, inutile d'aller-retour sur le serveur.
   // Tous les filtres SAUF le vendeur : le « sur N » du filtre vendeur.
+  useEffect(() => {
+    let annule = false
+    if (!entrepotId || !tenantKey) { setProduitsEntrepot(null); return }
+    supabase.rpc('produits_de_l_entrepot', { p_tenant: tenantKey, p_entrepot: entrepotId })
+      // setof uuid : un tableau de valeurs (ou d'objets selon la version de l'API)
+      .then(({ data, error }) => { if (!annule) setProduitsEntrepot(error ? null : new Set((data || []).map((x) => (x && typeof x === 'object' ? Object.values(x)[0] : x)))) })
+    return () => { annule = true }
+  }, [entrepotId, tenantKey])
+
   const affichesTousVendeurs = useMemo(() => {
     const r = recherche.trim().toLowerCase()
     return produits.filter((p) => {
+      if (produitsEntrepot && !produitsEntrepot.has(p.id)) return false
       if (r && !`${p.product || ''} ${p.code || ''} ${nomVendeur(p.vendeur_id) || ''}`.toLowerCase().includes(r)) return false
       if (filtreType && (p.type || 'Standard') !== filtreType) return false
       if (filtreStatut && (p.statut || 'actif') !== filtreStatut) return false
@@ -264,7 +279,7 @@ export default function ProduitsPage() {
       if (filtreUpsell === 'non' && p.upsell) return false
       return true
     })
-  }, [produits, recherche, filtreType, filtreStatut, filtreUpsell, nomVendeur])
+  }, [produits, recherche, filtreType, filtreStatut, filtreUpsell, nomVendeur, produitsEntrepot])
 
   const peutFiltrerVendeur = !estSeller && ROLES_FILTRE_VENDEUR.includes(String(roleNom || '').toLowerCase())
   // Pour un vendeur, filtreVendeur reste vide : affiches = affichesTousVendeurs,

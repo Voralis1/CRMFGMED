@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 // Le verdict produit de l'import CSV : une fonction, vendeur et responsable.
@@ -104,6 +105,8 @@ const normaliserCle = cleNormalisee
 
 export default function GestionCommandesPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
+  // L'entrepôt regardé (en haut, 11/11) : la liste, ses totaux et l'export.
+  const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
@@ -491,6 +494,7 @@ export default function GestionCommandesPage() {
     requete = requete.eq('tenant_id', tenantKey)
     // un seller ne demande que ses propres leads (périmètre, pas un filtre)
     if (estSeller && user?.id) requete = requete.eq('vendeur_id', user.id)
+    if (entrepotId) requete = requete.eq('entrepot_id', entrepotId)
     if (!f) return requete
     // un responsable peut n'en regarder qu'un à la fois
     if (!estSeller && filtreVendeur === 'aucun') requete = requete.is('vendeur_id', null)
@@ -523,7 +527,7 @@ export default function GestionCommandesPage() {
     if (f.actionDu) requete = requete.gte('derniere_action_le', f.actionDu)
     if (f.actionAu) requete = requete.lte('derniere_action_le', `${f.actionAu}T23:59:59`)
     return requete
-  }, [tenantKey, estSeller, user?.id, filtreVendeur, groupesStatuts, catalogue])
+  }, [tenantKey, estSeller, user?.id, filtreVendeur, groupesStatuts, catalogue, entrepotId])
 
   function reinitialiserFiltres() {
     setFiltres(FILTRES_VIDES)

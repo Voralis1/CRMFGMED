@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import { PAYS_MONDE, drapeau, paysParNom } from '../../lib/paysMonde'
 import VignetteProduit from '../components/VignetteProduit'
@@ -59,6 +60,9 @@ const pourNomDeFichier = (t) => String(t || '').normalize('NFD').replace(/[\u030
 
 export default function ExpeditionsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
+  // L'entrepôt regardé (en haut, 11/11) : les expéditions qui y vont ou y ont été
+  // reçues. Celle d'un vendeur vise un PAYS : elle compte pour l'entrepôt de ce pays.
+  const { entrepotId, entrepot } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
@@ -238,9 +242,11 @@ export default function ExpeditionsPage() {
       if (filtreStatut && e.statut !== filtreStatut) return false
       if (filtreMode && e.mode_transport !== filtreMode) return false
       if (filtrePays && e.pays !== filtrePays) return false
+      if (entrepotId && !(e.entrepot_reception_id === entrepotId || e.entrepot_destination_id === entrepotId
+        || (!e.entrepot_reception_id && !e.entrepot_destination_id && entrepot?.pays_id && e.pays_destination_id === entrepot.pays_id))) return false
       return true
     })
-  }, [expeditions, recherche, filtreStatut, filtreMode, filtrePays])
+  }, [expeditions, recherche, filtreStatut, filtreMode, filtrePays, entrepotId, entrepot])
 
   const peutFiltrerVendeur = !estSeller && ROLES_FILTRE_VENDEUR.includes(String(roleNom || '').toLowerCase())
   // Pour un vendeur, filtreVendeur reste vide : affichees = la liste d'avant.

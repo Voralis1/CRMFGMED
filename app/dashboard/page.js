@@ -9,6 +9,7 @@ import {
 import { supabase } from "../../lib/supabaseClient";
 import { libelleStatut } from "../../lib/libellesStatuts.mjs";
 import { useAuth } from "../context/AuthContext";
+import { useEntrepot } from "../context/EntrepotContext";
 import { usePermissions } from "../context/PermissionsContext";
 // Délai de première prise en charge enregistrée (02/11) : responsables seulement, pas le vendeur.
 import { CarteDelai } from "../components/DelaiPriseEnCharge";
@@ -174,15 +175,18 @@ function bornesDashboard(periode, dateDebutPerso, dateFinPerso) {
 // ne télécharge plus des milliers de lignes pour les compter dans le navigateur.
 // La fonction tourne avec les droits de l'appelant, donc un seller n'obtient que
 // les chiffres de SES leads — c'est la base qui tranche, pas l'écran.
-async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
+async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId, entrepotId) {
   if (!tenantId) return null;
 
   const { debut, fin } = bornesDashboard(periode, dateDebutPerso, dateFinPerso);
 
+  // Un entrepôt choisi en haut (11/11) : la version par entrepôt
+  // (entrepots_filtre.sql) ; sinon celle de l'entreprise, inchangée.
   const { data, error } = await supabase.rpc("stats_dashboard", {
     p_tenant: tenantId,
     p_debut: debut.toISOString(),
     p_fin: fin.toISOString(),
+    ...(entrepotId ? { p_entrepot: entrepotId } : {}),
   });
 
   if (error) {
@@ -200,6 +204,7 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId) {
 
 export default function DashboardFGMED() {
   const { user, tenantId, loading: authLoading } = useAuth();
+  const { entrepotId } = useEntrepot();
   // 🚀 On récupère 'hasPermission' en plus de 'roleNom'
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
 
@@ -243,12 +248,12 @@ export default function DashboardFGMED() {
     if (authLoading || permsLoading) return;
     // On charge les données seulement si l'utilisateur y est autorisé
     if (hasPermission("menu_dashboard") || roleNom === "super_admin" || roleNom === "SUPER_ADMIN") {
-      chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey).then(setData);
+      chargerStats(periode, dateDebutPerso, dateFinPerso, tenantKey, entrepotId).then(setData);
       // Mêmes bornes pour la carte du délai, figées à ce chargement.
       const { debut, fin } = bornesDashboard(periode, dateDebutPerso, dateFinPerso);
       setBornesDelai({ debut: debut.toISOString(), fin: fin.toISOString() });
     }
-  }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading, hasPermission, roleNom]);
+  }, [periode, dateDebutPerso, dateFinPerso, tenantKey, authLoading, permsLoading, hasPermission, roleNom, entrepotId]);
 
   if (data?.erreur) {
     return (

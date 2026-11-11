@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 import VignetteProduit from '../components/VignetteProduit'
@@ -73,6 +74,8 @@ function PillStatut({ statut }) {
 
 export default function LivraisonsPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
+  // L'entrepôt regardé (en haut, 11/11) : les livraisons de ses commandes.
+  const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
 
@@ -242,7 +245,7 @@ export default function LivraisonsPage() {
     // vue « Toutes », le COUNT exact ne revenait jamais et l'écran restait sur
     // « Chargement... ». Sans filtre sur la commande, on compte `livraisons`
     // seules et la commande n'est résolue que pour les 50 lignes affichées.
-    const filtreSurCommande = Boolean(texte) || Boolean(filtresActifs.zone) || Boolean(filtresActifs.vendeur)
+    const filtreSurCommande = Boolean(texte) || Boolean(filtresActifs.zone) || Boolean(filtresActifs.vendeur) || Boolean(entrepotId)
     const jointure = filtreSurCommande ? 'commandes!inner' : 'commandes'
 
     // `*` et non une liste de colonnes : une seule colonne absente de la base
@@ -291,6 +294,7 @@ export default function LivraisonsPage() {
     else if (vue === 'a_faire') r = r.in('statut', STATUTS_EN_COURS)
     else if (vue === 'historique') r = r.in('statut', STATUTS_TERMINES)
 
+    if (entrepotId) r = r.eq('commandes.entrepot_id', entrepotId)
     if (filtresActifs.zone) r = r.eq('commandes.zone_id', filtresActifs.zone)
     if (filtresActifs.vendeur) r = r.eq('commandes.vendeur_id', filtresActifs.vendeur)
     if (filtresActifs.livreur) r = r.eq('livreur_id', filtresActifs.livreur)
@@ -308,7 +312,7 @@ export default function LivraisonsPage() {
     // function ». L'objet qui l'enveloppe n'est pas thenable : il traverse
     // `await` intact.
     return { requete: r.order('created_at', { ascending: false }).order('id', { ascending: false }) }
-  }, [tenantId, estLivreur, estResponsable, estSeller, user?.id, vue, filtresActifs])
+  }, [tenantId, estLivreur, estResponsable, estSeller, user?.id, vue, filtresActifs, entrepotId])
 
   const charger = useCallback(async () => {
     if (permsLoading) return

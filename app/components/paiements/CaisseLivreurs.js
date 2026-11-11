@@ -4,12 +4,16 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext' // 👈 Conservé pour tenantId et user
+import { useEntrepot } from '../../context/EntrepotContext'
 import { usePermissions } from '../../context/PermissionsContext' // 🚀 Import du contexte des permissions
 
 const TAILLE_PAGE = 50
 
 export default function CaisseLivreurs() {
   const { user, tenantId, loading: authLoading } = useAuth() // 👈 On garde l'auth de base
+  // L'entrepôt regardé (en haut, 11/11) : les paiements des commandes de cet entrepôt.
+  // Les caisses (v_caisses_livreur) restent par livreur : l'argent qu'il détient ne se coupe pas par entrepôt.
+  const { entrepotId } = useEntrepot()
   const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
   const router = useRouter()
 
@@ -38,11 +42,13 @@ export default function CaisseLivreurs() {
     // 🚀 On embarque la devise du pays de la commande (via pays_id) pour ne jamais afficher un montant nu.
     // `count: 'exact'` + `.range()` : le LIMIT/OFFSET est fait par la base, pas par le navigateur.
     const debut = page * TAILLE_PAGE
-    const { data, error, count } = await supabase
+    let req = supabase
       .from('paiements')
-      .select('id, montant, statut, livreurs(nom), commandes(client_nom, pays(devise))', { count: 'exact' })
+      .select(`id, montant, statut, livreurs(nom), ${entrepotId ? 'commandes!inner' : 'commandes'}(client_nom, entrepot_id, pays(devise))`, { count: 'exact' })
       .eq('tenant_id', tenantId) // 👈 Isolation multi-tenant stricte
       .eq('statut', 'en_attente')
+    if (entrepotId) req = req.eq('commandes.entrepot_id', entrepotId)
+    const { data, error, count } = await req
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
       .range(debut, debut + TAILLE_PAGE - 1)
@@ -55,7 +61,7 @@ export default function CaisseLivreurs() {
       setPaiements(data || [])
       setTotalPaiements(count || 0)
     }
-  }, [tenantId])
+  }, [tenantId, entrepotId])
 
   const chargerCaisses = useCallback(async () => {
     if (!tenantId) return

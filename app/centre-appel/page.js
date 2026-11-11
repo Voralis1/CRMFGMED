@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
+import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import VignetteProduit from '../components/VignetteProduit'
@@ -151,6 +152,8 @@ const ROLES_ASSIGNATION_AGENT = ['admin', 'manager', 'super_admin']
 
 export default function CentreAppelAgent() {
   const { user, tenantId, loading: authLoading } = useAuth() 
+  // L'entrepôt regardé (en haut, 11/11) : la file, ses comptes et « Remonter ».
+  const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions() 
   const router = useRouter()
 
@@ -375,7 +378,7 @@ export default function CentreAppelAgent() {
   // le premier chargement part avec une liste vide — donc sans les leads à
   // rappeler — et rien ne le relancerait quand les statuts arrivent.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB, catalogue])
+  }, [page, pageBas, dateDebut, dateFin, rechercheActive, filtreProduit, filtreVille, filtreSource, filtrePays, filtreAgent, authLoading, permsLoading, user, tenantKey, roleNom, listeStatutsDB, catalogue, entrepotId])
 
   const peutChangerAgent = ROLES_ASSIGNATION_AGENT.includes((roleNom || '').toLowerCase())
   // Plusieurs leads d'un coup (cases, barre du lot, « Remonter ») : le droit de
@@ -501,6 +504,7 @@ export default function CentreAppelAgent() {
     // que le super_admin a CHOISIE (`tenantChoisi`, AuthContext). Il voit donc
     // tout, une entreprise à la fois, et change d'entreprise par le sélecteur.
     q = q.eq('tenant_id', tenantKey)
+    if (entrepotId) q = q.eq('entrepot_id', entrepotId)
 
     // 🔒 An agent only sees HIS orders
     if (agentId) q = q.eq('agent_id', agentId)
