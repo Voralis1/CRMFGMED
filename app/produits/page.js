@@ -608,7 +608,7 @@ export default function ProduitsPage() {
       setEnregistrement(false)
       // idx_produits_code_unique : un code par VENDEUR depuis le 10/11 (T14 —
       // produits_par_vendeur.sql ; casse et espaces ignorés). Deux vendeurs
-      // peuvent avoir chacun leur « clearzal ».
+      // peuvent avoir chacun leur « produit » au même code.
       if (error.code === '23505' && String(error.message).includes('idx_produits_code_unique')) {
         return annonce('Ce vendeur a déjà un produit avec ce code. Choisissez-en un autre.', 'erreur')
       }
@@ -1157,7 +1157,7 @@ export default function ProduitsPage() {
                 <div className="flex flex-col divide-y divide-[#C9C1B1]/40">
                   {skusInconnus.map((x) => {
                     const cle = `${x.source_id}|${x.sku}`
-                    const c = choixInconnu[cle] || { produit: '', pack: '1' }
+                    const c = choixInconnu[cle] || { produit: '', pack: String(packDuTitre(x.titre) || 1) }
                     const produitsVendeur = produits.filter((p) => p.vendeur_id && p.vendeur_id === (estSeller ? user?.id : x.vendeur_id))
                     return (
                       <div key={cle} className="py-3 grid grid-cols-1 md:grid-cols-[1.2fr_1fr_80px_auto] gap-2 items-center">
@@ -1165,6 +1165,9 @@ export default function ProduitsPage() {
                           <p className="font-mono text-sm text-[#A35139]">{x.sku}</p>
                           <p className="text-xs text-[#1B2632]/60 truncate">{x.titre || '—'}</p>
                           <p className="text-[11px] text-[#1B2632]/40">{x.source_nom} · {x.nb_commandes} lead{x.nb_commandes > 1 ? 's' : ''} en attente</p>
+                          {packDuTitre(x.titre) != null && Number(c.pack) !== packDuTitre(x.titre) && (
+                            <p className="text-[11px] text-[#A35139] font-bold">⚠ le titre dit {packDuTitre(x.titre)}, le pack est {c.pack || '—'}</p>
+                          )}
                         </div>
                         <select className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" value={c.produit}
                           onChange={(e) => setChoixInconnu({ ...choixInconnu, [cle]: { ...c, produit: e.target.value } })}>
@@ -1206,11 +1209,14 @@ export default function ProduitsPage() {
                 <div className="flex flex-col divide-y divide-[#C9C1B1]/40">
                   {propositions.map((x) => {
                     const pr = produits.find((p) => p.id === x.produit_id)
+                    // le titre de la boutique : celui des commandes qui attendent ce SKU
+                    const titre = skusInconnus.find((u) => u.source_id === x.source_id && String(u.sku).toLowerCase() === String(x.sku).toLowerCase())?.titre
                     return (
                       <div key={x.id} className="py-3 grid grid-cols-1 md:grid-cols-[1.2fr_1.2fr_70px_auto] gap-2 items-center">
                         <div>
                           <p className="font-mono text-sm text-[#A35139]">{x.sku}</p>
                           <p className="text-[11px] text-[#1B2632]/40">{sources.find((s2) => s2.id === x.source_id)?.nom || '—'} · {nomVendeur(x.propose_par) || '—'} · {new Date(x.propose_le).toLocaleDateString('fr-FR')}</p>
+                          <VerifPack titre={titre} pack={x.multiplicateur} />
                         </div>
                         <p className="text-sm text-[#1B2632]">{pr ? `${pr.code ? pr.code + ' — ' : ''}${pr.product}` : '—'}</p>
                         <p className="text-sm font-mono text-center">× {x.multiplicateur}</p>
@@ -1329,7 +1335,7 @@ export default function ProduitsPage() {
                       if (boutiques.length === 0) return <p className="text-xs text-[#1B2632]/50">Le vendeur de ce produit n&apos;a pas de boutique (source) branchée.</p>
                       return (
                         <div className="grid grid-cols-1 sm:grid-cols-[1fr_90px_1fr_auto] gap-2">
-                          <input className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" placeholder="SKU (ex. clearzal-AO-3)"
+                          <input className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" placeholder="SKU (ex. produit-AO-3)"
                             value={nouveauSku.sku} onChange={(e) => setNouveauSku({ ...nouveauSku, sku: e.target.value })} />
                           <input type="number" min="1" max="100" className="w-full border border-[#C9C1B1] rounded-lg px-3 py-2 text-sm" title="Unités dans le pack"
                             value={nouveauSku.pack} onChange={(e) => setNouveauSku({ ...nouveauSku, pack: e.target.value })} />
@@ -1684,7 +1690,7 @@ export default function ProduitsPage() {
                           )}
                           {skusFormulaire.map((x, i) => (
                             <div key={i} className="grid grid-cols-[1fr_80px_auto] gap-2">
-                              <input className="ch-input" placeholder="ex. clearzal-AO-3" value={x.sku}
+                              <input className="ch-input" placeholder="ex. produit-AO-3" value={x.sku}
                                 onChange={(e) => setSkusFormulaire(skusFormulaire.map((y, j) => (j === i ? { ...y, sku: e.target.value } : y)))} />
                               <input type="number" min="1" max="100" className="ch-input" title="Unités dans le pack" value={x.pack}
                                 onChange={(e) => setSkusFormulaire(skusFormulaire.map((y, j) => (j === i ? { ...y, pack: e.target.value } : y)))} />
@@ -1718,6 +1724,31 @@ export default function ProduitsPage() {
 // Le libellé posé sur le trait du cadre, comme dans ShipLead. Un <fieldset>
 // et sa <legend> font ça nativement : le navigateur ouvre le trait à la bonne
 // largeur tout seul, sans calcul ni position absolue à ajuster.
+// Le nombre d'unités écrit dans le titre de la boutique (« … – 3 unidades » → 3),
+// pour vérifier le pack d'un SKU (11/11). null = le titre ne le dit pas.
+function packDuTitre(titre) {
+  const m = String(titre || '').match(/(\d+)\s*(unidades?|units?|unités?|pi[eè]ces?|pcs)(?![a-z])/i)
+  return m ? parseInt(m[1], 10) : null
+}
+
+// Le titre reçu de la boutique et ce qu'il dit du pack, face au pack proposé.
+function VerifPack({ titre, pack }) {
+  if (!titre) return <p className="text-[11px] text-[#8a5a1f]">Pas encore de commande avec ce SKU : vérifiez le pack sur la boutique.</p>
+  const n = packDuTitre(titre)
+  return (
+    <div className="text-[11px] leading-snug">
+      <p className="text-[#1B2632]/60">Titre de la boutique : « {titre} »</p>
+      {n == null ? (
+        <p className="text-[#8a5a1f]">Le titre ne dit pas le nombre d&apos;unités : vérifiez sur la boutique.</p>
+      ) : Number(pack) === n ? (
+        <p className="text-green-700 font-semibold">✓ le titre dit {n} — pack {pack}</p>
+      ) : (
+        <p className="text-[#A35139] font-bold">⚠ le titre dit {n}, le pack est {pack || '—'}</p>
+      )}
+    </div>
+  )
+}
+
 function Champ({ label, requis, aide, children }) {
   return (
     <fieldset className="border border-[#C9C1B1] rounded-lg px-3.5 pb-2.5 pt-1 focus-within:border-[#1B2632] transition-colors">
