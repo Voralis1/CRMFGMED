@@ -27,6 +27,7 @@ const VIDE = {
   transporteur: '', transporteur_telephone: '',
   pays: '', pays_code: '', entrepot_destination_id: '', pays_destination_id: '',
   date_expedition: '', date_reception: '',
+  vendeur_id: '',   // choisi par un responsable (11/11) ; un vendeur, c'est lui
 }
 
 function Statut({ valeur }) {
@@ -141,7 +142,7 @@ export default function ExpeditionsPage() {
     // l'équipe, un seller ne reçoit que sa propre ligne.
     const { data: gens } = await supabase
       .from('user_roles')
-      .select('user_id, email, nom')
+      .select('user_id, email, nom, role')
       .eq('tenant_id', tenantKey)
     setVendeurs(gens || [])
 
@@ -167,7 +168,7 @@ export default function ExpeditionsPage() {
     // reçoit que SES produits (RLS, produits_proprietaire.sql) ; la base
     // refuse aussi une ligne d'expédition avec le produit d'un autre.
     const { data: prodDB } = await supabase
-      .from('produits').select('id, product, code, statut, image_chemin')
+      .from('produits').select('id, product, code, statut, image_chemin, vendeur_id')
       .eq('tenant_id', tenantKey).order('product')
     setCatalogue((prodDB || []).filter((p) => (p.statut || 'actif') === 'actif'))
 
@@ -329,6 +330,7 @@ export default function ExpeditionsPage() {
       pays_destination_id: e.pays_destination_id || '',
       date_expedition: pourInput(e.date_expedition),
       date_reception: pourInput(e.date_reception),
+      vendeur_id: e.vendeur_id || '',
     })
     const { data } = await supabase
       .from('expeditions_produits')
@@ -369,6 +371,10 @@ export default function ExpeditionsPage() {
     ev.preventDefault()
     if (!tenantKey) return
     if (!formulaire.pays.trim()) return annonce('Le pays de provenance est obligatoire.', 'erreur')
+    // Le vendeur de l'expédition (11/11) : un responsable le choisit, comme pour
+    // l'import des leads ; un vendeur, c'est lui. La base le vérifie aussi
+    // (expedition_vendeur.sql).
+    if (!estSeller && !formulaire.vendeur_id) return annonce('Choisissez le vendeur de cette expédition.', 'erreur')
 
     const donnees = {
       poids_kg: formulaire.poids_kg === '' ? null : Number(formulaire.poids_kg),
@@ -408,8 +414,9 @@ export default function ExpeditionsPage() {
 
     setEnregistrement(true)
     const requete = idEnEdition
-      ? supabase.from('expeditions').update(donnees).eq('id', idEnEdition).eq('tenant_id', tenantKey).select()
-      : supabase.from('expeditions').insert([{ ...donnees, tenant_id: tenantKey, vendeur_id: user?.id }]).select()
+      ? supabase.from('expeditions').update(estSeller ? donnees : { ...donnees, vendeur_id: formulaire.vendeur_id })
+          .eq('id', idEnEdition).eq('tenant_id', tenantKey).select()
+      : supabase.from('expeditions').insert([{ ...donnees, tenant_id: tenantKey, vendeur_id: estSeller ? user?.id : formulaire.vendeur_id }]).select()
 
     const { data, error } = await requete
 
@@ -1107,8 +1114,14 @@ export default function ExpeditionsPage() {
                 ) : (
                   (() => {
                     const r = rechercheProduit.trim().toLowerCase()
+                    // Un responsable : les produits du vendeur choisi, et ceux sans
+                    // vendeur (communs) — jamais ceux d'un autre vendeur (11/11).
+                    if (!estSeller && !formulaire.vendeur_id) {
+                      return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">Choisissez d&apos;abord le vendeur de l&apos;expédition.</p>
+                    }
                     const trouves = catalogue.filter((p) =>
-                      !r || `${p.product || ''} ${p.code || ''}`.toLowerCase().includes(r))
+                      (estSeller || !p.vendeur_id || p.vendeur_id === formulaire.vendeur_id)
+                      && (!r || `${p.product || ''} ${p.code || ''}`.toLowerCase().includes(r)))
                     if (trouves.length === 0) {
                       return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">Aucun produit ne correspond.</p>
                     }
@@ -1231,6 +1244,34 @@ export default function ExpeditionsPage() {
                   </Bloc>
 
                   <div className="flex flex-col gap-5">
+                    {!estSeller && (
+                      <Bloc titre="Vendeur">
+                        <div>
+                          <label className="ex-label">Vendeur *</label>
+                          {(() => {
+                            const recue = !!expeditions.find((x) => x.id === idEnEdition)?.entrepot_reception_id
+                            return (
+                              <select className="ex-input" required value={formulaire.vendeur_id} disabled={recue}
+                                title={recue ? 'Expédition reçue : son vendeur ne change plus.' : undefined}
+                                onChange={(ev) => {
+                                  const v = ev.target.value
+                                  setFormulaire({ ...formulaire, vendeur_id: v })
+                                  // Les produits d'un autre vendeur partent avec le changement.
+                                  setLignes(lignes.filter((l) => {
+                                    const p = catalogue.find((x) => x.id === l.produit_id)
+                                    return !p || !p.vendeur_id || p.vendeur_id === v
+                                  }))
+                                }}>
+                                <option value="">Choisir...</option>
+                                {vendeurs.filter((x) => String(x.role || '').toLowerCase() === 'seller').map((x) => (
+                                  <option key={x.user_id} value={x.user_id}>{x.nom || x.email}</option>
+                                ))}
+                              </select>
+                            )
+                          })()}
+                        </div>
+                      </Bloc>
+                    )}
                     <Bloc titre={estSeller ? 'Destination' : 'Entrepôt'}>
                       <div>
                         <label className="ex-label">{estSeller ? 'Vers (pays) *' : 'Vers (entrepôt) *'}</label>
