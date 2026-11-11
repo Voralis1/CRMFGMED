@@ -540,8 +540,10 @@ export default function ProduitsPage() {
       }
     }
 
-    const vides = aRetirer.filter((st) => !(st.quantite_disponible > 0) && !(st.quantite_defectueuse > 0))
-    const pleins = aRetirer.filter((st) => st.quantite_disponible > 0 || st.quantite_defectueuse > 0)
+    // « Vide » = EXACTEMENT 0 (11/11, T22 : une ligne négative comptait comme vide
+    // et disparaissait sans trace — la base refuse aussi, stock_portes.sql).
+    const vides = aRetirer.filter((st) => Number(st.quantite_disponible || 0) === 0 && Number(st.quantite_defectueuse || 0) === 0)
+    const pleins = aRetirer.filter((st) => !vides.includes(st))
 
     if (vides.length > 0) {
       await supabase.from('stocks').delete().in('id', vides.map((st) => st.id))
@@ -551,7 +553,7 @@ export default function ProduitsPage() {
 
     if (pleins.length > 0) {
       annonce(fin(
-        `Produit enregistré. ${pleins.length} entrepôt${pleins.length > 1 ? 's gardés' : ' gardé'} : il y reste de la marchandise. Videz le stock avant de le retirer.`),
+        `Produit enregistré. ${pleins.length} entrepôt${pleins.length > 1 ? 's gardés' : ' gardé'} : son stock n\u2019est pas à 0. Ramenez-le à 0 par un mouvement avant de le retirer.`),
         'erreur',
       )
       setModaleOuverte(false)

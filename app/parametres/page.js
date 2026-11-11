@@ -344,6 +344,12 @@ export default function ParametresAdmin() {
         .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId),
     ]);
 
+    // Un entrepôt avec un historique de mouvements ne se supprime pas (11/11, T22 :
+    // supprimer effaçait tout son historique — la base refuse aussi, stock_portes.sql).
+    if (nbMouvements) {
+      return afficherMessage(`L'entrepôt « ${entrepot.nom} » a ${nbMouvements} mouvement(s) de stock (son historique) : il ne se supprime pas.`, "erreur");
+    }
+
     const emporte = [];
     if (nbStocks) emporte.push(`${nbStocks} ligne(s) de stock`);
     if (nbMouvements) emporte.push(`${nbMouvements} mouvement(s)`);
