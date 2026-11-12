@@ -21,6 +21,7 @@ import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRa
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
 import { nomsParGroupe, sousStatutOuvert, statutPrincipal } from '../../lib/affichageStatut.mjs'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
+import CommandesSupprimees from '../components/CommandesSupprimees'
 // Le filtre par agent, partagé avec le Centre d'appel : même liste, mêmes règles.
 import SelectAgent, { filtrerParAgent, nomFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 import PlageDates from '../components/PlageDates'
@@ -140,6 +141,11 @@ export default function GestionCommandesPage() {
   // Le vendeur coche pour EXPORTER ; seuls manager, admin, super_admin
   // changent un statut (sa décision du 29/10).
   const peutSelectionner = hasPermission('exporter_csv') || peutChangerEnMasse
+  // Supprimer (12/11) : le vendeur SES leads non traités (supprimer_leads),
+  // manager / admin toute commande pas payée (supprimer_commandes). La base
+  // décide commande par commande ; plusieurs à la fois = actions_masse en plus.
+  const peutSupprimer = hasPermission('supprimer_leads') || hasPermission('supprimer_commandes')
+  const peutSupprimerEnMasse = peutChangerEnMasse && hasPermission('supprimer_commandes')
 
   const [commandes, setCommandes] = useState([])
   const [agents, setAgents] = useState([])
@@ -198,6 +204,13 @@ export default function GestionCommandesPage() {
   // sans adresse le laissait devant un refus qu'il ne pouvait pas lever.
   const [adresseCorrigee, setAdresseCorrigee] = useState('')
   const [erreurStatut, setErreurStatut] = useState('')
+  // Supprimer (12/11, commandes_suppression.sql) : la base dit si c'est
+  // possible et pourquoi pas — undefined = pas demandé, null = en lecture.
+  const [droitSuppression, setDroitSuppression] = useState(undefined)
+  const [raisonSuppression, setRaisonSuppression] = useState('')
+  const [suppressionEnCours, setSuppressionEnCours] = useState(false)
+  const [erreurSuppression, setErreurSuppression] = useState('')
+  const [journalOuvert, setJournalOuvert] = useState(false)
   // L'heure du rappel quand le statut choisi en demande un (necessite_rappel) :
   // confirmer-appel l'exige, depuis Commandes comme depuis le Centre d'appel.
   const [rappelCorrige, setRappelCorrige] = useState('')
@@ -604,6 +617,14 @@ export default function GestionCommandesPage() {
     setRenvoiOuvert(false)
     setMotifRenvoi('')
     setLivraisonDetail(undefined)
+    setRaisonSuppression('')
+    setErreurSuppression('')
+    setDroitSuppression(peutSupprimer ? null : undefined)
+    if (peutSupprimer) {
+      supabase.rpc('suppression_commande_possible', { p_id: cmd.id }).then(({ data, error }) => {
+        setDroitSuppression(error ? { permis: false, motif: error.message } : (data || [])[0] || { permis: false, motif: 'Commande introuvable.' })
+      })
+    }
     if (peutChangerStatut) {
       supabase
         .from('livraisons')
@@ -687,6 +708,43 @@ export default function GestionCommandesPage() {
     setResultatLot(resume)
     setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
     setLotStatut(''); setLotMotif(''); setLotRappel('')
+    await chargerCommandes(pageActuelle)
+    setSelection(Object.fromEntries(resume.refus.map((r) => [r.id, true])))
+  }
+
+  // Supprimer (12/11) : une seule porte, supprimer_commandes — elle contrôle,
+  // rend le stock sorti, libère les « Rupture », écrit le journal. Un lead
+  // supprimé puis renvoyé par la boutique revient comme un nouveau lead.
+  async function supprimerDetail() {
+    if (!detail || !droitSuppression?.permis) return
+    const raison = raisonSuppression.trim()
+    if (!raison) { setErreurSuppression('La raison est obligatoire.'); return }
+    const avertir = droitSuppression.avertissement ? `\n\n${droitSuppression.avertissement}` : ''
+    if (!confirm(`Supprimer la commande ${detail.lead_id || ''} ? Elle disparaît de Commandes et du Centre d'appel. Pas de retour possible.${avertir}`)) return
+    setSuppressionEnCours(true)
+    setErreurSuppression('')
+    const { data, error } = await supabase.rpc('supprimer_commandes', { p_tenant: tenantKey, p_ids: [detail.id], p_raison: raison })
+    setSuppressionEnCours(false)
+    const r = (data || [])[0]
+    if (error || r?.resultat !== 'applique') { setErreurSuppression(error?.message || r?.motif || 'Suppression refusée.'); return }
+    setDetail(null)
+    await chargerCommandes(pageActuelle)
+  }
+
+  async function supprimerLot() {
+    const lignes = lignesCochees
+    if (!lignes.length) return
+    setErreurLot('')
+    const raison = (window.prompt(`Supprimer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page ? Elles disparaissent de Commandes et du Centre d'appel ; le stock sorti revient. Pas de retour possible.\n\nRaison (obligatoire) :`) || '').trim()
+    if (!raison) return
+    setLotEnCours(true)
+    const { data, error } = await supabase.rpc('supprimer_commandes', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_raison: raison })
+    setLotEnCours(false)
+    const action = 'Suppression'
+    if (error) { setResultatLot({ action, erreur: error.message }); return }
+    const resume = resumerLot(action, data, lignes)
+    setResultatLot(resume)
+    setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
     await chargerCommandes(pageActuelle)
     setSelection(Object.fromEntries(resume.refus.map((r) => [r.id, true])))
   }
@@ -1323,6 +1381,16 @@ export default function GestionCommandesPage() {
             </button>
           )}
           
+          {hasPermission('supprimer_commandes') && (
+            <button
+              onClick={() => setJournalOuvert(true)}
+              title="Les commandes supprimées : qui, quand, pourquoi"
+              className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#A35139] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
+            >
+              Commandes supprimées
+            </button>
+          )}
+
           {hasPermission('creer_commande') && (
             <button
               onClick={() => setIsCreateModalOpen(true)}
@@ -1531,6 +1599,12 @@ export default function GestionCommandesPage() {
               className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50">
               {lotEnCours ? 'En cours…' : 'Appliquer'}
             </button>
+            {peutSupprimerEnMasse && (
+              <button onClick={supprimerLot} disabled={lotEnCours}
+                className="text-sm font-bold px-4 py-2 rounded-lg bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50">
+                Supprimer la sélection
+              </button>
+            )}
             <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
               Tout décocher
             </button>
@@ -1789,6 +1863,10 @@ export default function GestionCommandesPage() {
       </div>
 
       {/* Modale de création manuelle */}
+      {journalOuvert && hasPermission('supprimer_commandes') && (
+        <CommandesSupprimees tenantKey={tenantKey} nomDuVendeur={nomDuVendeur} onFermer={() => setJournalOuvert(false)} />
+      )}
+
       {isCreateModalOpen && hasPermission('creer_commande') && (
         <div className="fixed inset-0 bg-[#1B2632]/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#EEE9DF] rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -2478,6 +2556,44 @@ export default function GestionCommandesPage() {
                     </div>
                   )}
                 </div>
+
+                {peutSupprimer && droitSuppression !== undefined && (
+                  <div className="border border-[#A35139]/30 rounded-xl p-5" data-suppression>
+                    <h3 className="text-sm font-bold text-[#A35139] mb-3">Supprimer la commande</h3>
+                    {droitSuppression === null ? (
+                      <p className="text-xs text-[#1B2632]/50">Vérification…</p>
+                    ) : !droitSuppression.permis ? (
+                      <p className="text-xs text-[#1B2632]/60">{droitSuppression.motif}</p>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        {droitSuppression.avertissement && (
+                          <p className="text-xs font-semibold text-[#A35139]">{droitSuppression.avertissement}</p>
+                        )}
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="flex-1 min-w-[240px]">
+                            <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
+                              Raison <span className="text-[#A35139]">*</span>
+                            </label>
+                            <input type="text"
+                              className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
+                              value={raisonSuppression}
+                              onChange={(e) => { setRaisonSuppression(e.target.value); setErreurSuppression('') }}
+                              placeholder="Ex. : doublon, test, client a annulé avant l'appel"
+                            />
+                          </div>
+                          <button onClick={supprimerDetail} disabled={suppressionEnCours || !raisonSuppression.trim()}
+                            className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-40 transition-colors cursor-pointer">
+                            {suppressionEnCours ? 'Suppression…' : 'Supprimer'}
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-[#1B2632]/45">
+                          Elle disparaît de Commandes et du Centre d&apos;appel. Le stock déjà sorti revient à l&apos;entrepôt. Si la boutique renvoie ce lead, il revient comme un nouveau lead.
+                        </p>
+                      </div>
+                    )}
+                    {erreurSuppression && <p className="text-xs text-[#A35139] mt-2">{erreurSuppression}</p>}
+                  </div>
+                )}
 
                 {(detail.commentaire_1 || detail.commentaire_2 || detail.notes) && (
                   <div className="border border-[#C9C1B1] rounded-xl p-5">
