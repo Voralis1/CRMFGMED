@@ -15,7 +15,7 @@ const LARGEUR_BUREAU = 768   // tailwind `md`
 export default function AppLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [utilisateur, setUtilisateur] = useState({ nom: '' }) // Plus besoin de stocker le rôle ici
-  const { estSuperAdmin, tenantId, tenantChoisi, setTenantChoisi, loading: authLoading } = useAuth()
+  const { estSuperAdmin, tenantId, tenantChoisi, setTenantChoisi, loading: authLoading, entrepriseSuspendue } = useAuth()
   const { entrepots, entrepotId, setEntrepotId } = useEntrepot()
   const [entreprises, setEntreprises] = useState([])
   
@@ -112,6 +112,26 @@ export default function AppLayout({ children }) {
   // On cache ce Layout UNIQUEMENT sur la page de connexion '/'
   if (pathname === '/') {
     return <main className="min-h-[100dvh] w-full bg-[#EEE9DF]">{children}</main>
+  }
+
+  // T11 (12/11) : entreprise suspendue — la base refuse tout ; un seul écran,
+  // le message et la déconnexion, au lieu de pages vides.
+  if (entrepriseSuspendue) {
+    return (
+      <main className="min-h-[100dvh] w-full bg-[#EEE9DF] flex items-center justify-center p-4">
+        <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm max-w-md w-full p-8 text-center flex flex-col gap-4">
+          <h1 className="text-2xl font-bold text-[#A35139]">Entreprise suspendue</h1>
+          <p className="text-sm text-[#1B2632]/70">
+            L&apos;accès au CRM est fermé pour votre entreprise. Contactez FGMED pour le rouvrir.
+          </p>
+          <button
+            onClick={async () => { await supabase.auth.signOut(); router.replace('/') }}
+            className="self-center px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">
+            Se déconnecter
+          </button>
+        </div>
+      </main>
+    )
   }
 
   return (

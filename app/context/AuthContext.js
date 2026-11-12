@@ -26,6 +26,9 @@ export function AuthProvider({ children }) {
   const [estSuperAdmin, setEstSuperAdmin] = useState(false)
   const [tenantChoisi, setTenantChoisiEtat] = useState(null)
   const [loading, setLoading] = useState(true)
+  // T11 (12/11, entreprise_suspendue.sql) : la base refuse toute requête d'un
+  // compte dont l'entreprise est suspendue ; on le dit au lieu d'écrans vides.
+  const [entrepriseSuspendue, setEntrepriseSuspendue] = useState(false)
 
   useEffect(() => {
     setTenantChoisiEtat(lireChoix())
@@ -47,17 +50,19 @@ export function AuthProvider({ children }) {
         setUser(null)
         setTenantReel(null)
         setEstSuperAdmin(false)
+        setEntrepriseSuspendue(false)
         setLoading(false)
         return
       }
 
       setUser(sessionUser)
 
-      const { data: roleData } = await supabase
+      const { data: roleData, error: roleErreur } = await supabase
         .from('user_roles')
         .select('tenant_id, role')
         .eq('user_id', sessionUser.id)
         .maybeSingle()
+      setEntrepriseSuspendue(roleErreur?.hint === 'entreprise_suspendue' || /Entreprise suspendue/.test(roleErreur?.message || ''))
 
       if (roleData) {
         setTenantReel(roleData.tenant_id)
@@ -86,8 +91,8 @@ export function AuthProvider({ children }) {
   // Mémorisé : un objet recréé à chaque rendu ferait re-rendre tous les
   // consommateurs et relancerait les effets qui en dépendent.
   const valeur = useMemo(
-    () => ({ user, tenantId, loading, estSuperAdmin, tenantChoisi, setTenantChoisi }),
-    [user, tenantId, loading, estSuperAdmin, tenantChoisi],
+    () => ({ user, tenantId, loading, estSuperAdmin, tenantChoisi, setTenantChoisi, entrepriseSuspendue }),
+    [user, tenantId, loading, estSuperAdmin, tenantChoisi, entrepriseSuspendue],
   )
 
   return (

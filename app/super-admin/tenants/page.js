@@ -175,8 +175,10 @@ export default function TenantsPage() {
         .eq('id', tenant.id);
 
       if (error) {
-        if (error.code === '23503') {
-          alert(`Impossible de supprimer "${tenant.nom_entreprise}" : des données y sont rattachées.`);
+        // 23503 (NO ACTION : commandes, agents, comptes) et 23001 (RESTRICT :
+        // travail, argent, historique — fk_entreprises.sql, 12/11) : elle a travaillé.
+        if (error.code === '23503' || error.code === '23001') {
+          alert(`Impossible de supprimer "${tenant.nom_entreprise}" : elle a des commandes, des comptes ou un historique.\n\nPour la fermer, passez son statut à « Archivé » (Modifier) : plus personne n'y accède et ses données restent.`);
         } else {
           throw error;
         }
