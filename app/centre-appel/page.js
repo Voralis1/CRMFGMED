@@ -763,6 +763,9 @@ export default function CentreAppelAgent() {
 
   async function ouvrirPanneau(commande) {
     setCommandeSelectionnee(commande)
+    // T21 (13/11) : « Traiter » arrête l'horloge de réaffectation. La base ne
+    // compte que l'agent DU lead (un responsable qui ouvre ne l'arrête pas).
+    if (vueAgent) supabase.rpc('marquer_lead_ouvert', { p_id: commande.id }).then(() => {})
     setErreurEnvoi('')
     setAppelsPrecedents([])
 
@@ -1021,6 +1024,7 @@ export default function CentreAppelAgent() {
                     onClick={() => document.getElementById('separateur-suivi')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
                     {comptes.traites}{surTotal(comptes.totalTraites)} en suivi
                   </button>
+
                 </>
               )}
             </div>
@@ -1293,6 +1297,7 @@ export default function CentreAppelAgent() {
                       )}
                       <td className="px-6 py-4">
                         <div className="font-bold text-[#1B2632] whitespace-nowrap">{cmd.client_nom || 'Client inconnu'}</div>
+
                         <div className="font-mono text-xs text-[#A35139] font-semibold mt-1 whitespace-nowrap">{cmd.client_telephone || 'Aucun numéro'}</div>
                       </td>
                       <td className="px-6 py-4 text-sm font-medium text-[#1B2632] whitespace-nowrap">{cmd.pays?.nom || '-'}</td>

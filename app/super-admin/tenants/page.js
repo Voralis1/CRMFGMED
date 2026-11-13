@@ -24,6 +24,8 @@ export default function TenantsPage() {
   const [editTenant, setEditTenant] = useState(null);
   const [editNom, setEditNom] = useState('');
   const [editStatut, setEditStatut] = useState('actif');
+  // T21 (13/11, reaffectation_delai.sql) : minutes de travail avant qu'un lead non ouvert change d'agent.
+  const [editDelai, setEditDelai] = useState('60');
 
   // Suppression / action en cours
   const [actionEnCours, setActionEnCours] = useState(null);
@@ -100,17 +102,23 @@ export default function TenantsPage() {
     setEditTenant(tenant);
     setEditNom(tenant.nom_entreprise || '');
     setEditStatut(tenant.statut || 'actif');
+    setEditDelai(String(tenant.delai_reaffectation_minutes ?? 60));
   }
 
   async function handleUpdateTenant(e) {
     e.preventDefault();
     if (!editTenant || !editNom.trim()) return;
+    const delai = Number(editDelai);
+    if (!Number.isInteger(delai) || delai < 5 || delai > 480) {
+      alert('Délai de réaffectation : un nombre entier de minutes, entre 5 et 480.');
+      return;
+    }
 
     setActionEnCours(editTenant.id);
     try {
       const { data, error } = await supabase
         .from('tenants')
-        .update({ nom_entreprise: editNom.trim(), statut: editStatut })
+        .update({ nom_entreprise: editNom.trim(), statut: editStatut, delai_reaffectation_minutes: delai })
         .eq('id', editTenant.id)
         .select()
         .single();
@@ -414,6 +422,20 @@ export default function TenantsPage() {
                   <option value="suspendu">Suspendu</option>
                   <option value="archive">Archivé</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-[#1B2632] mb-1">Délai de réaffectation (minutes)</label>
+                <input
+                  type="number" min="5" max="480" step="1"
+                  value={editDelai}
+                  onChange={(e) => setEditDelai(e.target.value)}
+                  className="w-full border border-[#C9C1B1] px-4 py-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]/20 focus:border-[#1B2632]"
+                />
+                <p className="text-xs text-[#1B2632]/55 mt-1">
+                  Un lead « En attente » que son agent n&apos;a pas ouvert après ce temps de travail (lun–ven 8h–18h, sam 8h–12h,
+                  heure du pays) passe à un autre agent du pays. 60 par défaut ; 5 pour tester.
+                </p>
               </div>
 
               <div className="pt-4 flex gap-3">
