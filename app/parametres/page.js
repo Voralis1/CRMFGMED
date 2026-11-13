@@ -7,6 +7,9 @@ import { libelleStatut } from "../../lib/libellesStatuts.mjs";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
 import { retirerImage } from "../../lib/imageProduit";
+import DelaiReaffectation from "../components/DelaiReaffectation";
+import { PAYS_MONDE } from "../../lib/paysMonde";
+import { fuseauxDuPays, decalageUTC, heureLocale, nomFuseau } from "../../lib/fuseauxPays.mjs";
 
 // Les plus récents seulement : la liste sert à retrouver un mouvement, pas à
 // tout recharger à chaque visite.
@@ -65,7 +68,7 @@ export default function ParametresAdmin() {
 
   // --- États Pays ---
   const [listePays, setListePays] = useState([]);
-  const [nouveauPays, setNouveauPays] = useState({ id: null, nom: "", code: "", devise: "" });
+  const [nouveauPays, setNouveauPays] = useState({ id: null, nom: "", code: "", devise: "", fuseau: "" });
   const [isEditingPays, setIsEditingPays] = useState(false);
 
   // --- États Zones ---
@@ -181,11 +184,17 @@ export default function ParametresAdmin() {
     e.preventDefault();
     if (!tenantId) return;
     if (!nouveauPays.nom || !nouveauPays.code || !nouveauPays.devise) return afficherMessage("Tous les champs du pays sont obligatoires.", "erreur");
+    // 13/11 (fuseaux_pays.sql) : le fuseau vient de la liste officielle ; un pays
+    // à plusieurs fuseaux demande un choix. La base refuse pareil.
+    const fuseauxPossibles = fuseauxDuPays(nouveauPays.code);
+    if (fuseauxPossibles.length === 0) return afficherMessage(`Code pays « ${nouveauPays.code} » inconnu : choisissez le pays dans la liste.`, "erreur");
+    if (!nouveauPays.fuseau || !fuseauxPossibles.includes(nouveauPays.fuseau)) return afficherMessage("Choisissez le fuseau horaire du pays.", "erreur");
 
     const champs = {
       nom: nomPaysPropre(nouveauPays.nom),
       code: nouveauPays.code.trim().toUpperCase(),
       devise: nouveauPays.devise.trim().toUpperCase(),
+      fuseau: nouveauPays.fuseau,
     };
 
     if (isEditingPays) {
@@ -195,12 +204,20 @@ export default function ParametresAdmin() {
     } else {
       const { error } = await supabase.from("pays").insert([{ ...champs, tenant_id: tenantId }]);
       if (error) afficherMessage(messagePays(error, "l'ajout"), "erreur");
-      else { afficherMessage("Pays ajouté.", "succes"); setNouveauPays({ id: null, nom: "", code: "", devise: "" }); chargerDonnees(); }
+      else { afficherMessage("Pays ajouté.", "succes"); setNouveauPays({ id: null, nom: "", code: "", devise: "", fuseau: "" }); chargerDonnees(); }
     }
   }
 
-  function preparerModificationPays(pays) { setNouveauPays({ id: pays.id, nom: pays.nom || "", code: pays.code || "", devise: pays.devise || "" }); setIsEditingPays(true); }
-  function annulerEditionPays() { setNouveauPays({ id: null, nom: "", code: "", devise: "" }); setIsEditingPays(false); }
+  function preparerModificationPays(pays) { setNouveauPays({ id: pays.id, nom: pays.nom || "", code: pays.code || "", devise: pays.devise || "", fuseau: pays.fuseau || "" }); setIsEditingPays(true); }
+  function annulerEditionPays() { setNouveauPays({ id: null, nom: "", code: "", devise: "", fuseau: "" }); setIsEditingPays(false); }
+  // Choisir un pays dans la liste : nom et code justes, et le fuseau proposé
+  // (posé tout seul s'il n'y en a qu'un).
+  function choisirPaysMonde(code) {
+    const m = PAYS_MONDE.find((x) => x.code === code);
+    if (!m) { setNouveauPays({ ...nouveauPays, nom: "", code: "", fuseau: "" }); return; }
+    const f = fuseauxDuPays(m.code);
+    setNouveauPays({ ...nouveauPays, nom: m.nom, code: m.code, fuseau: f.length === 1 ? f[0] : "" });
+  }
   // La suppression est faite par la base (`supprimer_pays`), pas ici.
   //
   // Un `delete` depuis l'écran échouait sur la première ligne qui citait le
@@ -616,14 +633,36 @@ export default function ParametresAdmin() {
                 <p className="text-sm text-[#1B2632]/60 mt-1">Configurez les pays et leurs devises respectives.</p>
               </div>
 
-              <form onSubmit={ajouterPays} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+              <form onSubmit={ajouterPays} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+                {/* 13/11 : le pays se CHOISIT dans la liste (nom et code ISO justes) ;
+                    le fuseau horaire en découle (base officielle, lib/fuseauxPays.mjs). */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom du Pays</label>
-                  <input type="text" placeholder="ex: Angola" value={nouveauPays.nom} onChange={(e) => setNouveauPays({...nouveauPays, nom: e.target.value})} className="fg-input" required />
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                  <select value={PAYS_MONDE.some((m) => m.code === nouveauPays.code) ? nouveauPays.code : ""} onChange={(e) => choisirPaysMonde(e.target.value)} className="fg-input cursor-pointer" required>
+                    <option value="">{nouveauPays.nom && !PAYS_MONDE.some((m) => m.code === nouveauPays.code) ? `${nouveauPays.nom} (hors liste) — choisir…` : "Choisir un pays…"}</option>
+                    {PAYS_MONDE.map((m) => (<option key={m.code} value={m.code}>{m.nom}</option>))}
+                  </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Code ISO</label>
-                  <input type="text" placeholder="ex: AO" maxLength={2} value={nouveauPays.code} onChange={(e) => setNouveauPays({...nouveauPays, code: e.target.value})} className="fg-input" required />
+                  <input type="text" value={nouveauPays.code} readOnly className="fg-input bg-[#EEE9DF]/40" placeholder="auto" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Fuseau horaire</label>
+                  {(() => {
+                    const f = fuseauxDuPays(nouveauPays.code);
+                    if (!nouveauPays.code) return <input type="text" readOnly className="fg-input bg-[#EEE9DF]/40" placeholder="choisissez le pays" />;
+                    if (f.length === 0) return <p className="text-xs text-[#A35139] py-2">Code inconnu : choisissez le pays dans la liste.</p>;
+                    if (f.length === 1) return (
+                      <input type="text" readOnly className="fg-input bg-[#EEE9DF]/40" value={`${nomFuseau(f[0])} · ${decalageUTC(f[0])} · ${heureLocale(f[0])}`} />
+                    );
+                    return (
+                      <select value={nouveauPays.fuseau} onChange={(e) => setNouveauPays({ ...nouveauPays, fuseau: e.target.value })} className="fg-input cursor-pointer" required>
+                        <option value="">Plusieurs fuseaux : choisir…</option>
+                        {f.map((z) => (<option key={z} value={z}>{nomFuseau(z)} · {decalageUTC(z)} · {heureLocale(z)}</option>))}
+                      </select>
+                    );
+                  })()}
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Devise</label>
@@ -648,20 +687,27 @@ export default function ParametresAdmin() {
                       <th>Pays</th>
                       <th>Code ISO</th>
                       <th>Devise</th>
+                      <th>Fuseau horaire</th>
                       <th className="text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chargement ? (
-                      <tr><td colSpan="4" className="text-center py-6">Chargement...</td></tr>
+                      <tr><td colSpan="5" className="text-center py-6">Chargement...</td></tr>
                     ) : listePays.length === 0 ? (
-                      <tr><td colSpan="4" className="text-center py-6 text-gray-400">Aucun pays configuré.</td></tr>
+                      <tr><td colSpan="5" className="text-center py-6 text-gray-400">Aucun pays configuré.</td></tr>
                     ) : (
                       listePays.map((p) => (
                         <tr key={p.id} className="hover:bg-[#EEE9DF]/20">
                           <td className="font-medium">{p.nom}</td>
                           <td><span className="fg-badge">{p.code}</span></td>
                           <td><span className="fg-badge dark">{p.devise}</span></td>
+                          <td className="text-xs whitespace-nowrap">
+                            {p.fuseau ? (
+                              <span title={p.fuseau}>{nomFuseau(p.fuseau)} · {decalageUTC(p.fuseau)} · <span className="font-semibold">{heureLocale(p.fuseau)}</span></span>
+                            ) : <span className="text-[#A35139]">—</span>}
+                            {p.fuseau === "UTC" && !fuseauxDuPays(p.code).length && <span className="block text-[#A35139]">code inconnu : vérifiez le pays</span>}
+                          </td>
                           <td className="text-right flex items-center justify-end gap-2">
                             <button onClick={() => preparerModificationPays(p)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
                               Modifier
@@ -751,6 +797,7 @@ export default function ParametresAdmin() {
         {/* --- ONGLET STATUTS CONFIGURABLES --- */}
         {ongletActif === "statuts" && (
           <div className="flex flex-col gap-6">
+            <DelaiReaffectation tenantId={tenantId} peutModifier={peutModifier} />
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">
