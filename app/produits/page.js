@@ -9,6 +9,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import VignetteProduit from '../components/VignetteProduit'
 // Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
 import { contenuCSV } from '../../lib/celluleCSV.mjs'
+// Lien de vérification : http(s) seulement (16/11).
+import { estLienWeb } from '../../lib/lienWeb.mjs'
 import { reduireImage, envoyerImage, retirerImage, urlImage } from '../../lib/imageProduit'
 
 // Le catalogue de Paramètres reste en place le temps que cet écran fasse ses
@@ -572,6 +574,11 @@ export default function ProduitsPage() {
     if (!idEnEdition && !estSeller && !formulaire.vendeur_id) return annonce('Choisissez le vendeur à qui est ce produit.', 'erreur')
     if (formulaire.price === '' || Number.isNaN(Number(formulaire.price))) {
       return annonce('Le prix est obligatoire.', 'erreur')
+    }
+    // Une adresse web, rien d'autre : ni faute de frappe (« httpps:// »), ni
+    // « javascript: » (revue de sécurité 13/11, point 4).
+    if (formulaire.product_page.trim() && !estLienWeb(formulaire.product_page)) {
+      return annonce('Le lien doit commencer par http:// ou https:// (ex. : https://www.site.com).', 'erreur')
     }
 
     const enStock = parseInt(formulaire.current_quantity, 10) || 0
@@ -1276,8 +1283,16 @@ export default function ProduitsPage() {
                   {ficheOuverte.product_page && (
                     <div>
                       <p className="text-[11px] font-bold uppercase tracking-widest text-[#1B2632]/40 mb-1">Vérification</p>
-                      <a href={ficheOuverte.product_page} target="_blank" rel="noopener noreferrer"
-                        className="text-sm font-medium text-[#A35139] hover:underline">Ouvrir le lien</a>
+                      {estLienWeb(ficheOuverte.product_page) ? (
+                        <a href={ficheOuverte.product_page.trim()} target="_blank" rel="noopener noreferrer"
+                          className="text-sm font-medium text-[#A35139] hover:underline">Ouvrir le lien</a>
+                      ) : (
+                        // Lien enregistré avant le 16/11 sans être vérifié : on le montre
+                        // en texte, jamais en lien cliquable, pour qu'il soit corrigé.
+                        <p className="text-sm font-medium text-[#A35139]" title={ficheOuverte.product_page}>
+                          Lien invalide — à corriger dans Modifier
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
