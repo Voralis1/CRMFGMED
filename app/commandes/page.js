@@ -9,6 +9,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 // Le verdict produit de l'import CSV : une fonction, vendeur et responsable.
 import { verdictProduits, commandesEnRupture, produitDeCommande } from '../../lib/verdictImport.mjs'
+// Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
+import { contenuCSV } from '../../lib/celluleCSV.mjs'
 import VignetteProduit from '../components/VignetteProduit'
 // Les noms des colonnes, la même table que l'API.
 import { cleNormalisee } from '../../supabase/functions/_shared/champs.ts'
@@ -970,22 +972,22 @@ export default function GestionCommandesPage() {
       c.lead_id || "",
       c.source || "",
       c.source_sheet || "",
-      `"${(c.client_nom || "").replace(/"/g, '""')}"`,
-      `"${(c.client_telephone || "").replace(/"/g, '""')}"`,
-      `"${(c.pays?.nom || "").replace(/"/g, '""')}"`,
-      `"${(c.ville_zone || "").replace(/"/g, '""')}"`,
-      `"${(c.produit || "").replace(/"/g, '""')}"`,
+      c.client_nom || "",
+      c.client_telephone || "",
+      c.pays?.nom || "",
+      c.ville_zone || "",
+      c.produit || "",
       c.quantite || 1,
       c.prix || 0,
       libelleStatut(c.statut_confirmation),
       c.statut_livraison || "",
       c.statut_paiement || "",
       c.is_doublon ? "Oui" : "Non",
-      `"${(c.agents?.nom || "Non assigné").replace(/"/g, '""')}"`,
-      `"${(nomDuVendeur(c.vendeur_id) || "").replace(/"/g, '""')}"`,
-      `"${(c.commentaire_1 || "").replace(/"/g, '""')}"`,
-      `"${(c.commentaire_2 || "").replace(/"/g, '""')}"`,
-      `"${(c.notes || "").replace(/"/g, '""')}"`,
+      c.agents?.nom || "Non assigné",
+      nomDuVendeur(c.vendeur_id) || "",
+      c.commentaire_1 || "",
+      c.commentaire_2 || "",
+      c.notes || "",
       c.date_rappel ? new Date(c.date_rappel).toLocaleString('fr-FR') : "",
       c.created_at ? new Date(c.created_at).toLocaleString('fr-FR') : "",
       c.updated_at ? new Date(c.updated_at).toLocaleString('fr-FR') : ""
@@ -996,8 +998,8 @@ export default function GestionCommandesPage() {
     // colonne aurait dit « Non assigné » partout, ce qui est faux.
     const colAgent = entetes.indexOf("Agent Assigné")
     const garder = (l) => (estSeller ? l.filter((_, i) => i !== colAgent) : l)
-    const contenuCSV = [garder(entetes).join(","), ...lignes.map((l) => garder(l).join(","))].join("\n")
-    const blob = new Blob([contenuCSV], { type: 'text/csv;charset=utf-8;' })
+    const csv = contenuCSV([garder(entetes), ...lignes.map(garder)])
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const lien = document.createElement("a")
     lien.setAttribute("href", url)

@@ -8,6 +8,8 @@ import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import { PAYS_MONDE, drapeau, paysParNom } from '../../lib/paysMonde'
 import VignetteProduit from '../components/VignetteProduit'
+// Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
+import { contenuCSV } from '../../lib/celluleCSV.mjs'
 
 // Le seller déclare, le responsable tranche. L'écran ne fait que refléter
 // cette règle — c'est la base qui la tient : le trigger remet toute création
@@ -603,9 +605,7 @@ export default function ExpeditionsPage() {
     ])
     // `lignesCsv`, les expéditions affichées. Avant le 29/10 : `lignes` —
     // les lignes de produits du FORMULAIRE — l'export n'avait que l'en-tête.
-    const csv = [entetes, ...lignesCsv]
-      .map((l) => l.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
-      .join('\n')
+    const csv = contenuCSV([entetes, ...lignesCsv])
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
     const a = document.createElement('a')
     a.href = url

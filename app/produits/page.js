@@ -7,6 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import VignetteProduit from '../components/VignetteProduit'
+// Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
+import { contenuCSV } from '../../lib/celluleCSV.mjs'
 import { reduireImage, envoyerImage, retirerImage, urlImage } from '../../lib/imageProduit'
 
 // Le catalogue de Paramètres reste en place le temps que cet écran fasse ses
@@ -742,9 +744,7 @@ export default function ProduitsPage() {
   }
 
   function telecharger(lignes, nomFichier) {
-    const csv = lignes
-      .map((l) => l.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
-      .join('\n')
+    const csv = contenuCSV(lignes)
     const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }))
     const a = document.createElement('a')
     a.href = url
@@ -761,9 +761,7 @@ export default function ProduitsPage() {
       p.price ?? '', p.upsell || '', p.crosssell || '', p.statut || 'actif',
       p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : '',
     ])
-    const csv = [entetes, ...lignes]
-      .map((l) => l.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
-      .join('\n')
+    const csv = contenuCSV([entetes, ...lignes])
     // Filtré par vendeur, le nom du fichier le dit : un export d'un vendeur
     // ne doit pas passer pour le catalogue entier.
     const suffixe = filtreVendeur ? `_vendeur-${pourNomDeFichier(nomFiltreVendeur)}` : ''
