@@ -7,6 +7,7 @@
 import {
   adminClient, getCaller, handle, HttpError, json, readJson, requireAny, ROLES_PRIVILEGIES,
 } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -84,7 +85,7 @@ Deno.serve(handle(async (req) => {
     password: mot_de_passe,
     email_confirm: true,
   })
-  if (erreurCreation) throw new HttpError(400, erreurCreation.message)
+  if (erreurCreation) throw new HttpError(400, messagePublic(erreurCreation, 'creer-utilisateur compte'))
   const nouvelUserId = nouvel.user.id
 
   const { error: erreurRole } = await sb.from('user_roles').insert({
@@ -97,7 +98,7 @@ Deno.serve(handle(async (req) => {
   })
   if (erreurRole) {
     await sb.auth.admin.deleteUser(nouvelUserId)
-    throw new HttpError(400, erreurRole.message)
+    throw new HttpError(400, messagePublic(erreurRole, 'creer-utilisateur rôle'))
   }
 
   let avertissement: string | null = null
@@ -110,13 +111,13 @@ Deno.serve(handle(async (req) => {
       user_id: nouvelUserId, nom: nomAffichage, tenant_id: tenantCible, actif: true,
       pays_id,
     })
-    if (error) avertissement = 'Compte créé, mais fiche agent non créée : ' + error.message
+    if (error) avertissement = 'Compte créé, mais fiche agent non créée : ' + messagePublic(error, 'creer-utilisateur agent')
   } else if (roleNom.includes('livreur')) {
     const { error } = await sb.from('livreurs').insert({
       user_id: nouvelUserId, nom: nomAffichage, telephone: telephone || null,
       zone: String(zone).trim(), pays_id: pays_id, tenant_id: tenantCible, actif: true,
     })
-    if (error) avertissement = 'Compte créé, mais fiche livreur non créée : ' + error.message
+    if (error) avertissement = 'Compte créé, mais fiche livreur non créée : ' + messagePublic(error, 'creer-utilisateur livreur')
   }
 
   return json({ status: 'ok', user_id: nouvelUserId, avertissement })

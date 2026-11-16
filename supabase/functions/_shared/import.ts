@@ -16,6 +16,8 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { resoudrePays, sansAccents } from './pays.ts'
 // Les noms des champs : la même table que l'import de fichier de l'écran.
 import { cleNormalisee, NOMS } from './champs.ts'
+// Motif de rejet : jamais le message brut de la base (16/11).
+import { messagePublic } from './erreurs.ts'
 export { sansAccents }
 
 // ------------------------------------------------------------------
@@ -764,7 +766,7 @@ export async function importerLigne(
     tenant_id: ctx.tenantId,
   }).select('id, lead_id, agent_id').single()
 
-  if (error) return conclure({ statut: 'rejete', motif: error.message })
+  if (error) return conclure({ statut: 'rejete', motif: messagePublic(error, 'import insertion') })
 
   await sb.from('appels').insert({
     commande_id: commande.id, statut: 'en_attente', tenant_id: ctx.tenantId,
@@ -825,7 +827,7 @@ export async function importerLot(
       resultats.push(await importerLigne(sb, ctx, ligne, cache))
     } catch (e) {
       // Une ligne qui explose ne doit pas emporter les 199 autres.
-      resultats.push({ statut: 'rejete', motif: (e as Error)?.message || 'Erreur inattendue' })
+      resultats.push({ statut: 'rejete', motif: messagePublic(e, 'import ligne') })
     }
   }
 

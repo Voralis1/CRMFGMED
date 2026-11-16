@@ -1,6 +1,7 @@
 // Validate a driver's cash handover for one currency (encaisse -> remis).
 // Allowed: `valider_remise` (manager, admin) + super_admin.
 import { adminClient, assertTenant, getCaller, handle, HttpError, json, readJson, requireAny } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -21,7 +22,7 @@ Deno.serve(handle(async (req) => {
     .eq('livreur_id', livreur_id)
     .eq('tenant_id', livreur.tenant_id)
     .eq('statut', 'encaisse')
-  if (erreurLecture) throw new HttpError(400, erreurLecture.message)
+  if (erreurLecture) throw new HttpError(400, messagePublic(erreurLecture, 'remettre-caisse lecture'))
 
   // Never mix currencies in one handover.
   // deno-lint-ignore no-explicit-any
@@ -34,7 +35,7 @@ Deno.serve(handle(async (req) => {
     .in('id', ids)
     .eq('statut', 'encaisse')
     .select()
-  if (error) throw new HttpError(400, error.message)
+  if (error) throw new HttpError(400, messagePublic(error, 'remettre-caisse'))
 
   const total = (paiements || []).reduce((s, p) => s + Number(p.montant), 0)
   return json({ status: 'ok', nombre_paiements: paiements?.length ?? 0, total_remis: total, devise })

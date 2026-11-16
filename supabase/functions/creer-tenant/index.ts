@@ -2,6 +2,7 @@
 // Before: NO authentication at all (anyone on the internet could create a company + admin).
 // Now: super_admin only.
 import { adminClient, getCaller, handle, HttpError, json, readJson } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -28,7 +29,7 @@ Deno.serve(handle(async (req) => {
     .insert([{ nom_entreprise: nomEntreprise.trim() }])
     .select()
     .single()
-  if (tenantError) throw new HttpError(400, `Erreur création entreprise: ${tenantError.message}`)
+  if (tenantError) throw new HttpError(400, `Erreur création entreprise: ${messagePublic(tenantError, 'creer-tenant entreprise')}`)
 
   const { data: authData, error: authError } = await sb.auth.admin.createUser({
     email: adminEmail.trim(),
@@ -37,7 +38,7 @@ Deno.serve(handle(async (req) => {
   })
   if (authError) {
     await sb.from('tenants').delete().eq('id', tenant.id)
-    throw new HttpError(400, `Erreur création compte Admin: ${authError.message}`)
+    throw new HttpError(400, `Erreur création compte Admin: ${messagePublic(authError, 'creer-tenant compte')}`)
   }
 
   const userId = authData.user.id
@@ -54,7 +55,7 @@ Deno.serve(handle(async (req) => {
   if (userRoleError) {
     await sb.auth.admin.deleteUser(userId)
     await sb.from('tenants').delete().eq('id', tenant.id)
-    throw new HttpError(400, `Erreur liaison rôle: ${userRoleError.message}`)
+    throw new HttpError(400, `Erreur liaison rôle: ${messagePublic(userRoleError, 'creer-tenant rôle')}`)
   }
 
   await sb.from('agents').insert({ user_id: userId, nom, tenant_id: tenant.id, actif: true })

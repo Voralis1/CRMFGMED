@@ -4,6 +4,7 @@
 import {
   adminClient, assertTenant, getCaller, handle, HttpError, json, myLivreurId, readJson, requireAny,
 } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -33,7 +34,7 @@ Deno.serve(handle(async (req) => {
     .update({ statut: 'encaisse', date_encaissement: new Date().toISOString() })
     .eq('id', paiement_id)
     .eq('statut', 'en_attente')
-  if (error) throw new HttpError(400, error.message)
+  if (error) throw new HttpError(400, messagePublic(error, 'encaisser-paiement'))
 
   await sb
     .from('commandes')

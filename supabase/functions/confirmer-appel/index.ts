@@ -4,6 +4,7 @@
 import {
   adminClient, assertTenant, getCaller, handle, HttpError, json, myAgentId, readJson, requireAny,
 } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 import { adresseManquante, demandeRappel, MESSAGE_ADRESSE_MANQUANTE, rappelRefuse } from '../_shared/appel.ts'
 
 Deno.serve(handle(async (req) => {
@@ -160,7 +161,7 @@ Deno.serve(handle(async (req) => {
     p_date_rappel: dateRappel,
     p_maj: maj,
   })
-  if (error) throw new HttpError(400, error.message)
+  if (error) throw new HttpError(400, messagePublic(error, 'enregistrer_appel'))
 
   return json({ status: 'ok', appel })
 }))

@@ -4,6 +4,7 @@
 // which tenant they belong to, and which permissions their role has.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { messagePublic } from './erreurs.ts'
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -140,9 +141,9 @@ export function handle(fn: (req: Request) => Promise<Response>) {
       return await fn(req)
     } catch (err) {
       if (err instanceof HttpError) return json({ error: err.message }, err.status)
-      console.error(err)
-      // deno-lint-ignore no-explicit-any
-      return json({ error: (err as any)?.message || 'Erreur interne du serveur' }, 500)
+      // Jamais le message brut (revue de sécurité 13/11, point 5) : une
+      // référence à l'écran, le détail dans les logs Supabase.
+      return json({ error: messagePublic(err) }, 500)
     }
   }
 }

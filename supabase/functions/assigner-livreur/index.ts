@@ -1,6 +1,7 @@
 // Assign a confirmed order to a delivery driver.
 // Allowed: roles with permission `assigner_livreur` (manager, admin) + super_admin.
 import { adminClient, assertTenant, getCaller, handle, HttpError, json, readJson, requireAny } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -61,7 +62,7 @@ Deno.serve(handle(async (req) => {
       .eq('statut', 'a_preparer') // garde-fou : rien ne change si le livreur vient d'agir
       .select()
       .single()
-    if (erreurMaj) throw new HttpError(400, erreurMaj.message)
+    if (erreurMaj) throw new HttpError(400, messagePublic(erreurMaj, 'assigner-livreur maj'))
 
     return json({ status: 'ok', livraison: maj, remplace: true })
   }
@@ -76,7 +77,7 @@ Deno.serve(handle(async (req) => {
     })
     .select()
     .single()
-  if (error) throw new HttpError(400, error.message)
+  if (error) throw new HttpError(400, messagePublic(error, 'assigner-livreur'))
 
   return json({ status: 'ok', livraison })
 }))

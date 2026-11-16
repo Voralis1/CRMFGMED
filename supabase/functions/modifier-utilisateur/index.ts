@@ -5,6 +5,7 @@
 import {
   adminClient, getCaller, handle, HttpError, json, readJson, requireAny, ROLES_PRIVILEGIES,
 } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -36,7 +37,7 @@ Deno.serve(handle(async (req) => {
 
   if (Object.keys(updateData).length > 0) {
     const { error } = await sb.auth.admin.updateUserById(user_id, updateData)
-    if (error) throw new HttpError(400, error.message)
+    if (error) throw new HttpError(400, messagePublic(error, 'modifier-utilisateur'))
   }
 
   if (email) await sb.from('user_roles').update({ email }).eq('user_id', user_id)

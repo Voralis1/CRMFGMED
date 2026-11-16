@@ -5,6 +5,7 @@
 import {
   adminClient, assertTenant, getCaller, handle, HttpError, json, myLivreurId, readJson, requireAny,
 } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 // Les cinq de la table, moins `a_preparer` : celui-là est l'état de départ,
 // posé à l'assignation. On ne « repasse » pas une livraison à préparer — la
@@ -55,7 +56,7 @@ Deno.serve(handle(async (req) => {
     p_motif: motif_retour ?? null,
     p_montant: statut === 'livre' ? montant : null,
   })
-  if (error) throw new HttpError(400, error.message)
+  if (error) throw new HttpError(400, messagePublic(error, 'enregistrer_livraison'))
 
   const r = Array.isArray(lignes) ? lignes[0] : lignes
   let paiement = null

@@ -4,6 +4,7 @@
 import {
   adminClient, getCaller, handle, HttpError, json, readJson, requireAny, ROLES_PRIVILEGIES,
 } from '../_shared/auth.ts'
+import { messagePublic } from '../_shared/erreurs.ts'
 
 Deno.serve(handle(async (req) => {
   const sb = adminClient()
@@ -34,7 +35,7 @@ Deno.serve(handle(async (req) => {
   await sb.from('user_roles').delete().eq('user_id', user_id)
 
   const { error } = await sb.auth.admin.deleteUser(user_id)
-  if (error) throw new HttpError(400, error.message)
+  if (error) throw new HttpError(400, messagePublic(error, 'supprimer-utilisateur'))
 
   return json({ status: 'ok', message: 'Compte supprimé avec succès' })
 }))
