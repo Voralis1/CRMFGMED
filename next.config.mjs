@@ -1,10 +1,10 @@
 // En-têtes de sécurité (16/11/2026, revue de sécurité du 13/11, point 3).
 //
-// Étape 1 : les en-têtes simples sont appliqués ; la Content-Security-Policy
-// est en « Report-Only » : le navigateur ne bloque rien, il écrit seulement
-// dans la console (F12) ce qu'il AURAIT bloqué. Quand la console reste propre
-// sur toutes les pages, étape 2 : remplacer 'Content-Security-Policy-Report-Only'
-// par 'Content-Security-Policy' (une ligne, plus bas).
+// Étape 1 (16/11) : en-têtes simples appliqués, CSP en « Report-Only ».
+// Étape 2 (17/11) : console restée propre sur toutes les pages → la CSP est
+// appliquée : le navigateur BLOQUE ce qui n'est pas dans la liste.
+// Retour arrière en cas de page cassée : remettre la clé
+// 'Content-Security-Policy-Report-Only' (une ligne, plus bas) et pousser.
 //
 // La liste suit ce que le CRM utilise vraiment (lu dans le code le 16/11) :
 //   - Supabase : base (PostgREST), Auth, Edge Functions, Storage (images
@@ -16,7 +16,7 @@
 //
 // 'unsafe-inline' dans script-src : Next met ses propres petits scripts dans
 // la page. La version stricte (nonce) obligerait à rendre chaque page côté
-// serveur — pas maintenant. Le point qui compte reste fermé : connect-src
+// serveur — pas maintenant. Le point qui compte est fermé : connect-src
 // empêche un script injecté d'envoyer le jeton de session ailleurs.
 
 const supabase = (process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://meeboyokamgwwbhxfclf.supabase.co').replace(/\/+$/, '')
@@ -46,8 +46,8 @@ const enTetes = [
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   // Le CRM n'utilise ni caméra, ni micro, ni position, ni paiement navigateur.
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()' },
-  // Étape 2 : 'Content-Security-Policy-Report-Only' → 'Content-Security-Policy'.
-  { key: 'Content-Security-Policy-Report-Only', value: csp },
+  // Appliquée depuis le 17/11 (Report-Only du 16/11 au 17/11, console propre).
+  { key: 'Content-Security-Policy', value: csp },
 ]
 
 /** @type {import('next').NextConfig} */
