@@ -790,10 +790,12 @@ export default function CentreAppelAgent() {
     // « Pending » est l'état de départ, pas un résultat d'appel : jamais
     // présélectionné, jamais proposé. Un lead remonté se présente à l'agent
     // comme un nouveau (statutVu).
+    // Un lead en attente s'ouvre SANS résultat choisi (17/11) : avant, le
+    // premier statut de la liste (« Annulée » chez Fgmed) était présélectionné
+    // et un « Enregistrer » trop rapide annulait une vente. L'agent choisit,
+    // sinon le bouton reste grisé.
     if (!estPending(statutVu(commande))) {
       setStatutChoisi(commande.statut_confirmation)
-    } else if (sansPending.length > 0) {
-      setStatutChoisi(sansPending[0].nom)
     } else {
       setStatutChoisi('')
     }
@@ -1455,6 +1457,32 @@ export default function CentreAppelAgent() {
             )}
 
             <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-6">
+              {/* Le résumé de l'appel (17/11) : ce que l'agent dit au client, d'un
+                  coup d'œil — produit, quantité, prix à encaisser, lieu. Lu dans le
+                  formulaire : une correction plus bas s'y voit tout de suite. */}
+              {(() => {
+                const paysChoisi = listePays.find((p) => String(p.id) === String(formData.pays_id))
+                const zoneChoisie = listeZones.find((z) => String(z.id) === String(formData.zone_id))
+                const lieu = [zoneChoisie?.nom_zone || formData.ville_zone, paysChoisi?.nom]
+                  .filter((v, i, t) => v && t.indexOf(v) === i).join(' · ')
+                const devise = paysChoisi?.devise || commandeSelectionnee.pays?.devise || ''
+                return (
+                  <div className="rounded-xl bg-[#1B2632] text-white px-4 py-3.5">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-1">À confirmer avec le client</p>
+                    <p className="text-sm font-semibold leading-snug">
+                      {formData.produit || 'Produit non renseigné'}
+                      <span className="text-white/60 font-normal"> × {formData.quantite || 1}</span>
+                    </p>
+                    <div className="flex items-baseline justify-between gap-3 mt-1.5">
+                      <span className="text-xl font-bold text-[#FFB162]">
+                        {Number(formData.prix || 0).toLocaleString('fr-FR')}{devise ? ` ${devise}` : ''}
+                      </span>
+                      {lieu && <span className="text-xs text-white/70 text-right truncate">{lieu}</span>}
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="flex flex-col gap-5">
                 <div>
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Nom du client</label>
@@ -1605,7 +1633,7 @@ export default function CentreAppelAgent() {
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
                   <p className="mt-1 text-[11px] text-[#1B2632]/50">
-                    Le prix total ne change pas tout seul : si la quantité change, saisissez le total de l&apos;offre.
+                    Si la quantité change, saisissez le total de l&apos;offre.
                   </p>
                 </div>
               </div>
@@ -1637,15 +1665,22 @@ export default function CentreAppelAgent() {
                 </div>
               )}
 
-              <div className="p-4 bg-[#EEE9DF]/30 rounded-xl border border-[#C9C1B1]/50">
-                <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">Résultat de l'appel</label>
+            </div>
+
+            {/* Le pied, toujours visible (17/11) : le résultat de l'appel et sa
+                note juste au-dessus d'« Enregistrer » — ce que l'agent remplit à
+                chaque appel ne se cherche plus en bas du formulaire. Sur un petit
+                écran, le pied défile lui-même au lieu de cacher le bouton. */}
+            <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/30 max-h-[60vh] overflow-y-auto shrink-0">
+              <div className="mb-3">
+                <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-1.5">Résultat de l'appel <span className="text-[#A35139]">*</span></label>
                 
                 <select
                   value={statutChoisi}
                   onChange={(e) => setStatutChoisi(e.target.value)}
                   className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2.5 text-sm font-bold text-[#1B2632] bg-white shadow-sm"
                 >
-                  <option value="" disabled>-- Choisir --</option>
+                  <option value="" disabled>Choisir le résultat…</option>
                   {statutsDeLaCommande.map((s) => (
                     <option key={s.id} value={s.nom}>{libelleStatut(s.nom)}</option>
                   ))}
@@ -1674,26 +1709,24 @@ export default function CentreAppelAgent() {
                 {/* La note de l'appel. Elle part dans `appels`, avec l'agent, le
                     statut et l'heure : on garde ce qui a été dit à ce moment-là,
                     au lieu d'écraser une note unique sur la commande. */}
-                <div className="mt-3">
+                <div className="mt-2.5">
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Note de l&apos;appel</label>
                   <textarea
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="Ce que le client a dit..."
-                    className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-h-[64px]"
+                    className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-h-[44px]"
                   />
                 </div>
               </div>
-            </div>
-
-            <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
               {erreurEnvoi && (
                 <p className="mb-3 text-xs font-medium text-[#A35139] bg-[#A35139]/5 border border-[#A35139]/30 rounded-lg px-3 py-2">{erreurEnvoi}</p>
               )}
               {hasPermission('traiter_appel') ? (
               <button
                 onClick={validerAppel}
-                disabled={envoiEnCours}
+                disabled={envoiEnCours || !statutChoisi}
+                title={!statutChoisi ? "Choisissez d'abord le résultat de l'appel" : undefined}
                 className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
               >
                 {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
