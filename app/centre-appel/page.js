@@ -19,6 +19,9 @@ import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '..
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
 // Recherche : valeur entre guillemets dans le filtre « or » (17/11).
 import { orContient } from '../../lib/rechercheOr.mjs'
+// Liste (17/11) : la période du calendrier de Commandes, le drapeau du pays.
+import PlageDates from '../components/PlageDates'
+import { drapeau } from '../../lib/paysMonde'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -26,8 +29,12 @@ function StatutPill({ statut, listeStatutsDB }) {
 
   if (statutConfiguré && statutConfiguré.couleur) {
     return (
-      <span className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1.5 w-fit" 
-            style={{ backgroundColor: `${statutConfiguré.couleur}15`, color: statutConfiguré.couleur, border: `1px solid ${statutConfiguré.couleur}40` }}>
+      // Lisible quelle que soit la couleur choisie (17/11) : la couleur va au
+      // point et au fond, le texte reste foncé. Avant, le texte prenait la
+      // couleur — « En attente » (#C9C1B1) était presque invisible.
+      <span className="px-2.5 py-1 rounded-full text-xs font-semibold text-[#1B2632] whitespace-nowrap flex items-center gap-1.5 w-fit"
+            style={{ backgroundColor: `${statutConfiguré.couleur}26`, border: `1px solid ${statutConfiguré.couleur}66` }}>
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: statutConfiguré.couleur }} />
         {libelleStatut(statutConfiguré.nom)}
       </span>
     )
@@ -414,7 +421,7 @@ export default function CentreAppelAgent() {
   // du navigateur ne les lui rend pas non plus.
   const vueAgent = !!agentActuel
   const statutVu = (cmd) => (vueAgent && cmd.remonte_le ? PENDING : cmd.statut_confirmation)
-  const nbColonnes = (modeAgents ? 10 : 9) - (vueAgent ? 1 : 0) + (peutAgirEnMasse ? 1 : 0)
+  const nbColonnes = (modeAgents ? 8 : 7) - (vueAgent ? 1 : 0) + (peutAgirEnMasse ? 1 : 0)
 
   // TOUS les agents de l'entreprise, inactifs compris : le filtre doit
   // pouvoir montrer les leads d'un agent parti. Changer d'agent ne propose
@@ -1004,19 +1011,20 @@ export default function CentreAppelAgent() {
         .drawer-in { animation: drawerIn 0.25s ease-out; }
         .fade-in { animation: fadeIn 0.2s ease-out; }
         .pop-in { animation: popIn 0.18s ease-out; }
+        .cm-input { width:100%; border:1px solid #C9C1B1; border-radius:12px; padding:10px 12px; font-size:14px; outline:none; background:#fff; color:#1B2632; box-shadow:0 1px 2px rgba(0,0,0,.04); }
       `}</style>
 
-      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
-        <div className="flex justify-between items-center flex-wrap gap-3">
-          <div>
-            <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1 flex items-center gap-2">
-              Espace Personnel <span className="text-[#1B2632]/30">•</span> {agentActuel?.nom || 'Vue globale'}
-            </p>
-            <h1 className="text-2xl sm:text-3xl font-bold text-[#1B2632]">Centre d'appels</h1>
-          </div>
+      <header className="flex flex-col gap-2.5 border-b border-[#C9C1B1]/50 pb-3">
+        {/* En-tête compact (17/11) : titre, à qui est la vue, puis les compteurs
+            sur la même bande — plus de leads visibles sans défiler. */}
+        <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Centre d'appels</h1>
+          <span className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest">
+            {agentActuel?.nom || 'Vue globale'}
+          </span>
         </div>
 
-        <div className="flex justify-between items-start mt-2 flex-wrap gap-3 sm:gap-4">
+        <div className="flex justify-between items-start flex-wrap gap-3 sm:gap-4">
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full lg:w-auto">
             {/* Ce qui reste à faire se lit d'un coup d'œil, même quand le
                 séparateur est loin en bas de la page. Une seule liste (28/10) :
@@ -1094,7 +1102,7 @@ export default function CentreAppelAgent() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
                   <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
                 </svg>
-                {modeAgents ? 'Masquer les agents' : 'Agents'}
+                {modeAgents ? 'Masquer les agents' : "Changer d'agent"}
               </button>
             )}
 
@@ -1148,16 +1156,11 @@ export default function CentreAppelAgent() {
               )}
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 bg-white p-1 rounded-xl border border-[#C9C1B1] shadow-sm w-full sm:w-auto">
-              <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
-                <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest shrink-0">Du</span>
-                <input type="date" value={dateDebut} onChange={(e) => { setDateDebut(e.target.value); allerPage1(); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
-              </div>
-              <div className="hidden sm:block w-[1px] h-6 bg-[#C9C1B1]/40"></div>
-              <div className="flex items-center gap-2 px-3 py-1.5 min-w-0">
-                <span className="text-[11px] font-bold text-[#1B2632]/40 uppercase tracking-widest shrink-0">Au</span>
-                <input type="date" value={dateFin} onChange={(e) => { setDateFin(e.target.value); allerPage1(); }} className="outline-none bg-transparent text-sm text-[#1B2632] font-medium cursor-pointer w-full min-w-0" />
-              </div>
+            {/* La période (17/11) : le calendrier de Commandes, en français,
+                une seule case « du → au ». Mêmes valeurs AAAA-MM-JJ qu'avant. */}
+            <div className="w-full sm:w-[250px]">
+              <PlageDates etiquette="centre-appel" du={dateDebut} au={dateFin} placeholder="Période d'arrivée"
+                onChange={(du, au) => { setDateDebut(du); setDateFin(au); allerPage1() }} />
             </div>
 
             {filtresActifs && (
@@ -1212,33 +1215,27 @@ export default function CentreAppelAgent() {
       )}
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
-        {peutAgirEnMasse && !loading && commandes.length > 0 && (
-          <p className="px-6 pt-3 pb-1 text-xs text-[#1B2632]/50">
-            La case de l'en-tête coche les {lignesCochables.length} leads de cette page, pas toute la base.
-          </p>
-        )}
-        <div className="overflow-auto min-h-[400px] max-h-[calc(100vh-280px)]">
-          <table className="w-full min-w-[1050px] text-left border-collapse">
+        <div className="overflow-auto min-h-[400px] max-h-[calc(100vh-230px)]">
+          <table className="w-full min-w-[820px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
                 {peutAgirEnMasse && (
-                  <th className="pl-4 pr-1 py-4 w-[1%]">
+                  <th className="pl-4 pr-1 py-3 w-[1%]">
                     {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
                     <input type="checkbox" checked={toutCoche} onChange={basculerTout} disabled={lignesCochables.length === 0}
                       title={`Cocher les ${lignesCochables.length} leads de cette page (pas toute la base)`}
                       aria-label="Cocher les leads de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                   </th>
                 )}
-                <th className="px-6 py-4">Lead ID</th>
-                {!vueAgent && <th className="px-6 py-4">Date</th>}
-                <th className="px-6 py-4">Client</th>
-                <th className="px-6 py-4">Pays</th>
-                <th className="px-6 py-4">Ville / Zone</th>
-                <th className="px-6 py-4">Produit</th>
-                <th className="px-6 py-4">Prix</th>
-                {modeAgents && <th className="px-6 py-4">Agent affecté</th>}
-                <th className="px-6 py-4">Statut</th>
-                <th className="px-6 py-4 text-right">Actions</th>
+                {!vueAgent && <th className="px-4 py-3">Date</th>}
+                <th className="px-4 py-3">Client</th>
+                <th className="px-4 py-3">Lieu</th>
+                <th className="px-4 py-3">Produit</th>
+                <th className="px-4 py-3 text-right">Prix</th>
+                {modeAgents && <th className="px-4 py-3">Agent affecté</th>}
+                <th className="px-4 py-3">Statut</th>
+                {/* « Traiter » collé à droite : visible même si le tableau défile. */}
+                <th className="px-4 py-3 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -1283,43 +1280,55 @@ export default function CentreAppelAgent() {
                     >
                       {peutAgirEnMasse && (
                         // La ligne ouvre le panneau d'appel : la case ne doit pas.
-                        <td className="pl-4 pr-1 py-4" onClick={(e) => e.stopPropagation()}>
+                        <td className="pl-4 pr-1 py-3" onClick={(e) => e.stopPropagation()}>
                           {cochable(cmd) && (
                             <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
                               aria-label={`Cocher ${cmd.lead_id || 'ce lead'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                           )}
                         </td>
                       )}
-                      <td className="px-6 py-4 font-mono text-xs text-[#1B2632]/80 whitespace-nowrap">
-                        #{cmd.lead_id || 'N/A'}
-                        {refusParId[cmd.id] && (
-                          <div className="font-sans text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px] whitespace-normal">Refusé : {refusParId[cmd.id]}</div>
-                        )}
-                      </td>
                       {!vueAgent && (
-                        <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
+                        <td className="px-4 py-3 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
                           {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">traité le</span>}
                           {dateAffichage ? dateAffichage.toLocaleDateString('fr-FR') : '-'}
                         </td>
                       )}
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <div className="font-bold text-[#1B2632] whitespace-nowrap">{cmd.client_nom || 'Client inconnu'}</div>
-
-                        <div className="font-mono text-xs text-[#A35139] font-semibold mt-1 whitespace-nowrap">{cmd.client_telephone || 'Aucun numéro'}</div>
+                        {/* Le téléphone appelle d'un clic (17/11) — sans ouvrir le panneau. */}
+                        {cmd.client_telephone ? (
+                          <a href={`tel:${cmd.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
+                            className="font-mono text-xs text-[#1B2632]/75 font-semibold mt-0.5 whitespace-nowrap hover:text-[#A35139] hover:underline inline-block">
+                            {cmd.client_telephone}
+                          </a>
+                        ) : (
+                          <div className="font-mono text-xs text-[#1B2632]/40 mt-0.5">Aucun numéro</div>
+                        )}
+                        {/* Le Lead ID, sous le client : on le cherche rarement des yeux. */}
+                        <div className="font-mono text-[11px] text-[#1B2632]/40 mt-0.5 whitespace-nowrap">#{cmd.lead_id || 'N/A'}</div>
+                        {refusParId[cmd.id] && (
+                          <div className="text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px] whitespace-normal">Refusé : {refusParId[cmd.id]}</div>
+                        )}
                       </td>
-                      <td className="px-6 py-4 text-sm font-medium text-[#1B2632] whitespace-nowrap">{cmd.pays?.nom || '-'}</td>
-                      <td className="px-6 py-4"><div className="text-sm font-medium text-[#1B2632] whitespace-nowrap">{cmd.ville_zone || '-'}</div></td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-[#1B2632] max-w-[180px] truncate" title={cmd.produit}>{cmd.produit || '-'}</div>
-                        <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté: {cmd.quantite || 1}</div>
+                      {/* Le lieu (17/11) : ville et pays sur une ligne, sans répéter un
+                          pays saisi comme ville. */}
+                      <td className="px-4 py-3 text-sm font-medium text-[#1B2632] whitespace-nowrap">
+                        {cmd.pays?.code && <span className="mr-1.5">{drapeau(cmd.pays.code)}</span>}
+                        {[cmd.ville_zone, cmd.pays?.nom].filter((v, i, t) => v && t.indexOf(v) === i).join(' · ') || '-'}
                       </td>
-                      <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
-                        {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
+                      <td className="px-4 py-3">
+                        <div className="text-sm font-medium text-[#1B2632] max-w-[220px] truncate" title={cmd.produit}>{cmd.produit || '-'}</div>
+                        <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté : {cmd.quantite || 1}</div>
+                      </td>
+                      <td className="px-4 py-3 font-bold text-sm text-[#1B2632] whitespace-nowrap text-right">
+                        {cmd.prix !== null && cmd.prix !== undefined
+                          ? <>{Number(cmd.prix).toLocaleString('fr-FR')}{cmd.pays?.devise && <span className="text-xs font-semibold text-[#1B2632]/50"> {cmd.pays.devise}</span>}</>
+                          : '-'}
                       </td>
                       {modeAgents && (
                         // La ligne entière ouvre le panneau de traitement : sans
                         // stopPropagation, choisir un agent déclencherait l'appel.
-                        <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <div className="text-sm font-semibold text-[#1B2632] whitespace-nowrap mb-1">
                             {nomAgent(cmd.agent_id) || <span className="text-[#A35139]">Non affecté</span>}
                           </div>
@@ -1355,7 +1364,7 @@ export default function CentreAppelAgent() {
                           )}
                         </td>
                       )}
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">
                         <StatutPill statut={statutVu(cmd)} listeStatutsDB={listeStatutsDB} />
                         {cmd.date_rappel && statutsRappel.some((st) => st.nom === cmd.statut_confirmation) && (() => {
                           const r = libelleRappel(cmd.date_rappel, maintenantAffiche)
@@ -1377,8 +1386,10 @@ export default function CentreAppelAgent() {
                           </div>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${estSelectionne ? 'bg-[#1B2632] text-white' : 'bg-[#EEE9DF] text-[#1B2632] border border-[#C9C1B1] hover:bg-[#C9C1B1]'}`}>
+                      {/* Collé à droite (sticky) : toujours visible ; fond opaque pour
+                          que le texte qui défile dessous ne se voie pas. */}
+                      <td className={`px-4 py-3 text-right sticky right-0 ${estSelectionne ? 'bg-[#FFF4E8]' : 'bg-white'}`}>
+                        <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D]`}>
                           {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) ? 'Modifier' : 'Traiter'}
                         </button>
                       </td>
