@@ -5,12 +5,12 @@
 // ne laisse lire que qui a « supprimer_commandes » (et le super admin).
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
-import { libelleStatut } from '../../lib/libellesStatuts.mjs'
+import { libelleStatut, LIBELLES_LIVRAISON } from '../../lib/libellesStatuts.mjs'
 // Recherche : valeur entre guillemets dans le filtre « or » (17/11).
 import { orContient } from '../../lib/rechercheOr.mjs'
 
 const TAILLE = 50
-const LIVRAISON = { a_preparer: 'À préparer', expedie: 'Expédiée', livre: 'Livrée', retour: 'Retour', annule: 'Annulée' }
+const LIVRAISON = LIBELLES_LIVRAISON
 
 export default function CommandesSupprimees({ tenantKey, nomDuVendeur, onFermer }) {
   const [lignes, setLignes] = useState(null)

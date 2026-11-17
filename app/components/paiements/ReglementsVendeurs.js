@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
+import { LIBELLES_RELEVE } from '../../../lib/libellesStatuts.mjs'
 
 // Le relevé de paiement du vendeur. À ne pas confondre avec « Paiements »,
 // qui suit l'argent encaissé par le livreur chez le client : ici c'est ce que
@@ -16,9 +17,10 @@ import { usePermissions } from '../../context/PermissionsContext'
 // après coup ne prouve plus rien.
 
 const STATUTS = {
-  en_attente: { label: 'En attente', classe: 'border-[#FFB162] text-[#8a5a1f] bg-[#FFB162]/10' },
-  paye:       { label: 'Payé',       classe: 'border-green-500 text-green-700 bg-green-50' },
-  annule:     { label: 'Annulé',     classe: 'border-red-400 text-red-700 bg-red-50' },
+  // Libellés anglais partagés (lib/libellesStatuts.mjs, 17/11).
+  en_attente: { label: LIBELLES_RELEVE.en_attente, classe: 'border-[#FFB162] text-[#8a5a1f] bg-[#FFB162]/10' },
+  paye:       { label: LIBELLES_RELEVE.paye,       classe: 'border-green-500 text-green-700 bg-green-50' },
+  annule:     { label: LIBELLES_RELEVE.annule,     classe: 'border-red-400 text-red-700 bg-red-50' },
 }
 const METHODES = { especes: 'Espèces', virement: 'Virement', cheque: 'Chèque' }
 

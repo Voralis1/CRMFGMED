@@ -20,7 +20,7 @@ import { CHAMPS_IMPORT, CONSIGNES_IMPORT, EXEMPLE_IMPORT } from '../../lib/model
 import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichierImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRappel.mjs'
-import { libelleStatut } from '../../lib/libellesStatuts.mjs'
+import { libelleStatut, libelleDe, LIBELLES_LIVRAISON, LIBELLES_PAIEMENT } from '../../lib/libellesStatuts.mjs'
 import { nomsParGroupe, sousStatutOuvert, statutPrincipal } from '../../lib/affichageStatut.mjs'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import CommandesSupprimees from '../components/CommandesSupprimees'
@@ -37,8 +37,8 @@ import { NON_RECONNU, filtrerParProduit, optionsProduit } from '../../lib/filtre
 // 500 peine déjà sur le téléphone du manager (celui où Chrome plante), 1000
 // sera retiré.
 const TAILLES_PAGE = [10, 50, 100, 500, 1000]
-// Les cinq statuts de livraison (contrainte livraisons_statut_valide), en français.
-const LIVRAISON_LIBELLES = { a_preparer: 'à préparer', expedie: 'expédiée', livre: 'livrée', retour: 'retournée', annule: 'annulée' }
+// Les statuts de livraison : libellés anglais partagés (lib/libellesStatuts.mjs, 17/11).
+const LIVRAISON_LIBELLES = LIBELLES_LIVRAISON
 
 // 🚀 Fonction StatutPill universelle pour les différents statuts
 function StatutPill({ statut, listeStatutsDB, type = 'confirmation' }) {
@@ -54,11 +54,11 @@ function StatutPill({ statut, listeStatutsDB, type = 'confirmation' }) {
   }
 
   const configsFallback = {
-    'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée' },
-    'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente' },
-    'livre': { bg: 'bg-green-100', text: 'text-green-800', label: 'Livré' },
-    'paye': { bg: 'bg-emerald-100', text: 'text-emerald-800', label: 'Payé' },
-    'non_paye': { bg: 'bg-red-100', text: 'text-red-800', label: 'Non payé' },
+    'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmed' },
+    'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'Pending' },
+    'livre': { bg: 'bg-green-100', text: 'text-green-800', label: LIBELLES_LIVRAISON.livre },
+    'paye': { bg: 'bg-emerald-100', text: 'text-emerald-800', label: LIBELLES_PAIEMENT.paye },
+    'non_paye': { bg: 'bg-red-100', text: 'text-red-800', label: LIBELLES_PAIEMENT.non_paye },
   }
   const conf = configsFallback[statut] || { bg: 'bg-gray-100', text: 'text-gray-700', label: libelleStatut(statut) || 'N/A' }
   
@@ -980,8 +980,8 @@ export default function GestionCommandesPage() {
       c.quantite || 1,
       c.prix || 0,
       libelleStatut(c.statut_confirmation),
-      c.statut_livraison || "",
-      c.statut_paiement || "",
+      libelleDe(LIBELLES_LIVRAISON, c.statut_livraison),
+      libelleDe(LIBELLES_PAIEMENT, c.statut_paiement),
       c.is_doublon ? "Oui" : "Non",
       c.agents?.nom || "Non assigné",
       nomDuVendeur(c.vendeur_id) || "",
@@ -1490,14 +1490,14 @@ export default function GestionCommandesPage() {
                       <option value="">Tous</option>
                       {/* « À appeler » et pas « Jamais appelé » : un lead renvoyé
                           en attente a pu être appelé avant. */}
-                      <option value="pending">À appeler</option>
-                      <option value="non_joint">{groupesStatuts.non_joint.map(libelleStatut).join(', ') || 'Non joint'}</option>
-                      <option value="rappel">{groupesStatuts.rappel.map(libelleStatut).join(', ') || 'Rappel'}</option>
+                      <option value="pending">To call</option>
+                      <option value="non_joint">{groupesStatuts.non_joint.map(libelleStatut).join(', ') || 'Unreached'}</option>
+                      <option value="rappel">{groupesStatuts.rappel.map(libelleStatut).join(', ') || 'Reminder'}</option>
                     </>
                   ) : <option value="">—</option>}
                 </select>
                 {filtres.statut !== 'en_attente' && (
-                  <p className="text-[11px] text-[#1B2632]/45 mt-1">Seulement pour « En attente ».</p>
+                  <p className="text-[11px] text-[#1B2632]/45 mt-1">Seulement pour « Pending ».</p>
                 )}
               </div>
 
@@ -1762,9 +1762,9 @@ export default function GestionCommandesPage() {
                       )}
                       {(cmd.statut_livraison || cmd.statut_paiement) && (
                         <span className="block mt-1 text-[10px] text-[#1B2632]/55">
-                          {cmd.statut_livraison ? `Livraison : ${cmd.statut_livraison}` : ''}
+                          {cmd.statut_livraison ? `Livraison : ${libelleDe(LIBELLES_LIVRAISON, cmd.statut_livraison)}` : ''}
                           {cmd.statut_livraison && cmd.statut_paiement ? ' · ' : ''}
-                          {cmd.statut_paiement ? `Paiement : ${cmd.statut_paiement}` : ''}
+                          {cmd.statut_paiement ? `Paiement : ${libelleDe(LIBELLES_PAIEMENT, cmd.statut_paiement)}` : ''}
                         </span>
                       )}
                     </td>
@@ -2331,8 +2331,8 @@ export default function GestionCommandesPage() {
                     {!estSeller && <LigneDetail label="Agent" valeur={detail.agents?.nom} />}
                     <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.vendeur_id)} />
                     <LigneDetail label="Statut d'appel" valeur={libelleStatut(detail.statut_confirmation)} />
-                    <LigneDetail label="Livraison" valeur={detail.statut_livraison} />
-                    <LigneDetail label="Paiement" valeur={detail.statut_paiement} />
+                    <LigneDetail label="Livraison" valeur={libelleDe(LIBELLES_LIVRAISON, detail.statut_livraison)} />
+                    <LigneDetail label="Paiement" valeur={libelleDe(LIBELLES_PAIEMENT, detail.statut_paiement)} />
                     <LigneDetail
                       label="Dernière MAJ"
                       valeur={detail.updated_at ? new Date(detail.updated_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}

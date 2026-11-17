@@ -384,8 +384,8 @@ export default function DashboardFGMED() {
                 <XAxis dataKey="heure" tick={{ fontFamily: "IBM Plex Mono", fontSize: 11, fill: "#5c5648" }} interval={1} />
                 <YAxis tick={{ fontFamily: "IBM Plex Mono", fontSize: 11, fill: "#5c5648" }} allowDecimals={false} />
                 <Tooltip contentStyle={{ fontFamily: "Inter", borderRadius: 10, border: "1px solid #C9C1B1", background: "#fff", fontSize: 12 }} labelFormatter={(h) => `${h}h`} />
-                <Bar dataKey="confirmees" name="Confirmées" fill="#1B2632" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="annulees" name="Annulées" fill="#A35139" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="confirmees" name="Confirmed" fill="#1B2632" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="annulees" name="Cancelled" fill="#A35139" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

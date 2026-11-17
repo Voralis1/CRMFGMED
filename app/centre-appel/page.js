@@ -16,7 +16,7 @@ import { NON_RECONNU, filtrerParProduit, nomProduitFiltre, optionsProduit } from
 import { produitDuCatalogue, produitDeCommande } from '../../lib/verdictImport.mjs'
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
-import { libelleStatut } from '../../lib/libellesStatuts.mjs'
+import { libelleStatut, LIBELLES_LIVRAISON } from '../../lib/libellesStatuts.mjs'
 // Recherche : valeur entre guillemets dans le filtre « or » (17/11).
 import { orContient } from '../../lib/rechercheOr.mjs'
 // Liste (17/11) : la période du calendrier de Commandes, le drapeau du pays.
@@ -41,15 +41,15 @@ function StatutPill({ statut, listeStatutsDB }) {
   }
 
   const configsFallback = {
-    'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmée' },
-    'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'En attente' },
-    'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Non joint' },
-    'reminder': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'Rappel' },
-    'cancelled': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Annulée' },
+    'confirmed': { bg: 'bg-[#2C3B4D]/10', text: 'text-[#2C3B4D]', label: 'Confirmed' },
+    'en_attente': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'Pending' },
+    'unreached': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Unreached' },
+    'reminder': { bg: 'bg-[#FFB162]/20', text: 'text-[#8a5a1f]', label: 'Reminder' },
+    'cancelled': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Cancelled' },
     'spam': { bg: 'bg-[#A35139]/10', text: 'text-[#A35139]', label: 'Spam' },
-    'double': { bg: 'bg-[#C9C1B1]/50', text: 'text-[#4a4437]', label: 'Doublon' },
-    'out_of_stock': { bg: 'bg-[#FFB162]/30', text: 'text-[#8a5a1f]', label: 'Rupture' },
-    'not_active_yet': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Inactif' },
+    'double': { bg: 'bg-[#C9C1B1]/50', text: 'text-[#4a4437]', label: 'Duplicate' },
+    'out_of_stock': { bg: 'bg-[#FFB162]/30', text: 'text-[#8a5a1f]', label: 'Out of stock' },
+    'not_active_yet': { bg: 'bg-[#C9C1B1]/30', text: 'text-[#5c5648]', label: 'Inactive' },
   }
   const conf = configsFallback[statut] || configsFallback['en_attente']
   return (
@@ -141,7 +141,7 @@ const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
 
 // Les livraisons encore en cours (les seules qu'on voit dans « Mes leads » :
 // livré, retour et annulé quittent la liste).
-const LIVRAISON_LIBELLES = { a_preparer: 'à préparer', expedie: 'expédiée' }
+const LIVRAISON_LIBELLES = LIBELLES_LIVRAISON
 const LIVRAISON_EN_COURS = 'statut_livraison.is.null,statut_livraison.not.in.(livre,retour,annule)'
 
 // Un lead que personne n'a touché (27/10, statut_pending.sql). Le TEXTE est
@@ -913,7 +913,7 @@ export default function CentreAppelAgent() {
       const { data: apres } = await supabase.from('commandes')
         .select('statut_confirmation').eq('id', commandeSelectionnee.id).maybeSingle()
       if (apres?.statut_confirmation === 'Rupture de stock') {
-        alert(`Commande mise en « Rupture de stock » : pas assez de « ${formData.produit} » disponible dans l'entrepôt. Elle reviendra « En attente » toute seule quand le stock reviendra.`)
+        alert(`Commande mise en « Out of stock » : pas assez de « ${formData.produit} » disponible dans l'entrepôt. Elle reviendra « En attente » toute seule quand le stock reviendra.`)
       } else if (apres?.statut_confirmation === 'Produit non reconnu') {
         alert(`Commande mise en « Produit non reconnu » : le CRM ne trouve pas « ${formData.produit} » au catalogue. Prévenez un responsable pour relier le produit.`)
       }

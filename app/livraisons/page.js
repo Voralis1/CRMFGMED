@@ -11,6 +11,7 @@ import VignetteProduit from '../components/VignetteProduit'
 import { produitDeCommande } from '../../lib/verdictImport.mjs'
 // Le vendeur : la commande sans l'agent ni qui l'a remontée (02/11).
 import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
+import { LIBELLES_LIVRAISON } from '../../lib/libellesStatuts.mjs'
 
 const TAILLES_PAGE = [10, 25, 50, 100]
 
@@ -19,11 +20,12 @@ const TAILLES_PAGE = [10, 25, 50, 100]
 // qu'ils ne le sont pas, on affiche ce qui existe vraiment plutôt que des
 // libellés que la base ne saurait pas enregistrer.
 const STATUTS = {
-  a_preparer: { label: 'À préparer', couleur: '#C98A2B' },
-  expedie:    { label: 'Expédiée',   couleur: '#2C3B4D' },
-  livre:      { label: 'Livrée',     couleur: '#2E7D53' },
-  retour:     { label: 'Retour',     couleur: '#A35139' },
-  annule:     { label: 'Annulée',    couleur: '#6B7A8C' },
+  // Libellés anglais partagés (lib/libellesStatuts.mjs, 17/11).
+  a_preparer: { label: LIBELLES_LIVRAISON.a_preparer, couleur: '#C98A2B' },
+  expedie:    { label: LIBELLES_LIVRAISON.expedie,    couleur: '#2C3B4D' },
+  livre:      { label: LIBELLES_LIVRAISON.livre,      couleur: '#2E7D53' },
+  retour:     { label: LIBELLES_LIVRAISON.retour,     couleur: '#A35139' },
+  annule:     { label: LIBELLES_LIVRAISON.annule,     couleur: '#6B7A8C' },
 }
 
 // `a_preparer` n'est pas saisissable : c'est l'état de départ, posé à

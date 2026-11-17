@@ -8,6 +8,7 @@ import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import { PAYS_MONDE, drapeau, paysParNom } from '../../lib/paysMonde'
 import VignetteProduit from '../components/VignetteProduit'
+import { LIBELLES_EXPEDITION } from '../../lib/libellesStatuts.mjs'
 // Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
 import { contenuCSV } from '../../lib/celluleCSV.mjs'
 
@@ -18,11 +19,12 @@ import { contenuCSV } from '../../lib/celluleCSV.mjs'
 const MODES = ['Maritime', 'Aérien', 'Express', 'Routier']
 
 const STATUTS = {
-  en_attente:   { label: 'En attente',    classe: 'border-[#FFB162] text-[#8a5a1f] bg-[#FFB162]/10' },
-  confirmee:    { label: 'Confirmée',     classe: 'border-green-500 text-green-700 bg-green-50' },
-  en_transit:   { label: 'En transit',    classe: 'border-[#2C3B4D] text-[#2C3B4D] bg-[#2C3B4D]/5' },
-  receptionnee: { label: 'Réceptionnée',  classe: 'border-emerald-600 text-emerald-700 bg-emerald-50' },
-  refusee:      { label: 'Refusée',       classe: 'border-red-400 text-red-700 bg-red-50' },
+  // Libellés anglais partagés (lib/libellesStatuts.mjs, 17/11).
+  en_attente:   { label: LIBELLES_EXPEDITION.en_attente,   classe: 'border-[#FFB162] text-[#8a5a1f] bg-[#FFB162]/10' },
+  confirmee:    { label: LIBELLES_EXPEDITION.confirmee,    classe: 'border-green-500 text-green-700 bg-green-50' },
+  en_transit:   { label: LIBELLES_EXPEDITION.en_transit,   classe: 'border-[#2C3B4D] text-[#2C3B4D] bg-[#2C3B4D]/5' },
+  receptionnee: { label: LIBELLES_EXPEDITION.receptionnee, classe: 'border-emerald-600 text-emerald-700 bg-emerald-50' },
+  refusee:      { label: LIBELLES_EXPEDITION.refusee,      classe: 'border-red-400 text-red-700 bg-red-50' },
 }
 
 const VIDE = {
