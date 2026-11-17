@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
+// Recherche : valeur entre guillemets dans le filtre « or » (17/11).
+import { orContient } from '../../lib/rechercheOr.mjs'
 
 const TAILLE = 50
 const LIVRAISON = { a_preparer: 'À préparer', expedie: 'Expédiée', livre: 'Livrée', retour: 'Retour', annule: 'Annulée' }
@@ -27,9 +29,10 @@ export default function CommandesSupprimees({ tenantKey, nomDuVendeur, onFermer 
       .eq('tenant_id', tenantKey)
       .order('supprime_le', { ascending: false })
       .range(page * TAILLE, page * TAILLE + TAILLE - 1)
-    // Les caractères qui cassent le filtre « or » de PostgREST sont retirés.
-    const t = texte.replace(/[,()%*\\]/g, ' ').trim()
-    if (t) req = req.or(`lead_id.ilike.%${t}%,client_telephone.ilike.%${t}%,client_nom.ilike.%${t}%,tracking_number.ilike.%${t}%`)
+    // Valeur entre guillemets, " et \ échappés : un caractère tapé ne casse
+    // plus le filtre « or » de PostgREST (revue de sécurité 13/11, point 6).
+    const filtre = orContient(['lead_id', 'client_telephone', 'client_nom', 'tracking_number'], texte)
+    if (filtre) req = req.or(filtre)
     const { data, error, count } = await req
     if (error) { setErreur(error.message); setLignes([]); return }
     setLignes(data || []); setTotal(count || 0)

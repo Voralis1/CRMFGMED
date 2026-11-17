@@ -17,6 +17,8 @@ import { produitDuCatalogue, produitDeCommande } from '../../lib/verdictImport.m
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, libelleRappel, versChampLocal } from '../../lib/heureRappel.mjs'
 import { libelleStatut } from '../../lib/libellesStatuts.mjs'
+// Recherche : valeur entre guillemets dans le filtre « or » (17/11).
+import { orContient } from '../../lib/rechercheOr.mjs'
 
 // 🚀 Fonction StatutPill
 function StatutPill({ statut, listeStatutsDB }) {
@@ -516,11 +518,14 @@ export default function CentreAppelAgent() {
     if (dateFin) q = q.lte(dateField, `${dateFin}T23:59:59`)
 
     if (rechercheActive) {
-      const r = rechercheActive.replace(/[%,()#]/g, '')
+      // Valeur entre guillemets, " et \ échappés : un caractère tapé ne casse
+      // plus le filtre (revue de sécurité 13/11, point 6).
+      const r = rechercheActive.trim()
       const rTel = r.replace(/[\s.\-]/g, '')
-      const conditions = [`client_nom.ilike.%${r}%`, `client_telephone.ilike.%${r}%`, `lead_id.ilike.%${r}%`]
-      if (rTel && rTel !== r) conditions.push(`client_telephone.ilike.%${rTel}%`)
-      q = q.or(conditions.join(','))
+      const conditions = [orContient(['client_nom', 'client_telephone', 'lead_id'], r)]
+      if (rTel && rTel !== r) conditions.push(orContient(['client_telephone'], rTel))
+      const filtre = conditions.filter(Boolean).join(',')
+      if (filtre) q = q.or(filtre)
     }
 
     // Le pays est désormais obligatoire et verrouillé en base, donc on filtre
