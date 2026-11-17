@@ -21,6 +21,8 @@ import { preparerFichierImport, enteteDe, lireChamp } from '../../lib/lireFichie
 import { rappelRefuse, RAPPEL_MAX_JOURS } from '../../supabase/functions/_shared/appel.ts'
 import { bornesChamp, depuisChampLocal, versChampLocal } from '../../lib/heureRappel.mjs'
 import { libelleStatut, libelleDe, LIBELLES_LIVRAISON, LIBELLES_PAIEMENT } from '../../lib/libellesStatuts.mjs'
+// Recherche « Tout » : plusieurs colonnes dans un filtre « or » (17/11).
+import { orContient } from '../../lib/rechercheOr.mjs'
 import { nomsParGroupe, sousStatutOuvert, statutPrincipal } from '../../lib/affichageStatut.mjs'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import CommandesSupprimees from '../components/CommandesSupprimees'
@@ -46,8 +48,11 @@ function StatutPill({ statut, listeStatutsDB, type = 'confirmation' }) {
 
   if (statutConfiguré && statutConfiguré.couleur) {
     return (
-      <span className="px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1" 
-            style={{ backgroundColor: `${statutConfiguré.couleur}15`, color: statutConfiguré.couleur, border: `1px solid ${statutConfiguré.couleur}40` }}>
+      // Lisible quelle que soit la couleur (17/11) : couleur au point et au
+      // fond, texte foncé — « Pending » (#C9C1B1) était presque invisible.
+      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold text-[#1B2632] whitespace-nowrap inline-flex items-center gap-1.5"
+            style={{ backgroundColor: `${statutConfiguré.couleur}26`, border: `1px solid ${statutConfiguré.couleur}66` }}>
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: statutConfiguré.couleur }} />
         {libelleStatut(statutConfiguré.nom)}
       </span>
     )
@@ -158,7 +163,10 @@ export default function GestionCommandesPage() {
   // Les filtres sont saisis d'un côté et appliqués de l'autre : tant qu'on
   // n'a pas cliqué « Filtrer », la liste ne bouge pas. Sans ça, chaque
   // caractère tapé relance une requête sur toute la table.
+  // « Tout » d'abord et par défaut (17/11) : on tape, on trouve — sans
+  // choisir avant dans quelle colonne chercher.
   const CHAMPS_RECHERCHE = [
+    { cle: 'tout', nom: 'Tout', aide: 'Nom, téléphone, Lead ID, N° de suivi…' },
     { cle: 'tracking_number', nom: 'N° de suivi' },
     { cle: 'lead_id', nom: 'Lead ID' },
     { cle: 'client_telephone', nom: 'Téléphone client' },
@@ -174,7 +182,7 @@ export default function GestionCommandesPage() {
   // actionDu / actionAu   : derniere_action_le (dernier changement de statut) ;
   // du / au               : la date de la commande.
   const FILTRES_VIDES = { statut: '', sousStatut: '', produit: '', agent: '', source: '', du: '', au: '', actionDu: '', actionAu: '' }
-  const [champRecherche, setChampRecherche] = useState('tracking_number')
+  const [champRecherche, setChampRecherche] = useState('tout')
   const [recherche, setRecherche] = useState('')
   const [filtres, setFiltres] = useState(FILTRES_VIDES)
   const [filtresActifs, setFiltresActifs] = useState({ ...FILTRES_VIDES, champ: 'tracking_number', texte: '' })
@@ -518,8 +526,14 @@ export default function GestionCommandesPage() {
       // Les caractères de la syntaxe PostgREST sont retirés : un « , » ou une
       // parenthèse tapés par erreur casseraient la requête au lieu de ne rien
       // trouver.
-      const t = f.texte.replace(/[%,()]/g, '').trim()
-      if (t) requete = requete.ilike(f.champ, `%${t}%`)
+      if (f.champ === 'tout') {
+        // Toutes les colonnes d'un coup, valeur entre guillemets (rechercheOr).
+        const filtre = orContient(['client_nom', 'client_telephone', 'lead_id', 'tracking_number'], f.texte)
+        if (filtre) requete = requete.or(filtre)
+      } else {
+        const t = f.texte.replace(/[%,()]/g, '').trim()
+        if (t) requete = requete.ilike(f.champ, `%${t}%`)
+      }
     }
     const liste = (noms) => noms.map((n) => `"${String(n).replace(/"/g, '')}"`).join(',')
     // « En attente » = tout statut ouvert. NULL : les leads d'avant le
@@ -1321,27 +1335,12 @@ export default function GestionCommandesPage() {
       `}</style>
       
       {/* En-tête */}
-      <header className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 border-b border-[#C9C1B1]/50 pb-4">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-            Commerce & Logistique
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-bold text-[#1B2632]">
-              Toutes les commandes (Vue globale)
-            </h1>
-            {/* Combien de lignes par page. Un simple état : un rechargement
-                revient à 50. */}
-            <select
-              value={taillePage}
-              onChange={(e) => { setTaillePage(Number(e.target.value)); setPageActuelle(0) }}
-              title="Lignes par page"
-              data-taille-page
-              className="px-3 py-1.5 bg-white border border-[#C9C1B1] rounded-lg text-sm font-bold text-[#1B2632] outline-none cursor-pointer"
-            >
-              {TAILLES_PAGE.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
+      {/* En-tête compact (17/11) : le titre et le total sur une ligne ; la
+          taille de page est descendue dans la pagination, où on la cherche. */}
+      <header className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 border-b border-[#C9C1B1]/50 pb-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Commandes</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{totalCommandes}</span>
         </div>
         
         <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
@@ -1425,7 +1424,7 @@ export default function GestionCommandesPage() {
             value={recherche}
             onChange={(e) => setRecherche(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') appliquerFiltres() }}
-            placeholder={CHAMPS_RECHERCHE.find((c) => c.cle === champRecherche)?.nom}
+            placeholder={(() => { const c = CHAMPS_RECHERCHE.find((x) => x.cle === champRecherche); return c?.aide || c?.nom })()}
             className="flex-1 min-w-0 px-4 py-2.5 border border-[#C9C1B1] sm:border-x-0 rounded-xl sm:rounded-none text-sm text-[#1B2632] outline-none focus:border-[#FFB162] placeholder:text-[#1B2632]/30"
           />
 
@@ -1617,16 +1616,10 @@ export default function GestionCommandesPage() {
 
       {/* Tableau ultra-enrichi affichant le max de colonnes de la DB */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
-        {peutSelectionner && commandes.length > 0 && (
-          <p className="px-5 pt-3 pb-1 text-xs text-[#1B2632]/50">
-            La case de l&apos;en-tête coche les {commandes.length} commandes de cette page, pas toute la base ({totalCommandes} au total).
-            {' '}Exporter sans rien cocher donne tout ce que les filtres gardent.
-          </p>
-        )}
         <div className="overflow-auto min-h-[500px] max-h-[72vh]">
-          <table className="w-full min-w-[1250px] text-left border-collapse text-xs">
+          <table className="w-full min-w-[1000px] text-left border-collapse text-xs">
             <thead className="sticky top-0 z-10">
-              <tr className="bg-[#C9D3DD] text-[11px] uppercase tracking-wider text-[#1B2632]/70 font-bold">
+              <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-bold shadow-[0_1px_0_#C9C1B1]">
                 {peutSelectionner && (
                   <th className="pl-4 pr-1 py-3.5 w-[1%]">
                     {/* Coche ce qui est AFFICHÉ, jamais la base entière. */}
@@ -1643,7 +1636,8 @@ export default function GestionCommandesPage() {
                 <th className="px-4 py-3.5">Prix total</th>
                 <th className="px-4 py-3.5">Date</th>
                 <th className="px-4 py-3.5">Statut</th>
-                <th className="px-4 py-3.5 text-center">Actions</th>
+                {/* Collé à droite : toujours visible même si le tableau défile. */}
+                <th className="px-4 py-3.5 text-center sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody>
@@ -1656,20 +1650,23 @@ export default function GestionCommandesPage() {
               ) : (
                 commandes.map((cmd, i) => {
                   const ouverte = lignesOuvertes.has(cmd.id)
-                  const fond = i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'
+                  const fond = i % 2 === 1 ? 'bg-[#FAF8F4]' : 'bg-white'
                   return (
                   <React.Fragment key={cmd.id}>
-                  <tr className={`${fond} hover:bg-[#EEE9DF]/30 transition-colors border-b border-[#C9C1B1]/25`}>
+                  {/* La ligne entière ouvre le détail (17/11) ; la case, le chevron
+                      et le téléphone gardent leur propre clic. */}
+                  <tr onClick={() => ouvrirDetail(cmd)}
+                    className={`${fond} hover:bg-[#EEE9DF]/40 transition-colors border-b border-[#C9C1B1]/25 cursor-pointer`}>
 
                     {peutSelectionner && (
-                      <td className="pl-4 pr-1 py-3.5 align-top">
+                      <td className="pl-4 pr-1 py-3.5 align-top" onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
                           aria-label={`Cocher ${cmd.lead_id || 'cette commande'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                       </td>
                     )}
 
                     <td className="px-4 py-3.5 align-top">
-                      <div className="font-mono font-bold text-[#1B2632] text-sm">{cmd.lead_id || '—'}</div>
+                      <div className="font-mono font-bold text-[#1B2632] text-[13px] whitespace-nowrap">{cmd.lead_id || '—'}</div>
                       {refusParId[cmd.id] && (
                         <div className="text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px]">Refusé : {refusParId[cmd.id]}</div>
                       )}
@@ -1687,13 +1684,14 @@ export default function GestionCommandesPage() {
                     <td className="px-4 py-3.5 align-top">
                       <div className="font-bold text-[#1B2632] text-sm">{cmd.client_nom || '—'}</div>
                       {cmd.client_telephone
-                        ? <a href={`tel:${cmd.client_telephone}`} className="font-mono text-[#A35139] hover:underline">{cmd.client_telephone}</a>
+                        ? <a href={`tel:${cmd.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
+                            className="font-mono text-[#1B2632]/75 font-semibold hover:text-[#A35139] hover:underline">{cmd.client_telephone}</a>
                         : <span className="text-[#1B2632]/35">—</span>}
                       {cmd.is_doublon && <span className="block mt-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold w-fit">Doublon</span>}
                     </td>
 
                     {/* Le chevron ouvre la ligne de détail juste en dessous. */}
-                    <td className="px-4 py-3.5 align-top">
+                    <td className="px-4 py-3.5 align-top" onClick={(e) => e.stopPropagation()}>
                       <button onClick={() => basculerLigne(cmd.id)} className="flex items-start gap-2 text-left cursor-pointer group">
                         <span className="leading-tight">
                           <span className="font-bold text-[#A35139]">1</span>{' '}
@@ -1719,7 +1717,7 @@ export default function GestionCommandesPage() {
                     </td>
 
                     <td className="px-4 py-3.5 align-top whitespace-nowrap">
-                      <span className="font-mono font-bold text-sm text-[#1B2632]">{cmd.prix ?? 0}</span>
+                      <span className="font-bold text-sm text-[#1B2632]">{Number(cmd.prix ?? 0).toLocaleString('fr-FR')}</span>
                       {cmd.pays?.devise && <span className="text-[10px] text-[#1B2632]/50 ml-1 align-super">{cmd.pays.devise}</span>}
                     </td>
 
@@ -1760,17 +1758,23 @@ export default function GestionCommandesPage() {
                           Rappel prévu le {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
                         </span>
                       )}
-                      {(cmd.statut_livraison || cmd.statut_paiement) && (
-                        <span className="block mt-1 text-[10px] text-[#1B2632]/55">
-                          {cmd.statut_livraison ? `Livraison : ${libelleDe(LIBELLES_LIVRAISON, cmd.statut_livraison)}` : ''}
-                          {cmd.statut_livraison && cmd.statut_paiement ? ' · ' : ''}
-                          {cmd.statut_paiement ? `Paiement : ${libelleDe(LIBELLES_PAIEMENT, cmd.statut_paiement)}` : ''}
-                        </span>
-                      )}
+                      {/* Le paiement ne se lit qu'une fois la commande livrée (ou
+                          payée) : avant, « Unpaid » sur chaque ligne ne disait rien. */}
+                      {(() => {
+                        const paiementUtile = cmd.statut_paiement && (cmd.statut_livraison === 'livre' || cmd.statut_paiement === 'paye')
+                        if (!cmd.statut_livraison && !paiementUtile) return null
+                        return (
+                          <span className="block mt-1 text-[10px] text-[#1B2632]/55">
+                            {cmd.statut_livraison ? `Livraison : ${libelleDe(LIBELLES_LIVRAISON, cmd.statut_livraison)}` : ''}
+                            {cmd.statut_livraison && paiementUtile ? ' · ' : ''}
+                            {paiementUtile ? `Paiement : ${libelleDe(LIBELLES_PAIEMENT, cmd.statut_paiement)}` : ''}
+                          </span>
+                        )
+                      })()}
                     </td>
 
-                    <td className="px-4 py-3.5 align-top text-center">
-                      <button onClick={() => ouvrirDetail(cmd)} title="Voir le détail"
+                    <td className={`px-4 py-3.5 align-top text-center sticky right-0 ${fond}`}>
+                      <button onClick={(e) => { e.stopPropagation(); ouvrirDetail(cmd) }} title="Voir le détail"
                         className="w-9 h-9 rounded-lg inline-flex items-center justify-center text-[#1B2632]/60 hover:text-[#A35139] hover:bg-[#EEE9DF] transition-colors cursor-pointer">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
                       </button>
@@ -1778,7 +1782,7 @@ export default function GestionCommandesPage() {
                   </tr>
 
                   {ouverte && (
-                    <tr className="bg-[#E3EFF8] border-b border-[#C9C1B1]/25">
+                    <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/25">
                       <td colSpan={nbColonnes} className="px-4 py-0">
                         <table className="w-full text-left text-xs">
                           <thead>
@@ -1814,8 +1818,8 @@ export default function GestionCommandesPage() {
                                   </span>
                                 )}
                               </td>
-                              <td className="px-3 py-2.5 font-semibold text-[#A35139]">{cmd.produit || '—'}</td>
-                              <td className="px-3 py-2.5 font-mono text-[#1B2632]">{cmd.prix ?? 0}</td>
+                              <td className="px-3 py-2.5 font-semibold text-[#1B2632]">{cmd.produit || '—'}</td>
+                              <td className="px-3 py-2.5 text-[#1B2632]">{Number(cmd.prix ?? 0).toLocaleString('fr-FR')}{cmd.pays?.devise ? ` ${cmd.pays.devise}` : ''}</td>
                               <td className="px-3 py-2.5 font-mono text-[#1B2632]">{cmd.quantite ?? 1}</td>
                               <td className="px-3 py-2.5 text-[#1B2632]">{cmd.pays?.nom || <span className="text-[#1B2632]/40">—</span>}</td>
                             </tr>
@@ -1846,6 +1850,20 @@ export default function GestionCommandesPage() {
             {totalCommandes > 0 && <span className="text-[#1B2632]/50"> · {pageActuelle * taillePage + 1}–{Math.min((pageActuelle + 1) * taillePage, totalCommandes)} sur {totalCommandes}</span>}
           </span>
           <div className="flex items-center gap-3">
+            {/* Combien de lignes par page. Un simple état : un rechargement
+                revient à 50. */}
+            <label className="flex items-center gap-2 text-sm text-[#1B2632]/60">
+              Par page
+              <select
+                value={taillePage}
+                onChange={(e) => { setTaillePage(Number(e.target.value)); setPageActuelle(0) }}
+                title="Lignes par page"
+                data-taille-page
+                className="px-2.5 py-1.5 bg-white border border-[#C9C1B1] rounded-lg text-sm font-bold text-[#1B2632] outline-none cursor-pointer"
+              >
+                {TAILLES_PAGE.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
             <button
               onClick={() => setPageActuelle(p => Math.max(0, p - 1))}
               disabled={pageActuelle === 0}
