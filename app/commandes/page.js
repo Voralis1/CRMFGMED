@@ -1684,8 +1684,8 @@ export default function GestionCommandesPage() {
                     <td className="px-4 py-3.5 align-top">
                       <div className="font-bold text-[#1B2632] text-sm">{cmd.client_nom || '—'}</div>
                       {cmd.client_telephone
-                        ? <a href={`tel:${cmd.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
-                            className="font-mono text-[#1B2632]/75 font-semibold hover:text-[#A35139] hover:underline">{cmd.client_telephone}</a>
+                        // Texte simple, pas de lien d'appel (sa décision 17/11).
+                        ? <span className="block font-mono text-[#1B2632]/75 font-semibold">{cmd.client_telephone}</span>
                         : <span className="text-[#1B2632]/35">—</span>}
                       {cmd.is_doublon && <span className="block mt-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold w-fit">Doublon</span>}
                     </td>
@@ -1696,8 +1696,8 @@ export default function GestionCommandesPage() {
                         <span className="leading-tight">
                           <span className="font-bold text-[#A35139]">1</span>{' '}
                           <span className="text-[#1B2632]/80">produit</span>
-                          <span className="block text-[11px] text-[#1B2632]/50">
-                            {cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-CA') : '—'}
+                          <span className="block text-[11px] text-[#1B2632]/50 whitespace-nowrap">
+                            {cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-FR') : '—'}
                           </span>
                         </span>
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="2.5" strokeLinecap="round"
@@ -1722,7 +1722,9 @@ export default function GestionCommandesPage() {
                     </td>
 
                     <td className="px-4 py-3.5 align-top text-sm text-[#1B2632]/75 whitespace-nowrap">
-                      {cmd.created_at ? new Date(cmd.created_at).toLocaleString('fr-CA', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                      {/* Un seul format de date dans tout l'écran (17/11) : 16/11/2026 11:20,
+                          comme le détail et l'historique (avant : 2026-11-16 11 h 20). */}
+                      {cmd.created_at ? new Date(cmd.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                     </td>
 
                     <td className="px-4 py-3.5 align-top">
@@ -2333,12 +2335,10 @@ export default function GestionCommandesPage() {
                     {detail.client_telephone ? (
                       <div className="flex items-baseline gap-2">
                         <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">Téléphone</span>
-                        {/* Cliquable : l'agent appelle depuis le téléphone sans
-                            recopier le numéro, et ne se trompe pas d'un chiffre. */}
-                        <a href={`tel:${detail.client_telephone}`}
-                          className="text-sm font-mono font-semibold text-[#A35139] hover:underline">
+                        {/* Texte simple, pas de lien d'appel (sa décision 17/11). */}
+                        <span className="text-sm font-mono font-semibold text-[#1B2632]">
                           {detail.client_telephone}
-                        </a>
+                        </span>
                       </div>
                     ) : <LigneDetail label="Téléphone" valeur={null} />}
                     <LigneDetail label="Adresse" valeur={detail.adresse} />
@@ -2379,8 +2379,8 @@ export default function GestionCommandesPage() {
                           </span>
                         </td>
                         <td className="px-5 py-3 text-right font-mono">{detail.quantite ?? 1}</td>
-                        <td className="px-5 py-3 text-right font-mono font-bold">
-                          {detail.prix ?? '—'} <span className="text-xs font-normal text-[#1B2632]/50">{detail.pays?.devise || ''}</span>
+                        <td className="px-5 py-3 text-right font-bold whitespace-nowrap">
+                          {detail.prix != null ? Number(detail.prix).toLocaleString('fr-FR') : '—'} <span className="text-xs font-normal text-[#1B2632]/50">{detail.pays?.devise || ''}</span>
                         </td>
                       </tr>
                     </tbody>

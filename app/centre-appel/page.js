@@ -1295,12 +1295,12 @@ export default function CentreAppelAgent() {
                       )}
                       <td className="px-4 py-3">
                         <div className="font-bold text-[#1B2632] whitespace-nowrap">{cmd.client_nom || 'Client inconnu'}</div>
-                        {/* Le téléphone appelle d'un clic (17/11) — sans ouvrir le panneau. */}
+                        {/* Texte simple, pas de lien d'appel (sa décision 17/11) :
+                            on appelle depuis le panneau, bouton « Appeler ». */}
                         {cmd.client_telephone ? (
-                          <a href={`tel:${cmd.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
-                            className="font-mono text-xs text-[#1B2632]/75 font-semibold mt-0.5 whitespace-nowrap hover:text-[#A35139] hover:underline inline-block">
+                          <div className="font-mono text-xs text-[#1B2632]/75 font-semibold mt-0.5 whitespace-nowrap">
                             {cmd.client_telephone}
-                          </a>
+                          </div>
                         ) : (
                           <div className="font-mono text-xs text-[#1B2632]/40 mt-0.5">Aucun numéro</div>
                         )}
