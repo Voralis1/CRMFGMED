@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext'
 import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
+// Le drapeau du pays dans la colonne Lieu (19/11).
+import { drapeau } from '../../lib/paysMonde'
 
 const TAILLE_PAGE = 50
 
@@ -29,6 +31,7 @@ export default function AssignationLivreurPage() {
   const [zones, setZones] = useState([])
   const [totalCommandes, setTotalCommandes] = useState(0)
   const [pageActuelle, setPageActuelle] = useState(0)
+  const [comptes, setComptes] = useState({ a_assigner: null, assignees: null })
   const [chargement, setChargement] = useState(true)
   const [livreurChoisiParCommande, setLivreurChoisiParCommande] = useState({})
   const [envoiEnCoursId, setEnvoiEnCoursId] = useState(null)
@@ -77,9 +80,23 @@ export default function AssignationLivreurPage() {
     setZones(zonesData || [])
   }
 
+  // Combien attendent dans chaque onglet (19/11) : deux comptes seuls (head),
+  // avec les mêmes filtres que les listes, relus à chaque rechargement.
+  async function chargerComptes() {
+    let reqA = supabase.from('v_commandes_a_assigner').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantKey)
+    if (entrepot?.pays_id) reqA = reqA.eq('pays_id', entrepot.pays_id)
+    let reqB = supabase.from('livraisons')
+      .select(`id${entrepotId ? ', commandes!inner(entrepot_id)' : ''}`, { count: 'exact', head: true })
+      .eq('tenant_id', tenantKey).eq('statut', 'a_preparer')
+    if (entrepotId) reqB = reqB.eq('commandes.entrepot_id', entrepotId)
+    const [a, b] = await Promise.all([reqA, reqB])
+    setComptes({ a_assigner: a.error ? null : (a.count ?? 0), assignees: b.error ? null : (b.count ?? 0) })
+  }
+
   async function chargerCommandes(page, onglet) {
     if (!tenantKey) return
     setChargement(true)
+    chargerComptes()
 
     const debut = page * TAILLE_PAGE
     const fin = debut + TAILLE_PAGE - 1
@@ -89,7 +106,7 @@ export default function AssignationLivreurPage() {
       // base qui fait le calcul, la page ne télécharge plus la table `livraisons`.
       let req = supabase
         .from('v_commandes_a_assigner')
-        .select('*, pays(nom)', { count: 'exact' })
+        .select('*, pays(nom, code, devise)', { count: 'exact' })
         .eq('tenant_id', tenantKey)
       if (entrepot?.pays_id) req = req.eq('pays_id', entrepot.pays_id)
       const { data, error, count } = await req
@@ -108,7 +125,7 @@ export default function AssignationLivreurPage() {
       // sur l'écran ne la déplacerait pas.
       let req = supabase
         .from('livraisons')
-        .select(`id, livreur_id, livreurs(nom), ${entrepotId ? 'commandes!inner' : 'commandes'}(*, pays(nom))`, { count: 'exact' })
+        .select(`id, livreur_id, livreurs(nom), ${entrepotId ? 'commandes!inner' : 'commandes'}(*, pays(nom, code, devise))`, { count: 'exact' })
         .eq('tenant_id', tenantKey)
         .eq('statut', 'a_preparer')
       if (entrepotId) req = req.eq('commandes.entrepot_id', entrepotId)
@@ -222,16 +239,10 @@ export default function AssignationLivreurPage() {
   return (
     <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10">
 
-      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 pt-4 sm:pt-16">
+      {/* En-tête compact (19/11), comme les autres pages. */}
+      <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 pt-4 sm:pt-2">
         <div className="flex justify-between items-end flex-wrap gap-4 px-6 md:px-0">
-          <div>
-            <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-              Centre Logistique
-            </p>
-            <h1 className="text-3xl font-bold text-[#1B2632]">
-              Assignation livreur
-            </h1>
-          </div>
+          <h1 className="text-2xl font-bold text-[#1B2632]">Assignation livreur</h1>
         </div>
 
         <div className="flex flex-wrap gap-2 px-6 md:px-0">
@@ -244,6 +255,13 @@ export default function AssignationLivreurPage() {
             }`}
           >
             À assigner
+            {/* En rouge quand quelque chose attend un livreur (19/11). */}
+            {comptes.a_assigner !== null && (
+              <span className={`ml-2 inline-flex min-w-[22px] justify-center px-1.5 rounded-full text-xs font-bold ${
+                comptes.a_assigner > 0 ? 'bg-[#A35139] text-white' : (ongletActif === 'a_assigner' ? 'bg-white/20' : 'bg-[#EEE9DF] text-[#1B2632]/60')}`}>
+                {comptes.a_assigner}
+              </span>
+            )}
           </button>
           <button
             onClick={() => { setOngletActif('assignees'); setPageActuelle(0) }}
@@ -254,6 +272,12 @@ export default function AssignationLivreurPage() {
             }`}
           >
             Assignées (en attente)
+            {comptes.assignees !== null && (
+              <span className={`ml-2 inline-flex min-w-[22px] justify-center px-1.5 rounded-full text-xs font-bold ${
+                ongletActif === 'assignees' ? 'bg-white/20' : 'bg-[#EEE9DF] text-[#1B2632]/60'}`}>
+                {comptes.assignees}
+              </span>
+            )}
           </button>
         </div>
 
@@ -311,11 +335,6 @@ export default function AssignationLivreurPage() {
           </p>
         ) : (
           <>
-            {peutAgirEnMasse && (
-              <p className="px-6 pt-3 text-xs text-[#1B2632]/50">
-                La case de l'en-tête coche les {commandes.length} commandes de cette page, pas toute la base ({totalCommandes} au total).
-              </p>
-            )}
             <div className="overflow-x-auto min-h-[400px]">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
@@ -331,8 +350,7 @@ export default function AssignationLivreurPage() {
                     <th className="px-6 py-4">Lead ID</th>
                     <th className="px-6 py-4">Date</th>
                     <th className="px-6 py-4">Client</th>
-                    <th className="px-6 py-4">Pays</th>
-                    <th className="px-6 py-4">Ville / Zone</th>
+                    <th className="px-6 py-4">Lieu</th>
                     <th className="px-6 py-4">Produit</th>
                     <th className="px-6 py-4">Prix</th>
                     <th className="px-6 py-4">Livreur</th>
@@ -365,7 +383,7 @@ export default function AssignationLivreurPage() {
                           </td>
                         )}
 
-                        <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80">
+                        <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80 whitespace-nowrap">
                           #{cmd.lead_id || 'N/A'}
                           {refusParId[cmd.id] && (
                             <div className="font-sans text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px]">Refusé : {refusParId[cmd.id]}</div>
@@ -380,17 +398,15 @@ export default function AssignationLivreurPage() {
                           <div className="font-bold text-[#1B2632]">
                             {cmd.client_nom || 'Client inconnu'}
                           </div>
-                          <div className="font-mono text-xs text-[#A35139] font-semibold mt-1">
+                          <div className="font-mono text-xs text-[#1B2632]/75 font-semibold mt-1 whitespace-nowrap">
                             {cmd.client_telephone || 'Aucun numéro'}
                           </div>
                         </td>
 
-                        <td className="px-6 py-4 text-sm font-medium text-[#1B2632]">
-                          {cmd.pays?.nom || '-'}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-[#1B2632]">{cmd.ville_zone || '-'}</div>
+                        {/* Le lieu (19/11) : drapeau, ville · pays, sans répéter un pays saisi comme ville. */}
+                        <td className="px-6 py-4 text-sm font-medium text-[#1B2632] whitespace-nowrap">
+                          {cmd.pays?.code && <span className="mr-1.5">{drapeau(cmd.pays.code)}</span>}
+                          {[cmd.ville_zone, cmd.pays?.nom].filter((v, i, t) => v && t.indexOf(v) === i).join(' · ') || '-'}
                         </td>
 
                         <td className="px-6 py-4">
@@ -398,8 +414,10 @@ export default function AssignationLivreurPage() {
                           <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté: {cmd.quantite || 1}</div>
                         </td>
 
-                        <td className="px-6 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
-                          {cmd.prix !== null && cmd.prix !== undefined ? cmd.prix : '-'}
+                        <td className="px-6 py-4 font-bold text-sm text-[#1B2632] whitespace-nowrap">
+                          {cmd.prix !== null && cmd.prix !== undefined
+                            ? <>{Number(cmd.prix).toLocaleString('fr-FR')}{cmd.pays?.devise && <span className="text-xs font-semibold text-[#1B2632]/50"> {cmd.pays.devise}</span>}</>
+                            : '-'}
                         </td>
 
                         <td className="px-6 py-4">
@@ -413,7 +431,7 @@ export default function AssignationLivreurPage() {
                             onChange={(e) => choisirLivreur(cmd.id, e.target.value)}
                             className="border border-[#C9C1B1] rounded-xl px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-w-[180px] shadow-sm cursor-pointer"
                           >
-                            <option value="">{cmd.livreur_actuel ? '-- changer --' : '-- choisir --'}</option>
+                            <option value="">Choisir un livreur…</option>
                             {livreursFiltres.map((l) => (
                               <option key={l.id} value={l.id}>
                                 {l.nom} — {l.zone ? l.zone.trim() : 'sans zone'}{memeZone(l) ? ' ✓' : ''}
@@ -428,8 +446,8 @@ export default function AssignationLivreurPage() {
                         <td className="px-6 py-4 text-right">
                           <button
                             onClick={() => assigner(cmd.id)}
-                            disabled={envoiEnCoursId === cmd.id || livreursFiltres.length === 0 || !hasPermission('assigner_livreur')}
-                            title={!hasPermission('assigner_livreur') ? "Vous n'avez pas le droit d'assigner un livreur" : undefined}
+                            disabled={envoiEnCoursId === cmd.id || livreursFiltres.length === 0 || !hasPermission('assigner_livreur') || !livreurChoisiParCommande[cmd.id]}
+                            title={!hasPermission('assigner_livreur') ? "Vous n'avez pas le droit d'assigner un livreur" : (!livreurChoisiParCommande[cmd.id] ? "Choisissez d'abord un livreur" : undefined)}
                             className="px-4 py-2 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-sm font-bold shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
                           >
                             {envoiEnCoursId === cmd.id ? '...' : (cmd.livreur_actuel ? 'Changer' : 'Assigner')}
