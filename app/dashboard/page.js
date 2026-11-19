@@ -13,6 +13,16 @@ import { useEntrepot } from "../context/EntrepotContext";
 import { usePermissions } from "../context/PermissionsContext";
 // Délai de première prise en charge enregistrée (02/11) : responsables seulement, pas le vendeur.
 import { CarteDelai } from "../components/DelaiPriseEnCharge";
+// La période en français, le même calendrier que Commandes / Centre d'appel (19/11).
+import PlageDates from "../components/PlageDates";
+
+// Les statuts de livraison arrivent de stats_dashboard en français : affichés en
+// anglais comme partout (17/11), la base n'est pas touchée.
+const LIVRAISON_ANGLAIS = { "En attente": "Pending", "Livrée": "Delivered", "Injoignable": "Unreached", "Retour": "Returned" };
+
+// Ce que « Total commandes » compte vraiment : les commandes de la période
+// choisie (stats_dashboard, cmd_periode) — pas « l'historique global ».
+const SOUS_TITRE_PERIODE = { "Aujourd'hui": "aujourd'hui", "7 jours": "7 derniers jours", "30 jours": "30 derniers jours", "Personnalisé": "sur la période" };
 
 // ==================================================================
 //  COMPOSANTS VISUELS
@@ -31,7 +41,7 @@ function StatCard({ label, valeur, sousLabel, accent }) {
   );
 }
 
-function StatCardEncaisse({ liste }) {
+function StatCardEncaisse({ liste, deviseParDefaut = "" }) {
   const [index, setIndex] = useState(0);
   const [pause, setPause] = useState(false);
   const n = liste.length;
@@ -52,7 +62,7 @@ function StatCardEncaisse({ liste }) {
         <div className="fg-stat-body">
           <span className="fg-stat-label">Encaissé (COD)</span>
           <span className="fg-stat-value">
-            {formatMontant(liste[0]?.total || 0, liste[0]?.devise || "")}
+            {formatMontant(liste[0]?.total || 0, liste[0]?.devise || deviseParDefaut)}
           </span>
           <span className="fg-stat-sub">remis en caisse</span>
         </div>
@@ -213,10 +223,21 @@ export default function DashboardFGMED() {
   const [dateDebutPerso, setDateDebutPerso] = useState("");
   const [dateFinPerso, setDateFinPerso] = useState("");
   const [bornesDelai, setBornesDelai] = useState({ debut: null, fin: null });
+  // La devise de l'entreprise quand elle n'en a qu'une : « 0 AOA » au lieu de
+  // « 0 » sur la carte Encaissé vide (19/11).
+  const [deviseUnique, setDeviseUnique] = useState("");
 
   const router = useRouter();
 
   const tenantKey = typeof tenantId === "object" ? tenantId?.id : tenantId;
+
+  useEffect(() => {
+    if (!tenantKey) return;
+    supabase.from("pays").select("devise").eq("tenant_id", tenantKey).then(({ data: lignes }) => {
+      const devises = [...new Set((lignes || []).map((l) => l.devise).filter(Boolean))];
+      setDeviseUnique(devises.length === 1 ? devises[0] : "");
+    });
+  }, [tenantKey]);
   // Un seller ne voit que ses propres chiffres : la base les lui sert déjà
   // filtrés, et les tableaux qui parlent des agents n'ont rien à faire chez lui.
   const estSeller = String(roleNom || "").toLowerCase() === "seller";
@@ -287,10 +308,7 @@ export default function DashboardFGMED() {
 
       {/* En-tête */}
       <header className="fg-head">
-        <div>
-          <p className="fg-eyebrow">Centre logistique</p>
-          <h1 className="fg-title">Tableau de bord</h1>
-        </div>
+        <h1 className="fg-title">Tableau de bord</h1>
 
         <div className="fg-periode">
           {["Aujourd'hui", "7 jours", "30 jours"].map((p) => (
@@ -308,26 +326,13 @@ export default function DashboardFGMED() {
           ))}
 
           <div className="fg-date-wrap">
-            <span className="fg-date-label">Du</span>
-            <input
-              type="date"
-              value={dateDebutPerso}
-              onChange={(e) => {
-                setDateDebutPerso(e.target.value);
-                setPeriode("Personnalisé");
-              }}
-              className="fg-date-input"
-            />
-            <span className="fg-date-label">Au</span>
-            <input
-              type="date"
-              value={dateFinPerso}
-              onChange={(e) => {
-                setDateFinPerso(e.target.value);
-                setPeriode("Personnalisé");
-              }}
-              className="fg-date-input"
-            />
+            <PlageDates etiquette="dashboard" du={dateDebutPerso} au={dateFinPerso} placeholder="Période"
+              onChange={(du, au) => {
+                setDateDebutPerso(du);
+                setDateFinPerso(au);
+                // Une période vidée (✕) revient à « Aujourd'hui ».
+                setPeriode(du || au ? "Personnalisé" : "Aujourd'hui");
+              }} />
           </div>
         </div>
       </header>
@@ -337,7 +342,7 @@ export default function DashboardFGMED() {
         <StatCard
           label="Total Commandes"
           valeur={kpis.commandesTotal}
-          sousLabel="historique global"
+          sousLabel={SOUS_TITRE_PERIODE[periode] || "sur la période"}
           accent="#C9C1B1"
         />
         <StatCard
@@ -358,7 +363,7 @@ export default function DashboardFGMED() {
           sousLabel="commandes livrées"
           accent="#2C3B4D"
         />
-        <StatCardEncaisse liste={caEncaisseListe} />
+        <StatCardEncaisse liste={caEncaisseListe} deviseParDefaut={deviseUnique} />
       </section>
 
       {/* Responsables seulement (CarteDelai ne demande rien pour un autre rôle). */}
@@ -373,10 +378,15 @@ export default function DashboardFGMED() {
               <p className="fg-card-sub">Répartition horaire</p>
             </div>
             <div className="fg-legend">
-              <span><i style={{ background: "#1B2632" }} />Confirmées</span>
-              <span><i style={{ background: "#A35139" }} />Annulées</span>
+              <span><i style={{ background: "#1B2632" }} />Confirmed</span>
+              <span><i style={{ background: "#A35139" }} />Cancelled</span>
             </div>
           </div>
+          {/* Sans aucun appel sur la période : une ligne au lieu d'une grille
+              vide de 260 px (19/11). */}
+          {!(data.confirmationParHeure || []).some((h) => (h.confirmees || 0) + (h.annulees || 0) > 0) ? (
+            <p className="text-sm text-[#1B2632]/50 py-6">Aucune donnée pour cette période.</p>
+          ) : (
           <div style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data.confirmationParHeure} barGap={2} barCategoryGap="20%">
@@ -389,6 +399,7 @@ export default function DashboardFGMED() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          )}
         </div>
 
         <div className="fg-card">
@@ -398,11 +409,14 @@ export default function DashboardFGMED() {
               <p className="fg-card-sub">{totalLivraison} suivies</p>
             </div>
           </div>
+          {data.statutsLivraison.length === 0 ? (
+            <p className="text-sm text-[#1B2632]/50 py-6">Aucune donnée pour cette période.</p>
+          ) : (
           <div className="fg-donut-wrap">
             <div className="w-[180px] max-w-full h-[180px] shrink-0">
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={data.statutsLivraison} dataKey="valeur" nameKey="nom" innerRadius={50} outerRadius={80} paddingAngle={2} stroke="none">
+                  <Pie data={data.statutsLivraison.map((x) => ({ ...x, nom: LIVRAISON_ANGLAIS[x.nom] || x.nom }))} dataKey="valeur" nameKey="nom" innerRadius={50} outerRadius={80} paddingAngle={2} stroke="none">
                     {data.statutsLivraison.map((s, i) => <Cell key={i} fill={s.couleur} />)}
                   </Pie>
                   <Tooltip contentStyle={{ fontFamily: "Inter", borderRadius: 10, border: "1px solid #C9C1B1", fontSize: 12 }} />
@@ -410,16 +424,16 @@ export default function DashboardFGMED() {
               </ResponsiveContainer>
             </div>
             <ul className="fg-donut-legend">
-              {data.statutsLivraison.length === 0 && <li className="text-sm text-gray-400">Aucune livraison</li>}
               {data.statutsLivraison.map((s, i) => (
                 <li key={i}>
                   <span className="fg-dot" style={{ background: s.couleur }} />
-                  <span className="fg-donut-nom">{s.nom}</span>
+                  <span className="fg-donut-nom">{LIVRAISON_ANGLAIS[s.nom] || s.nom}</span>
                   <span className="fg-donut-val">{s.valeur}</span>
                 </li>
               ))}
             </ul>
           </div>
+          )}
         </div>
       </section>
 
@@ -431,7 +445,7 @@ export default function DashboardFGMED() {
             <h2 className="fg-card-title">Analytics par agent</h2>
             <p className="fg-card-sub">Performance du centre d'appel — {analyticsAgents.length} agent{analyticsAgents.length > 1 ? "s" : ""}</p>
           </div>
-          <StatutPill ton="neutre">Appels · Confirmées · Non joints · Annulées · Rappels</StatutPill>
+          <StatutPill ton="neutre">Appels · Confirmed · Unreached · Cancelled · Reminder</StatutPill>
         </div>
 
         {analyticsAgents.length === 0 ? (
@@ -445,10 +459,10 @@ export default function DashboardFGMED() {
                 <tr>
                   <th>Agent</th>
                   <th className="fg-num-col">Appels</th>
-                  <th className="fg-num-col">Confirmées</th>
-                  <th className="fg-num-col">Non joints</th>
-                  <th className="fg-num-col">Annulées</th>
-                  <th className="fg-num-col">Rappels</th>
+                  <th className="fg-num-col">Confirmed</th>
+                  <th className="fg-num-col">Unreached</th>
+                  <th className="fg-num-col">Cancelled</th>
+                  <th className="fg-num-col">Reminder</th>
                   <th className="fg-taux-col">Taux conf.</th>
                 </tr>
               </thead>
@@ -532,7 +546,7 @@ export default function DashboardFGMED() {
             <h2 className="fg-card-title">Vue d'ensemble des appels</h2>
           </div>
           <ul className="fg-overview">
-            {data.overviewAppels.length === 0 && <li className="text-sm text-gray-400">Aucun appel</li>}
+            {data.overviewAppels.length === 0 && <li className="text-sm text-gray-400" style={{ display: "block" }}>Aucun appel</li>}
             {data.overviewAppels.map((o, i) => (
               <li key={i}>
                 <span className="fg-ov-label">{libelleStatut(o.label)}</span>
@@ -550,7 +564,7 @@ export default function DashboardFGMED() {
             <h2 className="fg-card-title">Top Produits</h2>
           </div>
           <ol className="fg-top">
-            {data.topProduits.length === 0 && <li className="text-sm text-gray-400">Aucun produit</li>}
+            {data.topProduits.length === 0 && <li className="text-sm text-gray-400" style={{ display: "block" }}>Aucun produit</li>}
             {/* Par PRODUIT depuis le 29/10 (stats_dashboard) : les orthographes
                 d'un même produit comptent ensemble. « Produit non reconnu »
                 arrive sans rang, en dernier : une ligne à part, jamais classée. */}
@@ -574,7 +588,7 @@ export default function DashboardFGMED() {
           </div>
           <ol className="fg-top">
             {(!data.topAgents || data.topAgents.length === 0) && (
-              <li className="text-sm text-[#1B2632]/50 italic">Aucune commande livrée n'est liée à un agent.</li>
+              <li className="text-sm text-[#1B2632]/50 italic" style={{ display: "block" }}>Aucune commande livrée n'est liée à un agent.</li>
             )}
             {(data.topAgents || []).map((a, i) => (
               <li key={i}>
@@ -625,6 +639,7 @@ function StyleFGMED() {
       .fg-periode-btn.actif{background:var(--abyssal);color:#fff;}
 
       .fg-date-wrap{display:flex;align-items:center;gap:8px;border-left:1px solid var(--oatmeal);padding-left:10px;margin-left:4px;}
+      .fg-date-wrap .cm-input{width:230px;border:1px solid #C9C1B1;border-radius:10px;padding:7px 10px;font-size:13px;outline:none;background:#fff;color:#1B2632;}
       .fg-date-label{font-size:11px;font-weight:700;color:rgba(27,38,50,0.4);text-transform:uppercase;letter-spacing:0.1em;}
       .fg-date-input{border:none;background:transparent;font-family:'Inter',sans-serif;font-size:13px;color:var(--abyssal);font-weight:500;outline:none;cursor:pointer;}
 
@@ -750,10 +765,11 @@ function StyleFGMED() {
         .fg-periode-btn{flex:1 1 auto;text-align:center;}
         .fg-date-wrap{
           width:100%;border-left:none;padding-left:0;margin-left:0;
-          display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center;
+          display:grid;grid-template-columns:1fr;gap:8px 10px;align-items:center;
           padding-top:8px;border-top:1px solid var(--oatmeal);
         }
         .fg-date-input{width:100%;min-width:0;}
+        .fg-date-wrap .cm-input{width:100%;}
       }
       @media (max-width:600px){
         .fg-root{padding:12px;}
