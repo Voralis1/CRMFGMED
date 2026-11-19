@@ -35,10 +35,16 @@ const VIDE = {
   vendeur_id: '',   // choisi par un responsable (11/11) ; un vendeur, c'est lui
 }
 
+// Badge compact (19/11), comme les statuts des autres pages : le point porte
+// la couleur, le texte reste foncé.
+const POINT_STATUT = { en_attente: '#FFB162', confirmee: '#2E7D53', en_transit: '#2C3B4D', receptionnee: '#2E7D53', refusee: '#A35139' }
 function Statut({ valeur }) {
-  const s = STATUTS[valeur] || { label: valeur || '—', classe: 'border-[#C9C1B1] text-[#1B2632]/60 bg-white' }
+  const s = STATUTS[valeur] || { label: valeur || '—' }
+  const couleur = POINT_STATUT[valeur] || '#C9C1B1'
   return (
-    <span className={`inline-block px-4 py-1.5 rounded-full border text-xs font-semibold whitespace-nowrap ${s.classe}`}>
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] whitespace-nowrap"
+      style={{ backgroundColor: `${couleur}22`, borderColor: `${couleur}66` }}>
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: couleur }} />
       {s.label}
     </span>
   )
@@ -632,9 +638,10 @@ export default function ExpeditionsPage() {
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">Logistique</p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-[#1B2632]">Expéditions</h1>
+        {/* En-tête compact (19/11) : le titre et le nombre affiché. */}
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Expéditions</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{affichees.length}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
@@ -843,27 +850,28 @@ export default function ExpeditionsPage() {
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
         <div className="overflow-auto">
-          <table className="w-full min-w-[1200px] text-left border-collapse">
+          <table className="w-full min-w-[880px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
+                {/* Poids et mode réunis (19/11) : « Maritime · 5 kg ». */}
                 <th className="px-5 py-4">ID</th>
-                <th className="px-5 py-4">Poids (Kg)</th>
                 <th className="px-5 py-4">Transport</th>
-                <th className="px-5 py-4">Détails</th>
+                <th className="px-5 py-4">Produits</th>
                 <th className="px-5 py-4">Transporteur</th>
                 <th className="px-5 py-4">Pays</th>
-                <th className="px-5 py-4">Date expédition</th>
-                <th className="px-5 py-4">Date réception</th>
+                {/* Une colonne pour les deux dates (19/11) : la seconde n'existe
+                    qu'une fois reçue. */}
+                <th className="px-5 py-4">Dates</th>
                 <th className="px-5 py-4">Statut</th>
-                <th className="px-5 py-4 text-right">Actions</th>
+                <th className="px-5 py-4 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="10" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : affichees.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="px-6 py-12 text-center text-[#1B2632]/60">
+                  <td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">
                     {expeditions.length === 0 ? 'Aucune expédition.'
                       : filtreVendeur && afficheesTousVendeurs.length > 0
                         ? `Aucune expédition pour « ${nomFiltreVendeur} » — ${afficheesTousVendeurs.length} au total.`
@@ -877,20 +885,20 @@ export default function ExpeditionsPage() {
                   const contenu = nbProduits[e.id]
                   return (
                     <React.Fragment key={e.id}>
-                    <tr className="hover:bg-[#EEE9DF]/40 transition-colors align-top">
+                    {/* La ligne ouvre ses produits (19/11) ; les boutons gardent leur clic. */}
+                    <tr onClick={() => contenu && setDetailOuvert(ouvert ? null : e.id)}
+                      className={`bg-white hover:bg-[#F3EFE7] transition-colors align-top ${contenu ? 'cursor-pointer' : ''}`}>
                       <td className="px-5 py-4 font-mono text-xs text-[#A35139] font-semibold whitespace-nowrap">
                         {e.reference}
                         <div className="text-[11px] text-[#1B2632]/40 font-sans mt-1">{nomVendeur(e.vendeur_id)}</div>
                       </td>
-                      <td className="px-5 py-4 font-mono font-bold text-sm text-[#1B2632] whitespace-nowrap">
-                        {e.poids_kg ?? '—'}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="px-2.5 py-1 rounded-md bg-[#EEE9DF] text-[#1B2632]/70 text-xs font-medium whitespace-nowrap">
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <span className="px-2.5 py-1 rounded-md bg-[#EEE9DF] text-[#1B2632]/70 text-xs font-medium">
                           {e.mode_transport || '—'}
                         </span>
+                        <span className="ml-2 text-sm font-bold text-[#1B2632]">{e.poids_kg != null ? `${Number(e.poids_kg).toLocaleString('fr-FR')} kg` : ''}</span>
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-5 py-4" onClick={(ev) => ev.stopPropagation()}>
                         {e.details ? (
                           <button
                             onClick={() => setDetailOuvert(detailOuvert === e.id ? null : e.id)}
@@ -898,14 +906,14 @@ export default function ExpeditionsPage() {
                           >
                             <span className={detailOuvert === e.id ? '' : 'line-clamp-2'}>{e.details}</span>
                           </button>
-                        ) : <span className="text-[#1B2632]/30">—</span>}
+                        ) : null}
                         {/* Le détail tient SOUS la ligne, pas dedans : une
                             expédition de vingt références écraserait la colonne.
                             On annonce combien, et la flèche ouvre le reste. */}
                         {contenu && (
                           <button
                             onClick={() => setDetailOuvert(ouvert ? null : e.id)}
-                            className="mt-1 flex items-center gap-1.5 text-xs cursor-pointer group"
+                            className={`${e.details ? 'mt-1' : ''} flex items-center gap-1.5 text-xs cursor-pointer group whitespace-nowrap`}
                           >
                             <span className="font-bold text-[#A35139]">{contenu.articles}</span>
                             <span className="text-[#1B2632]/70">
@@ -923,7 +931,7 @@ export default function ExpeditionsPage() {
                       <td className="px-5 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-[#1B2632]">{e.transporteur || '—'}</div>
                         {e.transporteur_telephone && (
-                          <div className="text-xs font-mono text-[#A35139] mt-0.5">{e.transporteur_telephone}</div>
+                          <div className="text-xs font-mono text-[#1B2632]/70 mt-0.5">{e.transporteur_telephone}</div>
                         )}
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap">
@@ -937,21 +945,26 @@ export default function ExpeditionsPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-5 py-4 text-sm text-[#1B2632]/80 whitespace-nowrap">{dateCourte(e.date_expedition)}</td>
-                      <td className="px-5 py-4 text-sm text-[#1B2632]/80 whitespace-nowrap">{dateCourte(e.date_reception)}</td>
+                      <td className="px-5 py-4 text-sm text-[#1B2632]/80 whitespace-nowrap">
+                        <div><span className="text-[11px] text-[#1B2632]/45">envoyée </span>{dateCourte(e.date_expedition)}</div>
+                        {e.date_reception && (
+                          <div className="mt-0.5"><span className="text-[11px] text-[#1B2632]/45">reçue </span>{dateCourte(e.date_reception)}</div>
+                        )}
+                      </td>
                       <td className="px-5 py-4">
                         <Statut valeur={e.statut} />
                         {e.statut === 'refusee' && e.motif_refus && (
                           <div className="text-[11px] text-red-700 mt-1.5 max-w-[160px]">{e.motif_refus}</div>
                         )}
                       </td>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center justify-end gap-1 flex-wrap">
+                      <td className="px-5 py-4 sticky right-0 bg-inherit" onClick={(ev) => ev.stopPropagation()}>
+                        {/* Une seule ligne (19/11) : empilés, les quatre boutons triplaient la hauteur de la ligne. */}
+                        <div className="flex items-center justify-end gap-1.5 flex-nowrap whitespace-nowrap">
                           {peutConfirmer && enAttente && (
                             <>
                               <button
                                 onClick={() => confirmerEtRecevoir(e)}
-                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-500 text-white hover:bg-green-600 transition-colors whitespace-nowrap"
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2E7D53] text-white hover:bg-[#256946] transition-colors whitespace-nowrap"
                               >
                                 Confirmer
                               </button>
@@ -988,7 +1001,7 @@ export default function ExpeditionsPage() {
 
                     {ouvert && contenu && (
                       <tr>
-                        <td colSpan={10} className="px-5 pb-4 pt-0 bg-[#EEF4FA]">
+                        <td colSpan={8} className="px-5 pb-4 pt-0 bg-[#F4F0E6]">
                           <table className="w-full text-left text-sm border border-[#C9C1B1]/60 rounded-xl overflow-hidden bg-white">
                             <thead>
                               <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
@@ -1206,7 +1219,9 @@ export default function ExpeditionsPage() {
 
               <div className="p-6 flex flex-col gap-5">
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* items-start (19/11) : la carte de gauche ne s'étire plus à la
+                    hauteur des trois cartes de droite. */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
                   <Bloc titre="Informations du colis">
                     <div>
                       <label className="ex-label">Depuis (pays d&apos;achat) *</label>
