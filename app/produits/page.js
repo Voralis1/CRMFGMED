@@ -34,33 +34,14 @@ const VIDE = {
   description: '', product_page: '', statut: 'actif',
 }
 
-// Un up-sell désigne un produit du catalogue. Quand il est renseigné, on
-// montre lequel : « ✓ » tout seul obligeait à ouvrir la fiche pour savoir.
-// `texte` est l'ancienne saisie libre, encore affichée tant que l'écran
-// Paramètres peut l'écrire — mais en gris, pour qu'on voie que ce n'est pas
-// un vrai lien.
-function CelluleVente({ lie, texte }) {
-  if (lie) {
-    return (
-      <span className="inline-flex items-center gap-1.5 max-w-[150px]">
-        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-green-500 text-white shrink-0">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-        </span>
-        <span className="text-xs font-medium text-[#1B2632] truncate" title={lie}>{lie}</span>
-      </span>
-    )
-  }
-  if (texte) {
-    return <span className="text-xs text-[#1B2632]/50 italic max-w-[150px] truncate inline-block" title={`Ancienne saisie libre : ${texte}`}>{texte}</span>
-  }
-  return <span className="px-2 py-1 rounded-md bg-red-50 text-red-700 text-[11px] font-medium whitespace-nowrap">Non utilisé</span>
-}
 
 function QuantiteCellule({ total, parPays }) {
   return (
     <div>
-      <span className="inline-block px-2.5 py-1 rounded-full bg-[#EDE7FB] text-[#5B3FA8] text-xs font-semibold whitespace-nowrap">
-        Total : {total ?? 0}
+      {/* Un nombre, rouge à zéro (19/11) — avant : « Total : 0 » en pastille
+          violette dans trois colonnes. */}
+      <span className={`text-base font-bold whitespace-nowrap ${(total ?? 0) > 0 ? 'text-[#1B2632]' : 'text-[#A35139]'}`}>
+        {total ?? 0}
       </span>
       {/* Le détail n'apparaît que si des entrepôts ont un pays. Sans entrepôt,
           la ligne resterait vide et ferait croire à un stock à zéro. */}
@@ -107,6 +88,9 @@ export default function ProduitsPage() {
   const estSeller = String(roleNom || '').toLowerCase() === 'seller'
 
   const [produits, setProduits] = useState([])
+  // La devise de l'entreprise quand elle n'en a qu'une (19/11) : « 49 999 AOA ».
+  // Un produit n'a pas de pays : avec plusieurs devises, le prix reste nu.
+  const [deviseUnique, setDeviseUnique] = useState('')
   // Les vendeurs de l'entreprise, pour le responsable qui choisit à qui est
   // un produit (comme « Nouvelle source » dans Mon API). Le vendeur n'en a
   // pas besoin : ce qu'il crée est à lui, la base l'écrit
@@ -263,6 +247,14 @@ export default function ProduitsPage() {
   }, [tenantKey, estSeller])
 
   useEffect(() => { if (tenantKey && !permsLoading) charger() }, [tenantKey, permsLoading, charger])
+  useEffect(() => {
+    if (!tenantKey) return
+    supabase.from('pays').select('devise').eq('tenant_id', tenantKey).then(({ data }) => {
+      const devises = [...new Set((data || []).map((l) => l.devise).filter(Boolean))]
+      setDeviseUnique(devises.length === 1 ? devises[0] : '')
+    })
+  }, [tenantKey])
+  const prixLisible = (v) => (v === null || v === undefined || v === '' ? '—' : `${Number(v).toLocaleString('fr-FR')}${deviseUnique ? ` ${deviseUnique}` : ''}`)
 
   function parPays(produitId) {
     const d = stocksParProduit[produitId]
@@ -798,9 +790,10 @@ export default function ProduitsPage() {
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">Catalogue</p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-[#1B2632]">Produits</h1>
+        {/* En-tête compact (19/11) : le titre et le nombre affiché. */}
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Produits</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{affiches.length}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2">
@@ -987,7 +980,7 @@ export default function ProduitsPage() {
             <Chiffre label="En stock" valeur={analyse.enStock} />
             <Chiffre label="Passé au total" valeur={analyse.cumul} />
             <Chiffre label="Défectueux" valeur={analyse.defectueux} detail={`${analyse.tauxDefaut.toFixed(1)} % du total`} alerte={analyse.tauxDefaut > 5} />
-            <Chiffre label="Valeur du stock" valeur={analyse.valeur.toLocaleString('fr-FR', { maximumFractionDigits: 0 })} />
+            <Chiffre label="Valeur du stock" valeur={`${analyse.valeur.toLocaleString('fr-FR', { maximumFractionDigits: 0 })}${deviseUnique ? ` ${deviseUnique}` : ''}`} />
             <Chiffre label="En rupture" valeur={analyse.ruptures.length} alerte={analyse.ruptures.length > 0} />
           </div>
 
@@ -1015,28 +1008,28 @@ export default function ProduitsPage() {
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
         <div className="overflow-auto">
-          <table className="w-full min-w-[1150px] text-left border-collapse">
+          <table className="w-full min-w-[900px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
-                <th className="px-5 py-4">ID</th>
+                {/* Type, Up-sell, Cross-sell : dans la fiche (19/11) — dans la liste
+                    ils disaient « Standard » et « Non utilisé » sur chaque ligne. */}
+                <th className="px-5 py-4">Code</th>
                 <th className="px-5 py-4">Nom</th>
-                <th className="px-5 py-4">Type</th>
+                <th className="px-5 py-4 text-right">Prix</th>
                 <th className="px-5 py-4">En stock</th>
-                <th className="px-5 py-4">Total</th>
-                <th className="px-5 py-4">Défectueux</th>
-                <th className="px-5 py-4">Up-sell</th>
-                <th className="px-5 py-4">Cross-sell</th>
+                <th className="px-5 py-4 text-right">Total</th>
+                <th className="px-5 py-4 text-right">Défectueux</th>
                 <th className="px-5 py-4">Statut</th>
                 <th className="px-5 py-4">Ajouté le</th>
-                <th className="px-5 py-4 text-right">Actions</th>
+                <th className="px-5 py-4 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="11" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : affiches.length === 0 ? (
                 <tr>
-                  <td colSpan="11" className="px-6 py-12 text-center text-[#1B2632]/60">
+                  <td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">
                     {produits.length === 0
                       ? (estSeller ? 'Vous n\u2019avez encore aucun produit.' : 'Aucun produit dans le catalogue.')
                       : filtreVendeur && affichesTousVendeurs.length > 0
@@ -1048,7 +1041,8 @@ export default function ProduitsPage() {
                 affiches.map((p) => {
                   const actif = (p.statut || 'actif') === 'actif'
                   return (
-                    <tr key={p.id} className="hover:bg-[#EEE9DF]/40 transition-colors">
+                    // La ligne entière ouvre la fiche (19/11) ; les boutons gardent leur clic.
+                    <tr key={p.id} onClick={() => ouvrirFiche(p)} className="bg-white hover:bg-[#F3EFE7] transition-colors cursor-pointer">
                       <td className="px-5 py-4 font-mono text-xs text-[#A35139] font-semibold whitespace-nowrap">
                         {/* Pas un bout d'id à la place : il ressemblerait à un code que
                             l'import ne reconnaîtrait pas. */}
@@ -1064,44 +1058,28 @@ export default function ProduitsPage() {
                             {nomVendeur(p.vendeur_id) || <span className="italic">sans vendeur</span>}
                           </div>
                         )}
-                        {p.price !== null && p.price !== undefined && (
-                          <div className="text-xs font-mono font-semibold text-[#1B2632]/70 mt-0.5">{p.price}</div>
-                        )}
                         </div>
                         </div>
                       </td>
-                      <td className="px-5 py-4">
-                        <span className="px-2.5 py-1 rounded-md bg-[#EEE9DF] text-[#1B2632]/70 text-xs font-medium whitespace-nowrap">
-                          {p.type || 'Standard'}
-                        </span>
-                      </td>
+                      <td className="px-5 py-4 text-right text-sm font-bold text-[#1B2632] whitespace-nowrap">{prixLisible(p.price)}</td>
                       <td className="px-5 py-4"><QuantiteCellule total={p.current_quantity} parPays={parPays(p.id)} /></td>
-                      <td className="px-5 py-4">
-                        <span className="inline-block px-2.5 py-1 rounded-full bg-[#EDE7FB] text-[#5B3FA8] text-xs font-semibold whitespace-nowrap">
-                          Total : {p.quantite_totale ?? 0}
-                        </span>
+                      <td className="px-5 py-4 text-right text-sm font-semibold text-[#1B2632]">{p.quantite_totale ?? 0}</td>
+                      <td className={`px-5 py-4 text-right text-sm font-semibold ${(p.defected_quantity || 0) > 0 ? 'text-[#A35139]' : 'text-[#1B2632]/60'}`}>
+                        {p.defected_quantity ?? 0}
                       </td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
-                          (p.defected_quantity || 0) > 0 ? 'bg-red-50 text-red-700' : 'bg-[#EDE7FB] text-[#5B3FA8]'
-                        }`}>
-                          Total : {p.defected_quantity ?? 0}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4"><CelluleVente lie={nomLie(p.upsell_produit_id)} texte={p.upsell} /></td>
-                      <td className="px-5 py-4"><CelluleVente lie={nomLie(p.crosssell_produit_id)} texte={p.crosssell} /></td>
                       <td className="px-5 py-4">
                         {/* Lecture seule : le statut se change dans la fiche,
                             avec le reste. Un clic de trop dans une liste
                             retirait un produit de la vente sans confirmation. */}
-                        <span className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white inline-block ${actif ? 'bg-green-500' : 'bg-[#1B2632]/30'}`}>
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold text-[#1B2632] inline-flex items-center gap-1.5 border ${actif ? 'bg-[#2E7D53]/15 border-[#2E7D53]/40' : 'bg-[#C9C1B1]/25 border-[#C9C1B1]'}`}>
+                          <span className={`w-2 h-2 rounded-full ${actif ? 'bg-[#2E7D53]' : 'bg-[#1B2632]/30'}`} />
                           {actif ? 'Actif' : 'Inactif'}
                         </span>
                       </td>
                       <td className="px-5 py-4 text-sm text-[#1B2632]/70 whitespace-nowrap">
                         {p.created_at ? new Date(p.created_at).toLocaleDateString('fr-FR') : '-'}
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-5 py-4 sticky right-0 bg-inherit" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => ouvrirFiche(p)} title="Détails et historique du stock"
@@ -1269,7 +1247,7 @@ export default function ProduitsPage() {
                   <Chiffre label="En stock" valeur={ficheOuverte.current_quantity ?? 0} />
                   <Chiffre label="Passé au total" valeur={ficheOuverte.quantite_totale ?? 0} />
                   <Chiffre label="Défectueux" valeur={ficheOuverte.defected_quantity ?? 0} alerte={(ficheOuverte.defected_quantity || 0) > 0} />
-                  <Chiffre label="Prix" valeur={ficheOuverte.price ?? '—'} />
+                  <Chiffre label="Prix" valeur={prixLisible(ficheOuverte.price)} />
                   <Chiffre label="Type" valeur={ficheOuverte.type || 'Standard'} />
                 </div>
 
