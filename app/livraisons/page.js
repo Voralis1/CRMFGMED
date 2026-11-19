@@ -12,6 +12,8 @@ import { produitDeCommande } from '../../lib/verdictImport.mjs'
 // Le vendeur : la commande sans l'agent ni qui l'a remontée (02/11).
 import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
 import { LIBELLES_LIVRAISON } from '../../lib/libellesStatuts.mjs'
+// Recherche « Tout » : plusieurs colonnes de la commande à la fois (19/11).
+import { orContient } from '../../lib/rechercheOr.mjs'
 
 const TAILLES_PAGE = [10, 25, 50, 100]
 
@@ -40,7 +42,9 @@ const STATUTS_EN_COURS = ['a_preparer', 'expedie']
 
 // La recherche porte sur la commande, pas sur la livraison : c'est le numéro
 // de suivi ou le téléphone du client qu'on a sous les yeux quand on cherche.
+// « Tout » d'abord et par défaut (19/11) : on tape, on trouve.
 const CHAMPS_RECHERCHE = [
+  { cle: 'tout', nom: 'Tout', aide: 'Nom, téléphone, N° de suivi…' },
   { cle: 'tracking_number', nom: 'N° de suivi' },
   { cle: 'lead_id', nom: 'Lead ID' },
   { cle: 'client_telephone', nom: 'Téléphone client' },
@@ -61,6 +65,13 @@ const FILTRES_VIDES = { statut: '', zone: '', livreur: '', vendeur: '', du: '', 
 
 const nombre = (v) =>
   Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// Un montant à encaisser, lisible d'un coup d'œil (19/11) : 98 798.
+const montantLisible = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString('fr-FR'))
+
+// Le fond d'une ligne (blanc / beige un sur deux) — aussi celui de la colonne
+// collée à droite, pour que le texte qui défile dessous ne se voie pas.
+const fondLigne = (i) => (i % 2 === 1 ? 'bg-[#FAF8F4]' : 'bg-white')
 
 function PillStatut({ statut }) {
   const conf = STATUTS[statut] || { label: statut || 'N/A', couleur: '#6B7A8C' }
@@ -97,7 +108,7 @@ export default function LivraisonsPage() {
   // Saisi d'un côté, appliqué de l'autre : la liste ne bouge qu'au clic.
   // Sans ça chaque caractère tapé relancerait une requête sur toute la table.
   const [vue, setVue] = useState('toutes')
-  const [champRecherche, setChampRecherche] = useState('tracking_number')
+  const [champRecherche, setChampRecherche] = useState('tout')
   const [recherche, setRecherche] = useState('')
   const [filtres, setFiltres] = useState(FILTRES_VIDES)
   const [filtresActifs, setFiltresActifs] = useState({ ...FILTRES_VIDES, champ: 'tracking_number', texte: '' })
@@ -114,7 +125,7 @@ export default function LivraisonsPage() {
 
   // Fiche détail + formulaire de traitement
   const [detail, setDetail] = useState(null)
-  const [statutChoisi, setStatutChoisi] = useState('livre')
+  const [statutChoisi, setStatutChoisi] = useState('')
   const [motifTexte, setMotifTexte] = useState('')
   const [montant, setMontant] = useState('')
   const [envoiEnCours, setEnvoiEnCours] = useState(false)
@@ -303,7 +314,14 @@ export default function LivraisonsPage() {
     if (filtresActifs.du) r = r.gte('created_at', filtresActifs.du)
     if (filtresActifs.au) r = r.lte('created_at', `${filtresActifs.au}T23:59:59`)
 
-    if (texte) r = r.ilike(`commandes.${filtresActifs.champ}`, `%${texte}%`)
+    if (texte && filtresActifs.champ === 'tout') {
+      // Toutes les colonnes de la commande d'un coup, valeur entre guillemets
+      // (rechercheOr) ; la jointure est interne dès qu'il y a un texte. Le
+      // livreur ne cherche pas par Lead ID : il ne le voit pas (30/10).
+      const colonnes = estLivreur ? ['client_nom', 'client_telephone', 'tracking_number'] : ['client_nom', 'client_telephone', 'lead_id', 'tracking_number']
+      const filtre = orContient(colonnes, texte)
+      if (filtre) r = r.or(filtre, { referencedTable: 'commandes' })
+    } else if (texte) r = r.ilike(`commandes.${filtresActifs.champ}`, `%${texte}%`)
 
     // ⚠️ On rend la requête DANS UN OBJET, et surtout pas toute nue.
     //
@@ -472,7 +490,10 @@ export default function LivraisonsPage() {
     setDetail(liv)
     // Le pas suivant le plus probable : une livraison à préparer part, une
     // livraison expédiée arrive.
-    setStatutChoisi(liv.statut === 'a_preparer' ? 'expedie' : 'livre')
+    // Aucun résultat choisi d'avance (19/11) : avant, « Delivered » (avec le
+    // montant) était présélectionné sur une livraison expédiée, et un
+    // « Enregistrer » trop rapide la marquait livrée et encaissée.
+    setStatutChoisi('')
     setMotifTexte('')
     setMontant(liv.commandes?.prix ?? '')
   }
@@ -509,6 +530,10 @@ export default function LivraisonsPage() {
   const totalPages = Math.max(1, Math.ceil(total / parPage))
   const premier = total === 0 ? 0 : page * parPage + 1
   const dernier = Math.min(total, (page + 1) * parPage)
+  // La caisse vide affiche « 0 » avec la devise des livraisons affichées,
+  // quand elles n'en ont qu'une (19/11) ; plusieurs devises : « 0 » seul.
+  const devisesAffichees = [...new Set(livraisons.map((l) => l.commandes?.pays?.devise).filter(Boolean))]
+  const deviseCaisse = devisesAffichees.length === 1 ? devisesAffichees[0] : ''
   const zoneDetail = detail?.commandes?.zones
 
   if (authLoading || permsLoading || !hasPermission('menu_livraisons')) {
@@ -530,11 +555,11 @@ export default function LivraisonsPage() {
 
       {/* En-tête */}
       <header className="flex justify-between items-start flex-wrap gap-3">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-            Centre logistique{nomAffiche ? ` • ${nomAffiche}` : ''}
-          </p>
-          <h1 className="text-3xl font-bold text-[#1B2632]">Livraisons</h1>
+        {/* En-tête compact (19/11) : le titre et le total ; plus l'e-mail du
+            compte affiché en haut de l'écran. */}
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Livraisons</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{total}</span>
         </div>
 
         {/* Affichée même à zéro : un livreur qui ne voit rien croit que l'écran
@@ -547,7 +572,8 @@ export default function LivraisonsPage() {
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
               {maCaisse.length === 0 && (
                 <span className="flex items-baseline gap-1.5">
-                  <span className="text-xl font-bold font-mono">0,00</span>
+                  <span className="text-xl font-bold font-mono">0</span>
+                  {deviseCaisse && <span className="text-xs text-white/60">{deviseCaisse}</span>}
                   <span className="text-[11px] text-white/40">· rien encaissé pour l&apos;instant</span>
                 </span>
               )}
@@ -582,7 +608,7 @@ export default function LivraisonsPage() {
             value={recherche}
             onChange={(e) => setRecherche(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') appliquerFiltres() }}
-            placeholder={CHAMPS_RECHERCHE.find((c) => c.cle === champRecherche)?.nom}
+            placeholder={(() => { const c = CHAMPS_RECHERCHE.find((x) => x.cle === champRecherche); return c?.aide || c?.nom })()}
             className="flex-1 min-w-0 px-4 py-2.5 border border-[#C9C1B1] sm:border-x-0 rounded-xl sm:rounded-none text-sm text-[#1B2632] outline-none focus:border-[#FFB162] placeholder:text-[#1B2632]/30"
           />
 
@@ -693,27 +719,6 @@ export default function LivraisonsPage() {
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
 
         <div className="flex flex-wrap items-center gap-3 px-5 sm:px-6 py-5">
-          <h2 className="text-2xl font-bold text-[#A35139]">Livraisons</h2>
-
-          {/* La pastille affiche la tranche en cours ; le menu, lui, change le
-              nombre de lignes. Un <select> ne sait montrer que le libellé de
-              l'option choisie, d'où le vrai texte au-dessus et le select
-              transparent par-dessus — qui garde le menu natif du téléphone. */}
-          <div className="relative inline-flex items-center pl-4 pr-9 py-2 rounded-xl border border-[#C9C1B1] bg-[#F4F0E6]">
-            <span className="text-sm font-semibold text-[#1B2632] whitespace-nowrap">
-              {total === 0 ? '0 / 0' : `${premier} - ${dernier} / ${total}`}
-            </span>
-            <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1B2632" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9" /></svg>
-            <select
-              value={parPage}
-              onChange={(e) => setParPage(Number(e.target.value))}
-              title="Lignes par page"
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            >
-              {TAILLES_PAGE.map((t) => <option key={t} value={t}>{t} par page</option>)}
-            </select>
-          </div>
-
           {/* Les trois vues restent à portée de clic : le livreur ouvre la page
               pour faire ses livraisons, pas pour composer un filtre. */}
           <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60">
@@ -738,7 +743,7 @@ export default function LivraisonsPage() {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
             </svg>
-            {exportEnCours ? 'Export...' : 'Export to Excel'}
+            {exportEnCours ? 'Export…' : 'Exporter Excel'}
           </button>
         </div>
 
@@ -749,9 +754,9 @@ export default function LivraisonsPage() {
         )}
 
         <div className="overflow-auto min-h-[400px] max-h-[72vh]">
-          <table className="w-full min-w-[1050px] text-left border-collapse">
+          <table className="w-full min-w-[900px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
-              <tr className="bg-[#C9D3DD] text-[11px] uppercase tracking-wider text-[#1B2632]/70 font-bold">
+              <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-bold shadow-[0_1px_0_#C9C1B1]">
                 {/* Le livreur ne lit pas le même tableau que le bureau. Lui est
                     devant une porte : il lui faut qui appeler, où aller et
                     combien encaisser. Le Lead ID et la date sont des repères de
@@ -769,7 +774,8 @@ export default function LivraisonsPage() {
                 {estResponsable && <th className="px-5 py-3.5">Livreur</th>}
                 {estResponsable && <th className="px-5 py-3.5">Vendeur</th>}
                 <th className="px-5 py-3.5">Statut</th>
-                <th className="px-5 py-3.5 text-center">Actions</th>
+                {/* Collé à droite : toujours visible même si le tableau défile. */}
+                <th className="px-5 py-3.5 text-center sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody>
@@ -782,15 +788,18 @@ export default function LivraisonsPage() {
                   const c = liv.commandes || {}
                   const ouverte = lignesOuvertes.has(liv.id)
                   return (
-                    <tr key={liv.id} className={i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
+                    // La ligne entière ouvre la fiche (19/11) ; le chevron, le
+                    // téléphone et les boutons gardent leur propre clic.
+                    <tr key={liv.id} onClick={() => ouvrirDetail(liv)}
+                      className={`${fondLigne(i)} hover:bg-[#EEE9DF]/40 transition-colors cursor-pointer`}>
                       {estLivreur ? (
                         <td className="px-5 py-4 align-top">
                           <span className="block text-sm font-bold text-[#1B2632]">{c.client_nom || '—'}</span>
                           {/* Le numéro est cliquable : sur un téléphone, c'est
                               un appel, pas un numéro à recopier. */}
                           {c.client_telephone && (
-                            <a href={`tel:${c.client_telephone}`}
-                               className="block mt-0.5 font-mono text-xs font-semibold text-[#A35139] hover:underline">
+                            <a href={`tel:${c.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
+                               className="block mt-0.5 font-mono text-xs font-semibold text-[#1B2632]/75 hover:text-[#A35139] hover:underline">
                               {c.client_telephone}
                             </a>
                           )}
@@ -802,7 +811,7 @@ export default function LivraisonsPage() {
                       )}
                       {!estLivreur && (
                         <td className="px-5 py-4 align-top text-sm text-[#1B2632]/75 whitespace-nowrap">
-                          {liv.created_at ? new Date(liv.created_at).toLocaleDateString('fr-CA') : '—'}
+                          {liv.created_at ? new Date(liv.created_at).toLocaleDateString('fr-FR') : '—'}
                         </td>
                       )}
                       <td className="px-5 py-4 align-top font-mono text-sm text-[#1B2632] whitespace-nowrap">
@@ -811,7 +820,7 @@ export default function LivraisonsPage() {
 
                       {/* Colonne dépliable : le détail tient sous la ligne, sans
                           ouvrir la fiche, quand on veut juste vérifier un produit. */}
-                      <td className="px-5 py-4 align-top">
+                      <td className="px-5 py-4 align-top" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => basculerLigne(liv.id)}
                           className="flex items-start gap-2 text-left cursor-pointer group"
@@ -836,7 +845,7 @@ export default function LivraisonsPage() {
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-[#1B2632]/50">Prix</span>
-                              <span className="font-mono font-bold text-[#1B2632]">{c.prix ?? '—'} {c.pays?.devise || ''}</span>
+                              <span className="font-bold text-[#1B2632]">{montantLisible(c.prix)} {c.pays?.devise || ''}</span>
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-[#1B2632]/50">Client</span>
@@ -845,7 +854,7 @@ export default function LivraisonsPage() {
                             <div className="flex justify-between gap-4">
                               <span className="text-[#1B2632]/50">Téléphone</span>
                               {c.client_telephone
-                                ? <a href={`tel:${c.client_telephone}`} className="font-mono font-semibold text-[#A35139] hover:underline">{c.client_telephone}</a>
+                                ? <a href={`tel:${c.client_telephone.replace(/\s/g, '')}`} className="font-mono font-semibold text-[#1B2632] hover:text-[#A35139] hover:underline">{c.client_telephone}</a>
                                 : <span className="text-[#1B2632]/40">—</span>}
                             </div>
                           </div>
@@ -861,7 +870,7 @@ export default function LivraisonsPage() {
                             </span>
                           </td>
                           <td className="px-5 py-4 align-top text-right whitespace-nowrap">
-                            <span className="font-mono text-sm font-bold text-[#1B2632]">{c.prix ?? '—'}</span>{' '}
+                            <span className="text-base font-bold text-[#1B2632]">{montantLisible(c.prix)}</span>{' '}
                             <span className="text-xs text-[#1B2632]/50">{c.pays?.devise || ''}</span>
                           </td>
                         </>
@@ -890,7 +899,7 @@ export default function LivraisonsPage() {
                         )}
                       </td>
 
-                      <td className="px-5 py-4 align-top text-center whitespace-nowrap">
+                      <td className={`px-5 py-4 align-top text-center whitespace-nowrap sticky right-0 ${fondLigne(i)}`} onClick={(e) => e.stopPropagation()}>
                         {/* L'action du livreur était cachée derrière l'œil : il
                             fallait deviner qu'une fiche s'ouvrait pour pouvoir
                             marquer une livraison. Elle est maintenant sur la
@@ -926,7 +935,15 @@ export default function LivraisonsPage() {
           <span className="text-sm text-[#1B2632]/70 font-medium">
             {total === 0 ? 'Aucune livraison' : `${premier} – ${dernier} sur ${total}`} · Page {page + 1} / {totalPages}
           </span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Combien de lignes par page : en bas, comme Commandes (19/11). */}
+            <label className="flex items-center gap-2 text-sm text-[#1B2632]/60 mr-1">
+              Par page
+              <select value={parPage} onChange={(e) => setParPage(Number(e.target.value))} title="Lignes par page"
+                className="px-2.5 py-1.5 bg-white border border-[#C9C1B1] rounded-lg text-sm font-bold text-[#1B2632] outline-none cursor-pointer">
+                {TAILLES_PAGE.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
             <button
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0 || chargement}
@@ -965,9 +982,10 @@ export default function LivraisonsPage() {
 
               <div className="px-8 pb-8 flex flex-col gap-5">
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                {/* Deux cartes (19/11) : la zone vit dans la carte Client. */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                   <CarteDetail titre="Livraison">
-                    {!estLivreur && <LigneDetail label="Lead ID" valeur={detail.commandes?.lead_id} mono />}
+                    {!estLivreur && <LigneDetail label="Lead ID" valeur={detail.commandes?.lead_id} mono nowrap />}
                     <LigneDetail label="N° de suivi" valeur={detail.commandes?.tracking_number} mono />
 {!estLivreur && (
                     <LigneDetail
@@ -975,7 +993,8 @@ export default function LivraisonsPage() {
                       valeur={detail.created_at ? new Date(detail.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
                     )}
-                    {!estSeller && <LigneDetail label="Livreur" valeur={detail.livreurs?.nom} />}
+                    {/* Le livreur, c'est lui : la ligne ne lui apprend rien. */}
+                    {!estSeller && !estLivreur && <LigneDetail label="Livreur" valeur={detail.livreurs?.nom} />}
                     {estResponsable && <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.commandes?.vendeur_id)} />}
                     <LigneDetail label="Statut" valeur={STATUTS[detail.statut]?.label || detail.statut} />
                     <LigneDetail label="Motif de retour" valeur={detail.motif_retour} />
@@ -988,8 +1007,8 @@ export default function LivraisonsPage() {
                         <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">Téléphone</span>
                         {/* Cliquable : le livreur appelle sans recopier le
                             numéro, et ne se trompe pas d'un chiffre. */}
-                        <a href={`tel:${detail.commandes.client_telephone}`}
-                          className="text-sm font-mono font-semibold text-[#A35139] hover:underline">
+                        <a href={`tel:${detail.commandes.client_telephone.replace(/\s/g, '')}`}
+                          className="text-sm font-mono font-semibold text-[#1B2632] hover:text-[#A35139] hover:underline">
                           {detail.commandes.client_telephone}
                         </a>
                       </div>
@@ -997,23 +1016,18 @@ export default function LivraisonsPage() {
                     <LigneDetail label="Adresse" valeur={detail.commandes?.adresse} />
                     <LigneDetail label="Pays" valeur={detail.commandes?.pays?.nom} />
                     <LigneDetail label="Ville / Zone" valeur={detail.commandes?.ville_zone} />
-                    {estLivreur && zoneDetail?.nom_zone && <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />}
+                    {/* La zone de livraison (19/11, l'ancienne carte « Zone de
+                        livraison ») : écrite seulement si elle dit autre chose
+                        que la ville ; sans zone, l'avertissement reste pour le bureau. */}
+                    {zoneDetail?.nom_zone
+                      ? (zoneDetail.nom_zone.trim().toLowerCase() !== (detail.commandes?.ville_zone || '').trim().toLowerCase()
+                          && <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />)
+                      : !estLivreur && (
+                        <p className="text-xs text-[#8a5a1f] bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-lg px-3 py-2.5 font-medium">
+                          Aucune zone pour « {detail.commandes?.ville_zone || 'non spécifiée'} ».
+                        </p>
+                      )}
                   </CarteDetail>
-
-                  {/* La zone de la commande (pour le bureau ; le livreur a la sienne dans
-                      la carte Client). Plus de frais de livraison ni de retour (04/11,
-                      livreurs salariés). */}
-                  {!estLivreur && (
-                  <CarteDetail titre="Zone de livraison">
-                    {zoneDetail ? (
-                      <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />
-                    ) : (
-                      <p className="text-xs text-[#8a5a1f] bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-lg px-3 py-2.5 font-medium">
-                        Aucune zone pour « {detail.commandes?.ville_zone || 'non spécifiée'} ».
-                      </p>
-                    )}
-                  </CarteDetail>
-                  )}
                 </div>
 
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
@@ -1041,8 +1055,8 @@ export default function LivraisonsPage() {
                           </span>
                         </td>
                         <td className="px-5 py-3 text-right font-mono">{detail.commandes?.quantite ?? 1}</td>
-                        <td className="px-5 py-3 text-right font-mono font-bold">
-                          {detail.commandes?.prix ?? '—'}{' '}
+                        <td className="px-5 py-3 text-right font-bold whitespace-nowrap">
+                          {montantLisible(detail.commandes?.prix)}{' '}
                           <span className="text-xs font-normal text-[#1B2632]/50">{detail.commandes?.pays?.devise || ''}</span>
                         </td>
                       </tr>
@@ -1064,6 +1078,7 @@ export default function LivraisonsPage() {
                             <label className="lv-label">Résultat</label>
                             <select className="lv-input" value={statutChoisi}
                               onChange={(e) => setStatutChoisi(e.target.value)}>
+                              <option value="" disabled>Choisir le résultat…</option>
                               {/* On ne propose pas le statut actuel : « Expédiée »
                                   sur une livraison déjà expédiée ne veut rien dire.
                                   « Livré » seulement après « Expédiée » (sa décision
@@ -1095,7 +1110,8 @@ export default function LivraisonsPage() {
 
                         <button
                           onClick={envoyerConfirmation}
-                          disabled={envoiEnCours}
+                          disabled={envoiEnCours || !statutChoisi}
+                          title={!statutChoisi ? "Choisissez d'abord le résultat" : undefined}
                           className="self-start px-8 py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors cursor-pointer"
                         >
                           {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
@@ -1128,12 +1144,12 @@ function CarteDetail({ titre, children }) {
 
 // Une ligne vide est affichée en « — » plutôt que masquée : savoir qu'une
 // adresse manque vaut mieux que ne pas voir la ligne du tout.
-function LigneDetail({ label, valeur, mono }) {
+function LigneDetail({ label, valeur, mono, nowrap }) {
   const vide = valeur === null || valeur === undefined || valeur === ''
   return (
     <div className="flex items-baseline gap-2">
       <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">{label}</span>
-      <span className={`text-sm text-[#1B2632] ${mono ? 'font-mono font-semibold' : 'font-medium'} ${vide ? 'opacity-40' : ''}`}>
+      <span className={`text-sm text-[#1B2632] ${mono ? 'font-mono font-semibold' : 'font-medium'} ${nowrap ? 'whitespace-nowrap' : ''} ${vide ? 'opacity-40' : ''}`}>
         {vide ? '—' : valeur}
       </span>
     </div>
