@@ -1450,12 +1450,12 @@ export default function ProduitsPage() {
       {modaleOuverte && (
         <>
           <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setModaleOuverte(false)} />
-          <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center">
+          <div className="fixed inset-0 z-50 overflow-y-auto p-2 sm:p-4 flex items-start justify-center">
             <form
               onSubmit={enregistrer}
-              className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-8 pop-in"
+              className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-2 sm:my-8 pop-in"
             >
-              <div className="flex items-center gap-3 px-8 pt-7 pb-6">
+              <div className="flex items-center gap-3 px-5 sm:px-8 pt-6 sm:pt-7 pb-5 sm:pb-6">
                 <button
                   type="button" onClick={() => setModaleOuverte(false)} title="Retour"
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0"
@@ -1467,7 +1467,11 @@ export default function ProduitsPage() {
                 </h2>
               </div>
 
-              <div className="px-8 pb-2 grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6">
+              {/* items-start (19/11) : chaque champ garde sa hauteur. Étirés à la
+                  hauteur du voisin, le lien (à côté de l'image) et le code
+                  variante (à côté du code et de son aide) devenaient de grandes
+                  boîtes vides. */}
+              <div className="px-5 sm:px-8 pb-6 grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-6 items-start">
 
                 <Champ label="Nom" requis>
                   <input className="ch-input" value={formulaire.product} required
@@ -1505,7 +1509,7 @@ export default function ProduitsPage() {
                     const apercu = imageChoisie?.apercu || (!imageRetiree && urlImage(imageActuelle)) || null
                     return (
                       <div className="flex items-center gap-4 py-2">
-                        <label className="w-[110px] h-[110px] shrink-0 rounded-lg border-2 border-dashed border-[#C9C1B1] hover:border-[#FFB162] bg-[#faf9f7] flex items-center justify-center cursor-pointer overflow-hidden transition-colors">
+                        <label className="w-[88px] h-[88px] shrink-0 rounded-lg border-2 border-dashed border-[#C9C1B1] hover:border-[#FFB162] bg-[#faf9f7] flex items-center justify-center cursor-pointer overflow-hidden transition-colors">
                           {apercu
                             ? <img src={apercu} alt="" className="w-full h-full object-cover" />
                             : <span className="text-xs text-[#1B2632]/40 text-center px-2">Choisir une image</span>}
@@ -1698,9 +1702,15 @@ export default function ProduitsPage() {
                 })()}
               </div>
 
-              <div className="px-8 py-8 flex justify-center">
+              {/* Le pied reste collé en bas de l'écran pendant qu'on remplit
+                  (19/11) : « Enregistrer » était coupé sous le formulaire. */}
+              <div className="sticky bottom-0 z-10 px-5 sm:px-8 py-4 flex justify-end gap-3 bg-white border-t border-[#C9C1B1]/60 rounded-b-2xl">
+                <button type="button" onClick={() => setModaleOuverte(false)}
+                  className="px-6 py-3 rounded-xl text-sm font-semibold border border-[#C9C1B1] text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors">
+                  Annuler
+                </button>
                 <button type="submit" disabled={enregistrement}
-                  className="px-20 py-3.5 rounded-xl text-base font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors disabled:opacity-50 shadow-sm">
+                  className="flex-1 sm:flex-none px-12 py-3 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors disabled:opacity-50 shadow-sm">
                   {enregistrement ? 'Enregistrement...' : 'Enregistrer'}
                 </button>
               </div>
