@@ -718,15 +718,15 @@ export default function LivraisonsPage() {
       {/* Tableau */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
 
-        <div className="flex flex-wrap items-center gap-3 px-5 sm:px-6 py-5">
+        <div className="flex flex-nowrap sm:flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-6 py-4 sm:py-5">
           {/* Les trois vues restent à portée de clic : le livreur ouvre la page
               pour faire ses livraisons, pas pour composer un filtre. */}
-          <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60">
+          <div className="flex flex-1 sm:flex-none gap-1 sm:gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 min-w-0">
             {VUES.map((v) => (
               <button
                 key={v.cle}
                 onClick={() => { setVue(v.cle); setLignesOuvertes(new Set()) }}
-                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+                className={`flex-1 sm:flex-none px-2.5 sm:px-4 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                   vue === v.cle ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'
                 }`}
               >
@@ -738,12 +738,13 @@ export default function LivraisonsPage() {
           <button
             onClick={exporterExcel}
             disabled={exportEnCours || total === 0}
-            className="ml-auto flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#A35139] text-white text-sm font-bold hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer"
+            title="Exporter Excel"
+            className="sm:ml-auto flex items-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl bg-[#A35139] text-white text-sm font-bold hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer shrink-0"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
             </svg>
-            {exportEnCours ? 'Export…' : 'Exporter Excel'}
+            <span className="hidden sm:inline">{exportEnCours ? 'Export…' : 'Exporter Excel'}</span>
           </button>
         </div>
 
@@ -753,7 +754,72 @@ export default function LivraisonsPage() {
           </div>
         )}
 
-        <div className="overflow-auto min-h-[400px] max-h-[72vh]">
+        {/* Téléphone (19/11) : une carte par livraison au lieu du tableau de
+            7 colonnes qu'il fallait faire défiler de côté devant la porte du
+            client. Qui, où, combien encaisser, le statut, et « Traiter » en
+            grand. L'ordinateur garde le tableau (md et plus). */}
+        <div className="md:hidden flex flex-col divide-y divide-[#C9C1B1]/40 border-t border-[#C9C1B1]/40">
+          {chargement ? (
+            <p className="px-5 py-12 text-center text-[#1B2632]/60">Chargement...</p>
+          ) : livraisons.length === 0 ? (
+            <p className="px-5 py-12 text-center text-[#1B2632]/60">Aucune livraison avec ces critères.</p>
+          ) : livraisons.map((liv, i) => {
+            const c = liv.commandes || {}
+            const aTraiter = peutTraiter && STATUTS_EN_COURS.includes(liv.statut)
+            return (
+              <div key={liv.id} onClick={() => ouvrirDetail(liv)} className={`${fondLigne(i)} px-4 py-4 flex flex-col gap-2.5 cursor-pointer`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-base font-bold text-[#1B2632] truncate">{c.client_nom || '—'}</p>
+                    <p className="text-sm text-[#1B2632]/70">
+                      {c.adresse || <span className="text-[#1B2632]/40">Adresse non renseignée</span>}
+                      {(c.zones?.nom_zone || c.ville_zone) && <span className="text-[#1B2632]/50"> · {c.zones?.nom_zone || c.ville_zone}</span>}
+                    </p>
+                  </div>
+                  <PillStatut statut={liv.statut} />
+                </div>
+
+                {/* Le téléphone reste un lien d'appel pour le livreur (sa décision 17/11). */}
+                {c.client_telephone && (estLivreur ? (
+                  <a href={`tel:${c.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
+                    className="font-mono text-sm font-semibold text-[#1B2632] underline decoration-dotted underline-offset-2 w-fit">
+                    {c.client_telephone}
+                  </a>
+                ) : (
+                  <p className="font-mono text-sm font-semibold text-[#1B2632]/75">{c.client_telephone}</p>
+                ))}
+
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-sm text-[#1B2632]/75 truncate">
+                    {c.produit || '—'} <span className="text-[#1B2632]/50">× {c.quantite ?? 1}</span>
+                  </span>
+                  <span className="whitespace-nowrap">
+                    <span className="text-lg font-bold text-[#1B2632]">{montantLisible(c.prix)}</span>
+                    <span className="text-xs text-[#1B2632]/50"> {c.pays?.devise || ''}</span>
+                  </span>
+                </div>
+
+                {!estLivreur && (
+                  <p className="text-xs text-[#1B2632]/50">
+                    {c.tracking_number || '—'}{estResponsable && liv.livreurs?.nom ? ` · ${liv.livreurs.nom}` : ''}
+                  </p>
+                )}
+                {liv.statut === 'retour' && liv.motif_retour && (
+                  <p className="text-xs text-[#A35139]">Motif : {liv.motif_retour}</p>
+                )}
+
+                {aTraiter && (
+                  <button onClick={(e) => { e.stopPropagation(); ouvrirDetail(liv) }}
+                    className="w-full py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white active:bg-[#2C3B4D]">
+                    Traiter
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="hidden md:block overflow-auto min-h-[400px] max-h-[72vh]">
           <table className="w-full min-w-[900px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-bold shadow-[0_1px_0_#C9C1B1]">
@@ -791,7 +857,7 @@ export default function LivraisonsPage() {
                     // La ligne entière ouvre la fiche (19/11) ; le chevron, le
                     // téléphone et les boutons gardent leur propre clic.
                     <tr key={liv.id} onClick={() => ouvrirDetail(liv)}
-                      className={`${fondLigne(i)} hover:bg-[#EEE9DF]/40 transition-colors cursor-pointer`}>
+                      className={`${fondLigne(i)} hover:bg-[#F3EFE7] transition-colors cursor-pointer`}>
                       {estLivreur ? (
                         <td className="px-5 py-4 align-top">
                           <span className="block text-sm font-bold text-[#1B2632]">{c.client_nom || '—'}</span>
@@ -799,7 +865,7 @@ export default function LivraisonsPage() {
                               un appel, pas un numéro à recopier. */}
                           {c.client_telephone && (
                             <a href={`tel:${c.client_telephone.replace(/\s/g, '')}`} onClick={(e) => e.stopPropagation()}
-                               className="block mt-0.5 font-mono text-xs font-semibold text-[#1B2632]/75 hover:text-[#A35139] hover:underline">
+                               className="block mt-0.5 font-mono text-xs font-semibold text-[#1B2632]/75 whitespace-nowrap hover:text-[#A35139] hover:underline">
                               {c.client_telephone}
                             </a>
                           )}
@@ -847,16 +913,20 @@ export default function LivraisonsPage() {
                               <span className="text-[#1B2632]/50">Prix</span>
                               <span className="font-bold text-[#1B2632]">{montantLisible(c.prix)} {c.pays?.devise || ''}</span>
                             </div>
-                            <div className="flex justify-between gap-4">
-                              <span className="text-[#1B2632]/50">Client</span>
-                              <span className="font-semibold text-[#1B2632] text-right">{c.client_nom || '—'}</span>
-                            </div>
-                            <div className="flex justify-between gap-4">
-                              <span className="text-[#1B2632]/50">Téléphone</span>
-                              {c.client_telephone
-                                ? <a href={`tel:${c.client_telephone.replace(/\s/g, '')}`} className="font-mono font-semibold text-[#1B2632] hover:text-[#A35139] hover:underline">{c.client_telephone}</a>
-                                : <span className="text-[#1B2632]/40">—</span>}
-                            </div>
+                            {/* Le client : pour le bureau seulement — le tableau du
+                                livreur l'a déjà en première colonne (19/11). */}
+                            {!estLivreur && (
+                              <>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-[#1B2632]/50">Client</span>
+                                  <span className="font-semibold text-[#1B2632] text-right">{c.client_nom || '—'}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-[#1B2632]/50">Téléphone</span>
+                                  <span className="font-mono font-semibold text-[#1B2632] whitespace-nowrap">{c.client_telephone || '—'}</span>
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
                       </td>
@@ -899,7 +969,7 @@ export default function LivraisonsPage() {
                         )}
                       </td>
 
-                      <td className={`px-5 py-4 align-top text-center whitespace-nowrap sticky right-0 ${fondLigne(i)}`} onClick={(e) => e.stopPropagation()}>
+                      <td className="px-5 py-4 align-top text-center whitespace-nowrap sticky right-0 bg-inherit" onClick={(e) => e.stopPropagation()}>
                         {/* L'action du livreur était cachée derrière l'œil : il
                             fallait deviner qu'une fiche s'ouvrait pour pouvoir
                             marquer une livraison. Elle est maintenant sur la
@@ -966,21 +1036,21 @@ export default function LivraisonsPage() {
       {detail && (
         <>
           <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-[2px] z-40" onClick={() => setDetail(null)} />
-          <div className="fixed inset-0 z-50 overflow-y-auto p-4 flex items-start justify-center">
-            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-8 pop-in-lv">
+          <div className="fixed inset-0 z-50 overflow-y-auto p-2 sm:p-4 flex items-start justify-center">
+            <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-2 sm:my-8 pop-in-lv">
 
-              <div className="flex items-center gap-3 px-8 pt-7 pb-6">
+              <div className="flex items-center gap-3 px-5 sm:px-8 pt-6 sm:pt-7 pb-5 sm:pb-6">
                 <button
                   onClick={() => setDetail(null)} title="Retour"
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0 cursor-pointer"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <h2 className="text-2xl font-bold text-[#A35139]">Détail de la livraison</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-[#A35139]">Détail de la livraison</h2>
                 <div className="ml-auto"><PillStatut statut={detail.statut} /></div>
               </div>
 
-              <div className="px-8 pb-8 flex flex-col gap-5">
+              <div className="px-5 sm:px-8 pb-6 sm:pb-8 flex flex-col gap-5">
 
                 {/* Deux cartes (19/11) : la zone vit dans la carte Client. */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -1112,7 +1182,7 @@ export default function LivraisonsPage() {
                           onClick={envoyerConfirmation}
                           disabled={envoiEnCours || !statutChoisi}
                           title={!statutChoisi ? "Choisissez d'abord le résultat" : undefined}
-                          className="self-start px-8 py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors cursor-pointer"
+                          className="w-full sm:w-auto sm:self-start px-8 py-3.5 sm:py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors cursor-pointer"
                         >
                           {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
                         </button>
