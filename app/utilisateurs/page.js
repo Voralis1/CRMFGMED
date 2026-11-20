@@ -34,6 +34,7 @@ export default function UtilisateursPage() {
   // États pour la création
   const [email, setEmail] = useState('')
   const [motDePasse, setMotDePasse] = useState('')
+  const [voirMotDePasse, setVoirMotDePasse] = useState(false)
   const [nom, setNom] = useState('')
   const [telephone, setTelephone] = useState('')
   const [roleUtilisateur, setRoleUtilisateur] = useState('agent')
@@ -288,17 +289,11 @@ export default function UtilisateursPage() {
       
       {/* En-tête */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-            Administration
-          </p>
-          <h1 className="text-3xl font-bold text-[#1B2632]">
-            Gestion des utilisateurs
-          </h1>
-        </div>
+        {/* En-tête compact (20/11). */}
+        <h1 className="text-2xl font-bold text-[#1B2632]">Utilisateurs</h1>
 
         {/* Système d'onglets */}
-        <div className="flex flex-wrap gap-2 sm:gap-3 mt-2">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             onClick={() => setOngletActif('agents')}
             className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
@@ -323,14 +318,14 @@ export default function UtilisateursPage() {
           >
             Équipe ({equipe.length})
           </button>
-          {peutGerer && <button
-            onClick={() => setOngletActif('creation')}
-            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
-              ongletActif === 'creation' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
-            }`}
-          >
-            + Créer un utilisateur
-          </button>}
+          {/* « Créer » sur la ligne des onglets, poussé à droite (20/11) : même
+              niveau, mais un bouton plein foncé — c'est une action, pas une liste. */}
+          {peutGerer && (
+            <button onClick={() => setOngletActif('creation')}
+              className="sm:ml-auto px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm cursor-pointer transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D]">
+              + Créer un utilisateur
+            </button>
+          )}
         </div>
       </header>
 
@@ -480,7 +475,7 @@ export default function UtilisateursPage() {
                   <tr><td colSpan="3" className="px-4 py-8 text-center text-[#1B2632]/50">Personne pour l'instant.</td></tr>
                 ) : equipe.map((u) => (
                   <tr key={u.user_id} className="hover:bg-[#EEE9DF]/20">
-                    <td className="px-4 py-3 font-semibold text-[#1B2632]">{u.nom || '—'}</td>
+                    <td className="px-4 py-3 font-semibold text-[#1B2632]">{u.nom || <span className="font-normal italic text-[#1B2632]/40">sans nom</span>}</td>
                     <td className="px-4 py-3 font-mono text-xs text-[#1B2632]/70">{u.email || '—'}</td>
                     <td className="px-4 py-3">
                       <span className="text-[11px] font-bold uppercase tracking-wide bg-[#EEE9DF] text-[#1B2632] px-2.5 py-1 rounded-full">
@@ -499,7 +494,7 @@ export default function UtilisateursPage() {
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-8">
           <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
             <h2 className="text-xl font-bold text-[#1B2632]">Créer un nouvel utilisateur</h2>
-            <p className="text-sm text-[#1B2632]/60 mt-1">Ajoutez un agent, un livreur au système.</p>
+            <p className="text-sm text-[#1B2632]/60 mt-1">Ajoutez un membre de l&apos;équipe.</p>
           </div>
 
           <form onSubmit={creerUtilisateur} className="flex flex-col gap-6">
@@ -517,15 +512,33 @@ export default function UtilisateursPage() {
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Mot de passe</label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  value={motDePasse}
-                  onChange={(e) => setMotDePasse(e.target.value)}
-                  className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162]"
-                  required
-                  minLength={6}
-                />
+                {/* 8 caractères au moins (20/11) : la règle de Supabase Auth depuis le
+                    17/11. À 6, le serveur refusait après coup. L'œil évite une faute
+                    de frappe sur un mot de passe qu'on ne voit pas. */}
+                <div className="relative">
+                  <input
+                    type={voirMotDePasse ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={motDePasse}
+                    onChange={(e) => setMotDePasse(e.target.value)}
+                    className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 pr-12 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162]"
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                  />
+                  <button type="button" onClick={() => setVoirMotDePasse((v) => !v)}
+                    title={voirMotDePasse ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#1B2632]/50 hover:text-[#1B2632] cursor-pointer">
+                    {voirMotDePasse ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                    )}
+                  </button>
+                </div>
+                <p className={`text-[11px] mt-1.5 ${motDePasse && motDePasse.length < 8 ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/45'}`}>
+                  8 caractères minimum{motDePasse ? ` · ${motDePasse.length} tapé${motDePasse.length > 1 ? 's' : ''}` : ''}
+                </p>
               </div>
               <div>
                 <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Nom complet</label>
