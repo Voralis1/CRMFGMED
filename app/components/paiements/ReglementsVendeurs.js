@@ -6,6 +6,8 @@ import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
 import { LIBELLES_RELEVE } from '../../../lib/libellesStatuts.mjs'
+// La période du relevé : le calendrier français des autres pages (20/11).
+import PlageDates from '../PlageDates'
 
 // Le relevé de paiement du vendeur. À ne pas confondre avec « Paiements »,
 // qui suit l'argent encaissé par le livreur chez le client : ici c'est ce que
@@ -213,21 +215,6 @@ export default function ReglementsVendeurs() {
     return [...m.values()].sort((a, b) => b.total - a.total)
   }, [lignes])
 
-  // Les totaux ne sont pas additionnés entre devises : un total qui mélange
-  // dirhams et dollars ne veut rien dire.
-  const totaux = useMemo(() => {
-    // Deux totaux (20/11) : ce qui reste à payer et ce qui l'est déjà ; un
-    // relevé annulé ne compte nulle part. Avant, un seul total les mélangeait.
-    const aPayer = {}, paye = {}
-    let nbAPayer = 0, nbPaye = 0, commandes = 0
-    for (const x of affiches) {
-      const d = x.devise || '—'
-      if (x.statut === 'en_attente') { aPayer[d] = (aPayer[d] || 0) + Number(x.net_a_payer || 0); nbAPayer++ }
-      else if (x.statut === 'paye') { paye[d] = (paye[d] || 0) + Number(x.net_a_payer || 0); nbPaye++ }
-      commandes += x.nb_commandes || 0
-    }
-    return { aPayer, paye, nbAPayer, nbPaye, commandes, nb: affiches.length }
-  }, [affiches])
 
   function annonce(texte, type) {
     setMessage({ texte, type })
@@ -478,6 +465,7 @@ export default function ReglementsVendeurs() {
         .pop-in { animation: popIn .18s ease-out; }
         .rg-input { width:100%; border:1px solid #C9C1B1; border-radius:10px; padding:9px 11px; font-size:14px; outline:none; background:#fff; color:#1B2632; }
         .rg-input:focus { border-color:#1B2632; box-shadow:0 0 0 2px rgba(27,38,50,.05); }
+        .cm-input { width:100%; border:1px solid #C9C1B1; border-radius:10px; padding:9px 11px; font-size:14px; outline:none; background:#fff; color:#1B2632; }
         .rg-label { display:block; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(27,38,50,.55); margin-bottom:6px; }
         @media print {
           body * { visibility: hidden; }
@@ -514,11 +502,29 @@ export default function ReglementsVendeurs() {
             </select>
           )}
 
-          {peutGerer && (
-            <button onClick={ouvrirCreation}
-              className="sm:ml-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors shadow-sm">
-              <span className="text-lg leading-none">+</span> Établir un relevé
-            </button>
+          {/* Ce qui attend un relevé se lit sur le bouton qui le règle (20/11) :
+              un compteur et une ligne courte, au lieu d'un bandeau au milieu. */}
+          {peutGerer ? (
+            <div className="sm:ml-auto flex items-center gap-3">
+              {enAttenteDeReglement > 0 && (
+                <span className="text-xs font-semibold text-[#8a5a1f] text-right leading-tight">
+                  {enAttenteDeReglement} commande{enAttenteDeReglement > 1 ? 's' : ''} livrée{enAttenteDeReglement > 1 ? 's' : ''}<br />à régler
+                </span>
+              )}
+              <button onClick={ouvrirCreation}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors shadow-sm">
+                <span className="text-lg leading-none">+</span> Établir un relevé
+                {enAttenteDeReglement > 0 && (
+                  <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[#FFB162] text-[#1B2632] text-xs font-bold flex items-center justify-center">
+                    {enAttenteDeReglement}
+                  </span>
+                )}
+              </button>
+            </div>
+          ) : enAttenteDeReglement > 0 && (
+            <span className="sm:ml-auto text-xs font-semibold text-[#8a5a1f]">
+              {enAttenteDeReglement} commande{enAttenteDeReglement > 1 ? 's' : ''} livrée{enAttenteDeReglement > 1 ? 's' : ''} pas encore réglée{enAttenteDeReglement > 1 ? 's' : ''}
+            </span>
           )}
         </div>
       </header>
@@ -540,45 +546,11 @@ export default function ReglementsVendeurs() {
         </div>
       )}
 
-      {enAttenteDeReglement > 0 && (
-        <div className="px-5 py-4 rounded-xl bg-[#FFB162]/15 border border-[#FFB162]/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sans-impression">
-          <span className="text-sm font-semibold text-[#8a5a1f]">
-            {enAttenteDeReglement} commande{enAttenteDeReglement > 1 ? 's' : ''} livrée{enAttenteDeReglement > 1 ? 's' : ''}
-            {' '}n&apos;{enAttenteDeReglement > 1 ? 'ont' : 'a'} pas encore été réglée{enAttenteDeReglement > 1 ? 's' : ''} à son vendeur.
-          </span>
-          {peutGerer && (
-            <button onClick={ouvrirCreation}
-              className="px-5 py-2 rounded-lg text-xs font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors whitespace-nowrap">
-              Établir un relevé
-            </button>
-          )}
-        </div>
-      )}
+      {/* Le bandeau « N commandes livrées pas encore réglées » est monté sur le
+          bouton « Établir un relevé » (20/11). */}
 
-      {/* Le bandeau de totaux de ShipLead, mais une ligne par devise. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sans-impression">
-        <div className="bg-[#FFB162]/12 border border-[#FFB162]/50 rounded-xl px-5 py-4">
-          <p className="text-xs font-bold uppercase tracking-widest text-[#8a5a1f]">
-            À payer · {totaux.nbAPayer} relevé{totaux.nbAPayer > 1 ? 's' : ''}
-          </p>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-1">
-            {Object.entries(totaux.aPayer).length === 0
-              ? <span className="text-lg font-bold text-[#1B2632]/40">0</span>
-              : Object.entries(totaux.aPayer).map(([d, m]) => <span key={d} className="text-lg"><Montant valeur={m} devise={d} /></span>)}
-          </div>
-        </div>
-        <div className="bg-white border border-[#C9C1B1] rounded-xl px-5 py-4">
-          <p className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">
-            Déjà payé · {totaux.nbPaye} relevé{totaux.nbPaye > 1 ? 's' : ''} · {totaux.commandes} commande{totaux.commandes > 1 ? 's' : ''} en tout
-          </p>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-1">
-            {Object.entries(totaux.paye).length === 0
-              ? <span className="text-lg font-bold text-[#1B2632]/40">0</span>
-              : Object.entries(totaux.paye).map(([d, m]) => <span key={d} className="text-lg"><Montant valeur={m} devise={d} /></span>)}
-          </div>
-        </div>
-      </div>
-
+      {/* Les totaux « À payer / Déjà payé » : retirés (sa décision 20/11) —
+          le statut de chaque ligne suffit. */}
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden sans-impression">
         <div className="overflow-auto">
           <table className="w-full min-w-[820px] text-left border-collapse">
@@ -838,9 +810,13 @@ export default function ReglementsVendeurs() {
                       <span className="text-right"><Montant valeur={fiche.net_a_payer} devise={fiche.devise} grand /></span>
                     </div>
                     {fiche.taux_mad != null && (
-                      <div className="flex justify-between items-baseline px-4">
-                        <span className="text-sm text-[#1B2632]/60">Équivalent MAD <span className="text-xs">(taux {Number(fiche.taux_mad).toLocaleString('fr-FR', { maximumFractionDigits: 6 })} MAD pour 1 {fiche.devise || ''})</span></span>
-                        <span className="text-sm font-mono font-semibold text-[#1B2632]">{sou(Number(fiche.net_a_payer || 0) * Number(fiche.taux_mad))} <span className="text-xs text-[#1B2632]/40">MAD</span></span>
+                      // Une ligne (20/11) : le montant d'abord, le taux en petit.
+                      <div className="flex justify-between items-baseline gap-3 px-4">
+                        <span className="text-sm text-[#1B2632]/60 whitespace-nowrap">Équivalent MAD</span>
+                        <span className="text-right">
+                          <span className="text-base font-mono font-bold text-[#1B2632] whitespace-nowrap">≈ {sou(Number(fiche.net_a_payer || 0) * Number(fiche.taux_mad))} MAD</span>
+                          <span className="block text-[11px] text-[#1B2632]/45">taux {Number(fiche.taux_mad).toLocaleString('fr-FR', { maximumFractionDigits: 6 })} MAD pour 1 {fiche.devise || ''}</span>
+                        </span>
                       </div>
                     )}
                     {/* L'équivalent MAD est pour information (sa décision 11/11) : il ne
@@ -883,7 +859,7 @@ export default function ReglementsVendeurs() {
                     </button>
                     {peutPayer && (
                       <button onClick={() => marquerPaye(fiche)}
-                        className="px-6 py-2.5 rounded-xl text-sm font-bold bg-green-600 text-white hover:bg-green-700 transition-colors">
+                        className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#2E7D53] text-white hover:bg-[#256946] transition-colors">
                         Marquer payé
                       </button>
                     )}
@@ -925,15 +901,12 @@ export default function ReglementsVendeurs() {
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="rg-label">Du (facultatif)</label>
-                    <input type="date" className="rg-input" value={brouillon.debut}
-                      onChange={(e) => { setBrouillon({ ...brouillon, debut: e.target.value }); setCandidates([]) }} />
-                  </div>
-                  <div>
-                    <label className="rg-label">Au (facultatif)</label>
-                    <input type="date" className="rg-input" value={brouillon.fin}
-                      onChange={(e) => { setBrouillon({ ...brouillon, fin: e.target.value }); setCandidates([]) }} />
+                  {/* Une seule case « du → au » en français (20/11), au lieu de deux
+                      champs mm/dd/yyyy. Mêmes valeurs AAAA-MM-JJ qu'avant. */}
+                  <div className="sm:col-span-2">
+                    <label className="rg-label">Période (facultatif)</label>
+                    <PlageDates etiquette="releve" du={brouillon.debut} au={brouillon.fin} placeholder="Toutes les commandes livrées"
+                      onChange={(du, au) => { setBrouillon({ ...brouillon, debut: du, fin: au }); setCandidates([]) }} />
                   </div>
                 </div>
 
