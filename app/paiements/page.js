@@ -62,8 +62,12 @@ export default function PaiementsPage() {
     <>
       {/* Un seul onglet disponible : on n'affiche pas une barre d'onglets
           pour un seul choix, elle ne ferait qu'occuper de la place. */}
+      {/* Un seul en-tête pour toute la page (20/11) : le titre, puis les
+          onglets. Avant, les onglets venaient avant deux titres différents
+          (« Paiements vendeurs », « Gestion des Paiements »). */}
+      <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 pt-4 sm:pt-2 flex flex-col gap-3 sans-impression">
+        <h1 className="text-2xl font-bold text-[#1B2632]">Paiements</h1>
       {vues.length > 1 && (
-        <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 pt-4 sm:pt-16 sans-impression">
           <div className="flex flex-wrap gap-2">
             {vues.map((v) => (
               <button
@@ -79,8 +83,8 @@ export default function PaiementsPage() {
               </button>
             ))}
           </div>
-        </div>
       )}
+      </div>
 
       {onglet === 'vendeurs' ? <ReglementsVendeurs /> : <CaisseLivreurs />}
     </>

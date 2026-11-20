@@ -213,20 +213,11 @@ export default function CaisseLivreurs() {
   const peutValiderRemise = hasPermission('valider_remise')
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 px-4 sm:px-6">
       
       {/* En-tête de la page */}
-      <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
-        <div className="flex justify-between items-center">
-          <div>
-            <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-              Centre Financier • {nomUtilisateur}
-            </p>
-            <h1 className="text-3xl font-bold text-[#1B2632]">Gestion des Paiements</h1>
-          </div>
-        </div>
-      </header>
-
+      {/* Plus d'en-tête ici (20/11) : le titre « Paiements » est celui de la
+          page ; l'e-mail du compte n'est plus affiché. */}
       <div className="flex flex-col gap-8">
         
         {/* Section 1 : Paiements à encaisser */}
@@ -339,6 +330,8 @@ export default function CaisseLivreurs() {
                         </td>
                         <td className="p-3 text-center text-[#1B2632]/60">{c.nb_paiements || '—'}</td>
                         <td className="p-3 text-right">
+                          {/* Rien à remettre (0) : pas de bouton (20/11), il semblait cliquable. */}
+                          {c.devise !== '—' && c.total > 0 && (
                           <button
                             onClick={() => remettreEnCaisse(c.id, c.devise)}
                             disabled={envoiEnCoursId === cleBouton || !peutValiderRemise || c.devise === '—' || c.total <= 0}
@@ -346,6 +339,7 @@ export default function CaisseLivreurs() {
                           >
                             {envoiEnCoursId === cleBouton ? '...' : 'Confirmer remise'}
                           </button>
+                          )}
                         </td>
                       </tr>
                     )

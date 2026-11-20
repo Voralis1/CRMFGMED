@@ -37,11 +37,30 @@ const AJUST_VIDE = { type: 'penalite', montant: '', sens: '', note: '' }
 // 174 000 au lieu de 58 000, REG-000003, 03/11).
 const montantLigne = (c) => Number(c.montant_encaisse ?? c.prix ?? 0)
 
+// Badge compact (20/11) : la couleur au point, le texte foncé.
+const POINT_STATUT = { en_attente: '#FFB162', paye: '#2E7D53', annule: '#A35139' }
 function Statut({ valeur }) {
-  const s = STATUTS[valeur] || { label: valeur || '—', classe: 'border-[#C9C1B1] text-[#1B2632]/60 bg-white' }
+  const s = STATUTS[valeur] || { label: valeur || '—' }
+  const couleur = POINT_STATUT[valeur] || '#C9C1B1'
   return (
-    <span className={`inline-block px-4 py-1.5 rounded-full border text-xs font-semibold whitespace-nowrap ${s.classe}`}>
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] whitespace-nowrap"
+      style={{ backgroundColor: `${couleur}22`, borderColor: `${couleur}66` }}>
+      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: couleur }} />
       {s.label}
+    </span>
+  )
+}
+
+// Un montant négatif : le vendeur doit de l'argent (ses frais dépassent ses
+// ventes). Écrit en rouge avec « dû par le vendeur » (20/11) — avant, rien ne
+// le distinguait d'un montant à lui payer.
+function Montant({ valeur, devise, grand }) {
+  const n = Number(valeur || 0)
+  return (
+    <span className={`whitespace-nowrap ${n < 0 ? 'text-[#A35139]' : 'text-[#1B2632]'}`}>
+      <span className={`font-mono font-bold ${grand ? 'text-xl' : ''}`}>{sou(valeur)}</span>{' '}
+      <span className="text-xs font-sans font-normal opacity-60">{devise || ''}</span>
+      {n < 0 && <span className="block text-[11px] font-sans font-semibold">dû par le vendeur</span>}
     </span>
   )
 }
@@ -197,14 +216,17 @@ export default function ReglementsVendeurs() {
   // Les totaux ne sont pas additionnés entre devises : un total qui mélange
   // dirhams et dollars ne veut rien dire.
   const totaux = useMemo(() => {
-    const parDevise = {}
-    let commandes = 0
+    // Deux totaux (20/11) : ce qui reste à payer et ce qui l'est déjà ; un
+    // relevé annulé ne compte nulle part. Avant, un seul total les mélangeait.
+    const aPayer = {}, paye = {}
+    let nbAPayer = 0, nbPaye = 0, commandes = 0
     for (const x of affiches) {
       const d = x.devise || '—'
-      parDevise[d] = (parDevise[d] || 0) + Number(x.net_a_payer || 0)
+      if (x.statut === 'en_attente') { aPayer[d] = (aPayer[d] || 0) + Number(x.net_a_payer || 0); nbAPayer++ }
+      else if (x.statut === 'paye') { paye[d] = (paye[d] || 0) + Number(x.net_a_payer || 0); nbPaye++ }
       commandes += x.nb_commandes || 0
     }
-    return { parDevise, commandes, nb: affiches.length }
+    return { aPayer, paye, nbAPayer, nbPaye, commandes, nb: affiches.length }
   }, [affiches])
 
   function annonce(texte, type) {
@@ -450,7 +472,7 @@ export default function ReglementsVendeurs() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 px-4 sm:px-6 pb-10">
       <style>{`
         @keyframes popIn { from { opacity:0; transform:translateY(-6px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
         .pop-in { animation: popIn .18s ease-out; }
@@ -466,11 +488,6 @@ export default function ReglementsVendeurs() {
       `}</style>
 
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 sans-impression">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">Finance</p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-[#1B2632]">Paiements vendeurs</h1>
-        </div>
-
         <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 mt-2">
           <div className="flex items-center gap-2 bg-white px-4 py-2.5 rounded-xl border border-[#C9C1B1] shadow-sm w-full sm:w-[280px] focus-within:border-[#FFB162] transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/30 shrink-0">
@@ -539,44 +556,49 @@ export default function ReglementsVendeurs() {
       )}
 
       {/* Le bandeau de totaux de ShipLead, mais une ligne par devise. */}
-      <div className="bg-[#FFB162]/10 border-l-4 border-[#A35139] rounded-r-xl px-5 py-4 sans-impression">
-        <p className="text-sm font-semibold text-[#1B2632]">
-          {totaux.nb} relevé{totaux.nb > 1 ? 's' : ''} · {totaux.commandes} commande{totaux.commandes > 1 ? 's' : ''}
-        </p>
-        <div className="flex flex-wrap gap-x-6 gap-y-1 mt-1">
-          {Object.entries(totaux.parDevise).length === 0 ? (
-            <span className="text-sm text-[#1B2632]/50">—</span>
-          ) : (
-            Object.entries(totaux.parDevise).map(([d, m]) => (
-              <span key={d} className="text-lg font-bold text-[#1B2632]">
-                {sou(m)} <span className="text-xs font-semibold text-[#1B2632]/50">{d}</span>
-              </span>
-            ))
-          )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sans-impression">
+        <div className="bg-[#FFB162]/12 border border-[#FFB162]/50 rounded-xl px-5 py-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-[#8a5a1f]">
+            À payer · {totaux.nbAPayer} relevé{totaux.nbAPayer > 1 ? 's' : ''}
+          </p>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-1">
+            {Object.entries(totaux.aPayer).length === 0
+              ? <span className="text-lg font-bold text-[#1B2632]/40">0</span>
+              : Object.entries(totaux.aPayer).map(([d, m]) => <span key={d} className="text-lg"><Montant valeur={m} devise={d} /></span>)}
+          </div>
+        </div>
+        <div className="bg-white border border-[#C9C1B1] rounded-xl px-5 py-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">
+            Déjà payé · {totaux.nbPaye} relevé{totaux.nbPaye > 1 ? 's' : ''} · {totaux.commandes} commande{totaux.commandes > 1 ? 's' : ''} en tout
+          </p>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-1">
+            {Object.entries(totaux.paye).length === 0
+              ? <span className="text-lg font-bold text-[#1B2632]/40">0</span>
+              : Object.entries(totaux.paye).map(([d, m]) => <span key={d} className="text-lg"><Montant valeur={m} devise={d} /></span>)}
+          </div>
         </div>
       </div>
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden sans-impression">
         <div className="overflow-auto">
-          <table className="w-full min-w-[900px] text-left border-collapse">
+          <table className="w-full min-w-[820px] text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
                 <th className="px-5 py-4">ID</th>
                 <th className="px-5 py-4">Vendeur</th>
-                <th className="px-5 py-4">Méthode</th>
                 <th className="px-5 py-4 text-center">Commandes</th>
                 <th className="px-5 py-4">Période</th>
                 <th className="px-5 py-4">Date</th>
                 <th className="px-5 py-4 text-right">Net à payer</th>
                 <th className="px-5 py-4">Statut</th>
-                <th className="px-5 py-4 text-right">Actions</th>
+                <th className="px-5 py-4 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
               ) : affiches.length === 0 ? (
-                <tr><td colSpan="9" className="px-6 py-12 text-center text-[#1B2632]/60">
+                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">
                   {releves.length > 0
                     ? 'Aucun relevé ne correspond à cette recherche.'
                     : enAttenteDeReglement > 0
@@ -585,10 +607,10 @@ export default function ReglementsVendeurs() {
                 </td></tr>
               ) : (
                 affiches.map((r) => (
-                  <tr key={r.id} className="hover:bg-[#EEE9DF]/40 transition-colors">
+                  // La ligne entière ouvre le relevé (20/11).
+                  <tr key={r.id} onClick={() => ouvrirFiche(r)} className="bg-white hover:bg-[#F3EFE7] transition-colors cursor-pointer">
                     <td className="px-5 py-4 font-mono text-xs text-[#A35139] font-semibold whitespace-nowrap">{r.reference}</td>
                     <td className="px-5 py-4 text-sm font-semibold text-[#1B2632] whitespace-nowrap">{nomVendeur(r.vendeur_id)}</td>
-                    <td className="px-5 py-4 text-sm text-[#1B2632]/70 whitespace-nowrap">{METHODES[r.methode] || r.methode}</td>
                     <td className="px-5 py-4 text-center font-semibold text-[#1B2632]">{r.nb_commandes}</td>
                     <td className="px-5 py-4 text-sm text-[#1B2632]/70 whitespace-nowrap">
                       {jour(r.periode_debut)} → {jour(r.periode_fin)}
@@ -609,11 +631,9 @@ export default function ReglementsVendeurs() {
                         </>
                       )}
                     </td>
-                    <td className="px-5 py-4 text-right font-mono font-bold text-[#1B2632] whitespace-nowrap">
-                      {sou(r.net_a_payer)} <span className="text-xs font-sans font-normal text-[#1B2632]/50">{r.devise || ''}</span>
-                    </td>
+                    <td className="px-5 py-4 text-right"><Montant valeur={r.net_a_payer} devise={r.devise} /></td>
                     <td className="px-5 py-4"><Statut valeur={r.statut} /></td>
-                    <td className="px-5 py-4 text-right">
+                    <td className="px-5 py-4 text-right sticky right-0 bg-inherit" onClick={(e) => e.stopPropagation()}>
                       <button onClick={() => ouvrirFiche(r)} title="Voir le relevé"
                         className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-[#1B2632]/50 hover:text-[#1B2632] hover:bg-[#EEE9DF] transition-colors">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -815,9 +835,7 @@ export default function ReglementsVendeurs() {
                       valeur={'− ' + sou(fiche.frais_transfert)} devise={fiche.devise} />
                     <div className="flex justify-between items-baseline px-4 py-3 bg-[#EEE9DF] rounded-xl mt-1">
                       <span className="text-sm font-bold text-[#1B2632]">À payer</span>
-                      <span className="text-xl font-bold text-[#1B2632] font-mono">
-                        {sou(fiche.net_a_payer)} <span className="text-xs font-sans text-[#1B2632]/50">{fiche.devise || ''}</span>
-                      </span>
+                      <span className="text-right"><Montant valeur={fiche.net_a_payer} devise={fiche.devise} grand /></span>
                     </div>
                     {fiche.taux_mad != null && (
                       <div className="flex justify-between items-baseline px-4">
