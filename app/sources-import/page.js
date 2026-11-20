@@ -71,7 +71,7 @@ const consignesSheets = (pays) => [
     ? `Pas de colonne pays : toutes les commandes de cette feuille arrivent en ${pays}.`
     : 'Pas de colonne pays : les commandes prennent le pays de la source, et cette source n\u2019en a pas. Tant qu\u2019un responsable ne l\u2019a pas fixé, chaque ligne est refusée (« pays manquant »).',
   `Un Google Form relié à la feuille marche aussi : donnez à ses questions les noms des colonnes (${['produit', 'client', 'telephone'].map(nomColonne).join(', ')}…). Le ${nomColonne('order_id')} est fait tout seul avec la date de la réponse ; ajoutez une colonne « ${nomColonne('order_id')} » à droite des réponses pour le voir.`,
-  'Zapier, Make, AppSheet ou toute autre application qui écrit dans la feuille : Google ne prévient pas le script, ces lignes ne partiraient pas. Branchez plutôt cette application directement sur votre API (onglet « API directe » ci-dessus).',
+  'Zapier, Make, AppSheet ou toute autre application qui écrit dans la feuille : Google ne prévient pas le script, ces lignes ne partiraient pas. Branchez plutôt cette application directement sur votre API (choix « API directe » dans « Brancher »).',
   `Coller plusieurs lignes : ${MAX_LIGNES_SHEETS} au plus à la fois.`,
   'Statut CRM « trop de requêtes, réessayez » ou « erreur réseau, réessayez » : retapez une case de la ligne (le téléphone, par exemple), elle repart. Une ligne déjà reçue répond « déjà importé » : rien n\u2019est créé deux fois.',
 ].filter(Boolean)
@@ -114,7 +114,7 @@ function Etapes({ items }) {
     <ol className="flex flex-col gap-3">
       {items.map((contenu, i) => (
         <li key={i} className="grid grid-cols-[26px_1fr] gap-3 items-start">
-          <span className="w-[26px] h-[26px] grid place-items-center rounded-full bg-[#C9D3DD] text-[#1B2632] text-xs font-bold tabular-nums">
+          <span className="w-[26px] h-[26px] grid place-items-center rounded-full bg-[#F4F0E6] text-[#1B2632] text-xs font-bold tabular-nums">
             {i + 1}
           </span>
           <div className="text-sm leading-relaxed pt-0.5">{contenu}</div>
@@ -163,6 +163,12 @@ export default function SourcesImportPage() {
 
   const [etiquette, setEtiquette] = useState('WooCommerce')
   const [onglet, setOnglet] = useState('woo')
+  // La page en trois parties (20/11) : avant, tout tenait sur une seule
+  // page d'environ huit écrans.
+  const [partie, setPartie] = useState('identifiants')
+  // La dernière commande arrivée par cette source (20/11) : sans elle, une
+  // boutique qui n'envoie plus rien ne se voyait nulle part.
+  const [derniereCommande, setDerniereCommande] = useState(undefined)
   const [nouvelle, setNouvelle] = useState(null) // { nom, vendeur_id, pays_id } : « Nouvelle source »
   const [enCours, setEnCours] = useState(false)
 
@@ -211,6 +217,14 @@ export default function SourcesImportPage() {
   }, [tenantId, peutGererTout])
 
   useEffect(() => { charger() }, [charger])
+
+  useEffect(() => {
+    setDerniereCommande(undefined)
+    if (!sourceId) return
+    supabase.from('commandes').select('created_at').eq('source_id', sourceId)
+      .order('created_at', { ascending: false }).limit(1)
+      .then(({ data, error }) => setDerniereCommande(error ? undefined : (data?.[0]?.created_at || null)))
+  }, [sourceId])
 
   const chargerIdentifiants = useCallback(async (id) => {
     setIdentifiants(null)
@@ -396,13 +410,10 @@ export default function SourcesImportPage() {
   const plusieurs = sources.length > 1
 
   return (
-    <div className="flex flex-col gap-5 w-full max-w-[980px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-14">
+    <div className="flex flex-col gap-5 w-full max-w-[980px] mx-auto pt-4 sm:pt-2 px-4 sm:px-6 pb-14">
 
       <header>
-        <p className="text-[11px] font-mono font-medium text-[#A35139] uppercase tracking-[.14em] mb-1">
-          Entrée des leads
-        </p>
-        <h1 className="text-3xl font-bold text-[#1B2632]">Mon API</h1>
+        <h1 className="text-2xl font-bold text-[#1B2632]">Mon API</h1>
         <p className="mt-1.5 max-w-[62ch] text-sm text-[#1B2632]/60">
           Branchez votre boutique ou votre formulaire. Les leads arrivent directement dans
           le centre d&apos;appel, à votre nom.
@@ -473,7 +484,18 @@ export default function SourcesImportPage() {
         </div>
       )}
 
-      {chargement ? (
+      {/* Les trois parties (20/11). */}
+      <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 w-fit max-w-full flex-wrap" role="tablist">
+        {[['identifiants', 'Identifiants'], ['brancher', 'Brancher'], ['reference', 'Référence technique']].map(([cle, nom]) => (
+          <button key={cle} role="tab" aria-selected={partie === cle} onClick={() => setPartie(cle)}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+              partie === cle ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'}`}>
+            {nom}
+          </button>
+        ))}
+      </div>
+
+      {partie !== 'identifiants' ? null : chargement ? (
         <div className={`${CARTE} px-5 py-10 text-center text-sm text-[#1B2632]/60`}>Chargement...</div>
       ) : !source ? (
         // Pas de source : un vendeur a UN bouton ; sinon, une ligne.
@@ -516,6 +538,26 @@ export default function SourcesImportPage() {
             )}
             <span className={AIDE}>Un lead qui envoie son pays garde le sien.</span>
           </section>
+
+          {/* Dernière commande reçue (20/11) : en orange après deux jours sans rien,
+              la boutique n'envoie peut-être plus. */}
+          {derniereCommande !== undefined && (() => {
+            const jours = derniereCommande ? Math.floor((Date.now() - new Date(derniereCommande).getTime()) / 86400000) : null
+            const alerte = derniereCommande === null || jours >= 2
+            return (
+              <section className={`${CARTE} px-5 py-3.5 flex flex-wrap items-center gap-3 ${alerte ? '!border-[#FFB162] !bg-[#FFB162]/10' : ''}`}>
+                <span className={LABEL}>Dernière commande reçue</span>
+                <span className={`text-sm font-semibold ${alerte ? 'text-[#8a5a1f]' : 'text-[#1B2632]'}`}>
+                  {derniereCommande === null
+                    ? 'Aucune commande reçue par cette source.'
+                    : `${new Date(derniereCommande).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} · ${jours === 0 ? "aujourd'hui" : jours === 1 ? 'hier' : `il y a ${jours} jours`}`}
+                </span>
+                {alerte && derniereCommande !== null && (
+                  <span className={AIDE}>Plus rien depuis {jours} jours : vérifiez que la boutique envoie toujours.</span>
+                )}
+              </section>
+            )
+          })()}
 
           {/* 1. Identifiants API */}
           <section className={CARTE}>
@@ -633,13 +675,14 @@ export default function SourcesImportPage() {
       )}
 
       {/* 3. Brancher votre boutique */}
+      {partie === 'brancher' && (
       <section className={CARTE}>
         <TeteCarte titre="Brancher votre boutique">
           Choisissez votre plateforme. L&apos;ordre des étapes est celui des écrans.
         </TeteCarte>
         <div className="px-5 pb-5 flex flex-col gap-3.5">
           <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 w-fit max-w-full flex-wrap" role="tablist">
-            {[['woo', 'WooCommerce'], ['shopify', 'Shopify'], ['direct', 'API directe']].map(([cleOnglet, nom]) => (
+            {[['woo', 'WooCommerce'], ['shopify', 'Shopify'], ['direct', 'API directe'], ['sheets', 'Google Sheets']].map(([cleOnglet, nom]) => (
               <button key={cleOnglet} role="tab" aria-selected={onglet === cleOnglet} onClick={() => setOnglet(cleOnglet)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
                   onglet === cleOnglet ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'
@@ -656,7 +699,7 @@ export default function SourcesImportPage() {
               <><strong>État</strong> : <code className={CODE}>Actif</code>.</>,
               <><strong>Sujet</strong> : <code className={CODE}>Commande créée</code>. Chaque nouvelle commande
                 nous arrive alors dans la seconde.</>,
-              <><strong>URL de livraison</strong> : collez l&apos;URL complète ci-dessus, avec <code className={CODE}>key</code> et{' '}
+              <><strong>URL de livraison</strong> : collez l&apos;URL complète (onglet « Identifiants »), avec <code className={CODE}>key</code> et{' '}
                 <code className={CODE}>secret</code>.</>,
               <><strong>Version de l&apos;API</strong> : <code className={CODE}>WP REST API Integration v3</code>.
                 Enregistrez, puis passez une commande de test : elle doit apparaître dans le centre d&apos;appel.</>,
@@ -668,7 +711,7 @@ export default function SourcesImportPage() {
               <><strong>Paramètres → Notifications → Webhooks</strong>, « Créer un webhook ».</>,
               <><strong>Événement</strong> : <code className={CODE}>Création de commande</code>, format{' '}
                 <code className={CODE}>JSON</code>.</>,
-              <><strong>URL</strong> : collez l&apos;URL complète ci-dessus (mettez <code className={CODE}>Shopify</code> comme
+              <><strong>URL</strong> : collez l&apos;URL complète, onglet « Identifiants » (mettez <code className={CODE}>Shopify</code> comme
                 étiquette <code className={CODE}>source</code> si vous voulez les distinguer).</>,
               <>Enregistrez, puis passez une commande de test : elle doit apparaître dans le centre
                 d&apos;appel.</>,
@@ -700,13 +743,17 @@ export default function SourcesImportPage() {
                 <code className={CODE}>{'{"leads": [ … ]}'}</code>. Pratique pour rattraper un retard.</p>
             </div>
           )}
+          {onglet === 'sheets' && (
+            <p className={AIDE}>La feuille Google envoie ses lignes toute seule : format, code et installation ci-dessous.</p>
+          )}
         </div>
       </section>
+      )}
 
       {/* 3 bis. Google Sheets — la feuille pousse ses lignes vers l'API. Le
           code porte la clé et l'URL de CETTE source ; le secret y entre par le
           même mot de passe que la carte des identifiants. */}
-      {source && !identifiantsRefuses && identifiants && (() => {
+      {partie === 'brancher' && onglet === 'sheets' && source && !identifiantsRefuses && identifiants && (() => {
         const paysSource = paysListe.find((x) => x.id === source.pays_defaut)?.nom || null
         const colonnes = colonnesSheets()
         const requis = colonnes.filter((c) => c.obligatoire).map((c) => c.nom)
@@ -735,7 +782,7 @@ export default function SourcesImportPage() {
               ) : !cle ? (
                 <p className="text-sm text-[#A35139]">
                   Cette source a une ancienne clé, impossible à mettre dans le code : « Régénérer les
-                  identifiants » ci-dessus, puis revenez ici.
+                  identifiants » (onglet « Identifiants »), puis revenez ici.
                 </p>
               ) : (
                 <>
@@ -749,7 +796,7 @@ export default function SourcesImportPage() {
                     <div className="overflow-x-auto border border-[#C9C1B1]/70 rounded-xl">
                       <table className="w-full min-w-[480px] text-left border-collapse">
                         <thead>
-                          <tr className="bg-[#C9D3DD] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
+                          <tr className="bg-[#F4F0E6] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
                             <th className="px-4 py-2.5">Colonne</th><th className="px-4 py-2.5">Obligatoire</th><th className="px-4 py-2.5">Exemple</th>
                           </tr>
                         </thead>
@@ -791,7 +838,7 @@ export default function SourcesImportPage() {
                         qui envoient des commandes.
                       </p>
                       <p>
-                        S&apos;il fuit : « Régénérer les identifiants » ci-dessus (un clic), puis recollez un
+                        S&apos;il fuit : « Régénérer les identifiants » (onglet « Identifiants », un clic), puis recollez un
                         nouveau code ici. L&apos;ancien cesse aussitôt de marcher — et votre boutique, si elle
                         utilise la même source, devra recevoir la nouvelle URL.
                       </p>
@@ -862,7 +909,8 @@ export default function SourcesImportPage() {
         )
       })()}
 
-      {/* 4. Champs reconnus */}
+      {/* 4. Champs reconnus + 5. Réponses : la partie « Référence technique » (20/11). */}
+      {partie === 'reference' && (<>
       <section className={CARTE}>
         <TeteCarte titre="Champs reconnus">
           Les formats WooCommerce et Shopify sont lus automatiquement : vous n&apos;avez rien à
@@ -871,7 +919,7 @@ export default function SourcesImportPage() {
         <div className="overflow-x-auto border-t border-[#C9C1B1]/55">
           <table className="w-full min-w-[520px] text-left border-collapse">
             <thead>
-              <tr className="bg-[#C9D3DD] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
+              <tr className="bg-[#F4F0E6] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
                 <th className="px-4 py-2.5">Champ</th><th className="px-4 py-2.5">Autres noms acceptés</th><th className="px-4 py-2.5">Obligatoire</th>
               </tr>
             </thead>
@@ -904,7 +952,7 @@ export default function SourcesImportPage() {
         <div className="overflow-x-auto border-t border-[#C9C1B1]/55">
           <table className="w-full min-w-[520px] text-left border-collapse">
             <thead>
-              <tr className="bg-[#C9D3DD] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
+              <tr className="bg-[#F4F0E6] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
                 <th className="px-4 py-2.5">Code</th><th className="px-4 py-2.5">Corps</th><th className="px-4 py-2.5">Ce que ça veut dire</th>
               </tr>
             </thead>
@@ -920,6 +968,7 @@ export default function SourcesImportPage() {
           </table>
         </div>
       </section>
+      </>)}
 
     </div>
   )
