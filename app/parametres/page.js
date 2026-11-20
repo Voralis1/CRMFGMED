@@ -9,6 +9,9 @@ import { usePermissions } from "../context/PermissionsContext";
 import { retirerImage } from "../../lib/imageProduit";
 import DelaiReaffectation from "../components/DelaiReaffectation";
 import { PAYS_MONDE } from "../../lib/paysMonde";
+
+// Un identifiant de commande dans la raison d'un mouvement de stock (20/11).
+const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 import { fuseauxDuPays, decalageUTC, heureLocale, nomFuseau } from "../../lib/fuseauxPays.mjs";
 
 // Les plus récents seulement : la liste sert à retrouver un mouvement, pas à
@@ -56,7 +59,7 @@ export default function ParametresAdmin() {
   const peutModifierFrais = ['admin', 'super_admin'].includes(monRole);
   const router = useRouter();
 
-  const [ongletActif, setOngletActif] = useState("produits");
+  const [ongletActif, setOngletActif] = useState("pays");
   const [chargement, setChargement] = useState(true);
   const [message, setMessage] = useState({ texte: "", type: "" });
 
@@ -95,6 +98,9 @@ export default function ParametresAdmin() {
   // mouvement. Un produit supprimé n'a plus de fiche dans Produits : c'est le
   // seul endroit où ses mouvements restent lisibles.
   const [listeMouvements, setListeMouvements] = useState([]);
+  // id de commande → « FG0000000449 » (20/11) : la raison d'un mouvement
+  // (« Livraison commande <uuid> ») s'affiche avec une référence lisible.
+  const [refsCommandes, setRefsCommandes] = useState({});
   const [nouveauMouvement, setNouveauMouvement] = useState({
     produit_id: "", entrepot_id: "", type_mouvement: "entree", quantite: 1, notes: ""
   });
@@ -139,7 +145,14 @@ export default function ParametresAdmin() {
     const { data: mouvementsData } = await supabase.from("mouvements_stock")
       .select("id, created_at, type_mouvement, quantite, notes, produit_id, produit_nom, produit_code, entrepots(nom), produits(product, code)")
       .eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(MOUVEMENTS_AFFICHES);
-    if (mouvementsData) setListeMouvements(mouvementsData);
+    if (mouvementsData) {
+      setListeMouvements(mouvementsData);
+      const ids = [...new Set(mouvementsData.flatMap((m) => String(m.notes || "").match(UUID_G) || []))];
+      if (ids.length) {
+        const { data: cmds } = await supabase.from("commandes").select("id, lead_id, tracking_number").in("id", ids);
+        setRefsCommandes(Object.fromEntries((cmds || []).map((c) => [c.id, c.tracking_number || c.lead_id || c.id.slice(0, 8)])));
+      }
+    }
 
     // Table absente (frais_vendeurs.sql pas encore lancé) : l'onglet reste vide.
     const { data: tarifsData } = await supabase.from("tarifs_vendeurs")
@@ -540,16 +553,16 @@ export default function ParametresAdmin() {
   const TabButton = ({ id, label }) => (
     <button
       onClick={() => setOngletActif(id)}
-      className={`flex items-center gap-3 px-7 py-3.5 rounded-full text-left transition-all duration-200 cursor-pointer whitespace-nowrap border ${
+      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-left transition-colors cursor-pointer whitespace-nowrap border ${
         ongletActif === id
-          ? "bg-[#1B2632] text-white border-[#1B2632] shadow-lg shadow-[#1B2632]/20 scale-[1.02]"
-          : "bg-white text-[#1B2632] border-[#C9C1B1]/70 hover:border-[#1B2632]/40 hover:shadow-md hover:-translate-y-0.5"
+          ? "bg-[#1B2632] text-white border-[#1B2632] shadow-sm"
+          : "bg-white text-[#1B2632] border-[#C9C1B1]/70 hover:border-[#1B2632]/40"
       }`}
     >
       <span className={`shrink-0 ${ongletActif === id ? "text-[#FFB162]" : "text-[#A35139]"}`}>
         {TAB_ICONS[id]}
       </span>
-      <span className="font-semibold text-[15px] leading-tight">{label}</span>
+      <span className="font-semibold text-sm leading-tight">{label}</span>
     </button>
   );
 
@@ -584,18 +597,16 @@ export default function ParametresAdmin() {
       <StyleParametres />
 
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
-        <div>
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">Administration</p>
-          <h1 className="text-3xl font-bold text-[#1B2632]">Paramètres Généraux</h1>
-        </div>
+        {/* En-tête compact (20/11) ; onglets courts qui tiennent sur une ligne.
+            « Catalogue Produits » retiré : tout se fait dans le menu Produits. */}
+        <h1 className="text-2xl font-bold text-[#1B2632]">Paramètres</h1>
 
-        <div className="flex gap-3 overflow-x-auto pb-3 pt-2 mt-2 tab-scroll">
-          <TabButton id="pays" label="Pays & Devises" />
-          <TabButton id="zones" label="Zones de livraison" />
-          <TabButton id="statuts" label="Statuts configurables" />
-          <TabButton id="produits" label="Catalogue Produits" />
+        <div className="flex flex-wrap gap-2">
+          <TabButton id="pays" label="Pays & devises" />
+          <TabButton id="zones" label="Zones" />
+          <TabButton id="statuts" label="Statuts" />
           {peutGererEntrepots && <TabButton id="entrepots" label="Entrepôts" />}
-          <TabButton id="stocks" label="Mouvements de Stock" />
+          <TabButton id="stocks" label="Mouvements de stock" />
           <TabButton id="frais" label="Frais vendeurs" />
         </div>
       </header>
@@ -777,7 +788,7 @@ export default function ParametresAdmin() {
                       listeZones.map((z) => (
                         <tr key={z.id} className="hover:bg-[#EEE9DF]/20">
                           <td className="font-medium">{z.nom_zone}</td>
-                          <td><span className="fg-badge">{z.pays?.nom || 'N/A'}</span></td>
+                          <td>{z.pays?.nom ? <span className="fg-badge">{z.pays.nom}</span> : <span className="text-xs text-[#1B2632]/50">—</span>}</td>
                           <td className="text-right flex items-center justify-end gap-2">
                             <button onClick={() => preparerModificationZone(z)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
                               Modifier
@@ -894,8 +905,15 @@ export default function ParametresAdmin() {
                             )}
                           </td>
                           <td><span className="font-mono text-xs text-[#1B2632]/50">{s.code}</span></td>
-                          <td><span className="fg-badge">{s.pays?.nom || 'N/A'}</span></td>
-                          <td><span className="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap" style={{ backgroundColor: s.couleur, color: "#fff" }}>{libelleStatut(s.nom)}</span></td>
+                          <td>{s.pays?.nom ? <span className="fg-badge">{s.pays.nom}</span> : <span className="text-xs text-[#1B2632]/50">Tous les pays</span>}</td>
+                          {/* Badge lisible (20/11) : couleur au point et au fond, texte foncé. */}
+                          <td>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] whitespace-nowrap"
+                              style={{ backgroundColor: `${s.couleur}26`, borderColor: `${s.couleur}66` }}>
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.couleur }} />
+                              {libelleStatut(s.nom)}
+                            </span>
+                          </td>
                           <td className="text-center">{s.necessite_rappel ? <span className="text-[#FFB162] font-bold">●</span> : "—"}</td>
                           <td className="text-center">{s.declenche_assignation ? <span className="text-[#2C3B4D] font-bold">●</span> : "—"}</td>
                           <td className="text-right flex items-center justify-end gap-2">
@@ -913,64 +931,6 @@ export default function ParametresAdmin() {
         )}
 
         {/* --- ONGLET PRODUITS --- */}
-        {ongletActif === "produits" && (
-          <div className="flex flex-col gap-6">
-            <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
-              <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Catalogue Produits</h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Gérez vos produits. Les stocks globaux s'actualiseront via vos déclarations de mouvements.</p>
-              </div>
-
-              {/* On ne crée plus de produit ici (26/10) : ce formulaire n'avait pas de
-                  vendeur, et un produit sans vendeur n'est visible d'aucun vendeur
-                  (produits_proprietaire.sql). Personne n'aurait fait le lien. L'écran
-                  Produits demande le vendeur ; cet onglet disparaîtra avec lui. */}
-              <div className="mb-8 p-5 bg-[#faf9f7] rounded-xl border border-dashed border-[#C9C1B1] flex flex-col sm:flex-row sm:items-center gap-3">
-                <p className="text-sm text-[#1B2632]/70 flex-1">
-                  Les produits se créent dans le menu <b>Produits</b>, qui demande à quel vendeur est le produit.
-                </p>
-                <a href="/produits" className="fg-btn-primary text-center">Aller à Produits</a>
-              </div>
-
-              <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
-                <table className="fg-table w-full whitespace-nowrap">
-                  <thead>
-                    <tr>
-                      <th>PRODUCT</th>
-                      <th>CODE</th>
-                      <th className="text-center">QTY</th>
-                      <th className="text-center">DEFECTED</th>
-                      <th>PRICE</th>
-                      <th className="text-right">ACTIONS</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#C9C1B1]/30">
-                    {chargement ? (
-                      <tr><td colSpan="6" className="text-center py-8">Chargement...</td></tr>
-                    ) : listeProduits.length === 0 ? (
-                      <tr><td colSpan="6" className="text-center py-8">Aucun produit configuré.</td></tr>
-                    ) : (
-                      listeProduits.map((pr) => (
-                        <tr key={pr.id} className="hover:bg-[#EEE9DF]/20">
-                          <td className="font-bold text-[14px]">{pr.product}</td>
-                          <td><span className="font-mono text-xs text-[#A35139] font-semibold">{pr.code || '-'}</span></td>
-                          <td className="text-center font-semibold">{pr.current_quantity ?? 0}</td>
-                          <td className="text-center font-semibold text-red-600">{pr.defected_quantity ?? 0}</td>
-                          <td><span className="font-bold">{pr.price}</span></td>
-                          <td className="text-right">
-                            <button onClick={() => supprimerProduit(pr)} className="text-red-500 hover:text-red-700 text-xs font-semibold px-2 py-1 cursor-pointer">Supprimer</button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- ONGLET ENTREPÔTS --- */}
         {ongletActif === "entrepots" && peutGererEntrepots && (
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
@@ -1031,7 +991,7 @@ export default function ParametresAdmin() {
                             <span className="text-gray-600">{listePays.find((p) => p.id === e.pays_id)?.nom || '-'}</span>
                           )}
                         </td>
-                        <td className="text-center"><span className="fg-badge dark">Actif</span></td>
+                        <td className="text-center"><span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] bg-[#2E7D53]/15 border-[#2E7D53]/40"><span className="w-2 h-2 rounded-full bg-[#2E7D53]" />Actif</span></td>
                         {peutGererEntrepots && (
                           <td className="text-right">
                             <button onClick={() => supprimerEntrepot(e)}
@@ -1161,7 +1121,8 @@ export default function ParametresAdmin() {
                           <td className="font-medium text-gray-700">{m.entrepots?.nom || "—"}</td>
                           <td className="text-sm text-gray-700">{LIBELLE_MOUVEMENT[m.type_mouvement] || m.type_mouvement}</td>
                           <td className="text-right font-bold text-[#1B2632]">{m.quantite}</td>
-                          <td className="text-sm text-gray-600">{m.notes || ""}</td>
+                          {/* Commande supprimée depuis : les 8 premiers caractères de son id. */}
+                          <td className="text-sm text-gray-600">{String(m.notes || "").replace(UUID_G, (u) => refsCommandes[u] || u.slice(0, 8))}</td>
                         </tr>
                       );
                     })}
@@ -1186,7 +1147,7 @@ export default function ParametresAdmin() {
               </div>
 
               {peutModifierFrais ? (
-                <form onSubmit={ajouterTarif} className="grid grid-cols-1 md:grid-cols-4 xl:grid-cols-8 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
+                <form onSubmit={ajouterTarif} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
                     <select required value={nouveauTarif.pays_id} onChange={(e) => setNouveauTarif({ ...nouveauTarif, pays_id: e.target.value })} className="fg-input cursor-pointer">
