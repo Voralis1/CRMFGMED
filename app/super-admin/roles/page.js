@@ -6,6 +6,14 @@ import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
 
+// Les permissions rangées par module (23/11) : la base les classe déjà en
+// 9 modules ; « general » et « Général » sont le même.
+const ORDRE_MODULES = ['Général', "Centre d'appel", 'Logistique', 'Stock', 'Finance', 'Vendeur externe', 'Administration', 'Super Admin']
+const nomModule = (m) => (!m || /^g[ée]n[ée]ral$/i.test(m) ? 'Général' : m)
+
+// « manager » → « Manager », « super_admin » → « Super admin ».
+const libelleRole = (nom) => String(nom || '').replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase())
+
 export default function SuperAdminRoles() {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
@@ -27,6 +35,10 @@ export default function SuperAdminRoles() {
 
   // État pour désactiver le bouton "Supprimer" du rôle en cours de suppression
   const [suppressionEnCours, setSuppressionEnCours] = useState(null) // id du rôle, ou null
+  // Sur chaque carte (23/11) : combien de permissions, combien de comptes.
+  const [nbPerms, setNbPerms] = useState({})
+  const [nbComptes, setNbComptes] = useState({})
+  const [recherchePerm, setRecherchePerm] = useState('')
 
   useEffect(() => {
     if (!authLoading && !permsLoading) {
@@ -45,6 +57,14 @@ export default function SuperAdminRoles() {
 
     const { data: permsData } = await supabase.from('permissions').select('*')
     if (permsData) setPermissions(permsData)
+
+    const [{ data: liens }, { data: comptesRoles }] = await Promise.all([
+      supabase.from('role_permissions').select('role_id'),
+      supabase.from('user_roles').select('role_id'),
+    ])
+    const compter = (lignes) => (lignes || []).reduce((acc, l) => { if (l.role_id) acc[l.role_id] = (acc[l.role_id] || 0) + 1; return acc }, {})
+    setNbPerms(compter(liens))
+    setNbComptes(compter(comptesRoles))
     setLoading(false)
   }
 
@@ -126,6 +146,7 @@ export default function SuperAdminRoles() {
       setMessage({ text: error.message || "Erreur lors de la mise à jour.", type: 'error' })
     } else {
       setMessage({ text: 'Permissions mises à jour !', type: 'success' })
+      setNbPerms((n) => ({ ...n, [selectedRole.id]: rolePerms.length }))
       setTimeout(() => { setIsEditModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
     }
     setSubmitting(false)
@@ -162,18 +183,18 @@ export default function SuperAdminRoles() {
   }
 
   return (
-    <div className="space-y-6 pt-4 sm:pt-16 px-4 sm:px-6 pb-10 max-w-[1400px] mx-auto">
-      {/* En-tête */}
-      <div className="flex flex-wrap gap-3 justify-between items-center bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-[#C9C1B1]/40">
-        <div>
-          <h2 className="text-2xl font-bold text-[#1B2632]">Gestion des Rôles & Permissions</h2>
-          <p className="text-sm text-gray-500 mt-1">Gérez vos rôles et leurs droits d'accès.</p>
+    <div className="space-y-5 pt-4 sm:pt-2 px-4 sm:px-6 pb-10 max-w-[1400px] mx-auto">
+      {/* En-tête compact (23/11), comme Entreprises et Comptes. */}
+      <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#C9C1B1]/50 pb-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Rôles</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{roles.length}</span>
         </div>
         <button 
           onClick={() => { setIsCreateModalOpen(true); setMessage({ text: '', type: '' }) }} 
-          className="bg-[#1B2632] hover:bg-[#2C3E50] text-white px-5 py-2.5 rounded-xl font-medium cursor-pointer transition-colors"
+          className="bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-5 py-2.5 rounded-xl text-sm font-bold cursor-pointer transition-colors"
         >
-          + Nouveau Rôle
+          + Nouveau rôle
         </button>
       </div>
 
@@ -182,29 +203,40 @@ export default function SuperAdminRoles() {
         {loading ? <div className="text-center py-10">Chargement...</div> : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {roles.map((role) => (
-              <div key={role.id} className="p-4 sm:p-5 border border-gray-100 rounded-xl hover:shadow-md transition-shadow bg-gray-50/50 flex flex-col justify-between">
+              <div key={role.id} className="p-4 sm:p-5 border border-[#C9C1B1]/60 rounded-xl hover:shadow-md transition-shadow bg-white flex flex-col justify-between">
                 <div>
-                  <h3 className="text-lg font-bold text-[#1B2632] uppercase break-words">{role.nom}</h3>
-                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">{role.description || 'Aucune description'}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="text-lg font-bold text-[#1B2632] break-words">{libelleRole(role.nom)}</h3>
+                    {role.is_system && (
+                      <span className="shrink-0 text-[11px] font-semibold text-[#1B2632]/45 bg-[#EEE9DF] px-2 py-0.5 rounded-md"
+                        title="Le code de l'application lit ce rôle par son nom : il ne se supprime pas.">
+                        Rôle système
+                      </span>
+                    )}
+                  </div>
+                  {/* Ce que le rôle fait et qui le porte (23/11), au lieu de « Aucune description ». */}
+                  <p className="text-sm text-[#1B2632]/65 mt-2">
+                    <b className="text-[#1B2632]">{nbPerms[role.id] ?? 0}</b> permission{(nbPerms[role.id] ?? 0) > 1 ? 's' : ''}
+                    <span className="text-[#1B2632]/30"> · </span>
+                    <b className="text-[#1B2632]">{nbComptes[role.id] ?? 0}</b> compte{(nbComptes[role.id] ?? 0) > 1 ? 's' : ''}
+                  </p>
+                  {role.description && <p className="text-xs text-[#1B2632]/55 mt-1.5 line-clamp-2">{role.description}</p>}
                 </div>
                 <div className="mt-6 flex flex-wrap gap-2">
                   <button 
-                    onClick={() => handleOpenEdit(role)} 
-                    className="flex-1 bg-[#1B2632]/10 hover:bg-[#1B2632] hover:text-white text-[#1B2632] px-4 py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
+                    onClick={() => { handleOpenEdit(role); setRecherchePerm('') }} 
+                    className="flex-1 bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors cursor-pointer"
                   >
                     Gérer les permissions
                   </button>
-                  {role.is_system ? (
-                    <span className="px-3 py-2 text-xs font-semibold text-gray-400" title="Le code de l'application lit ce rôle par son nom : il ne se supprime pas.">
-                      Rôle système
-                    </span>
-                  ) : (
+                  {role.is_system ? null : (
                   <button
                     onClick={() => handleDeleteRole(role)}
                     disabled={suppressionEnCours === role.id}
                     title="Supprimer ce rôle"
-                    className="bg-[#A35139]/10 hover:bg-[#A35139] hover:text-white text-[#A35139] px-3 py-2 rounded-xl text-sm font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 px-3 py-2 rounded-lg text-sm font-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
                     {suppressionEnCours === role.id ? '…' : 'Supprimer'}
                   </button>
                   )}
@@ -266,7 +298,8 @@ export default function SuperAdminRoles() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6 flex flex-col max-h-[90vh]">
             <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
               <h3 className="text-xl font-bold text-[#1B2632]">
-                Permissions : <span className="text-[#C9C1B1]">{selectedRole.nom.toUpperCase()}</span>
+                Permissions · {libelleRole(selectedRole.nom)}
+                <span className="ml-2 text-sm font-semibold text-[#1B2632]/50">{estSuperAdminRole ? permissions.length : rolePerms.length} / {permissions.length}</span>
               </h3>
               <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl leading-none cursor-pointer">&times;</button>
             </div>
@@ -279,25 +312,59 @@ export default function SuperAdminRoles() {
                   Le rôle super_admin détient toutes les permissions : la base l'impose. Une nouvelle permission lui est donnée automatiquement, aucune ne peut lui être retirée.
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto pr-2">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-4">
-                  {permissions.map((perm) => (
-                    <label key={perm.code} className="flex items-start gap-3 p-3 border border-gray-100 rounded-xl hover:bg-gray-50 cursor-pointer transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={estSuperAdminRole || rolePerms.includes(perm.code)}
-                        disabled={estSuperAdminRole}
-                        onChange={() => togglePermission(perm.code)}
-                        className="mt-1 w-4 h-4 text-[#1B2632] rounded border-gray-300 focus:ring-[#1B2632]"
-                      />
-                      <div>
-                        <div className="text-sm font-bold text-[#1B2632]">{perm.nom}</div>
-                        <div className="text-xs font-mono text-gray-400 mt-0.5">{perm.code}</div>
-                        {perm.description && <div className="text-xs text-gray-500 mt-1">{perm.description}</div>}
-                      </div>
-                    </label>
-                  ))}
-                </div>
+              {/* Rangées par module, avec une recherche (23/11) : avant, 61 cases
+                  en vrac, chacune avec son code technique. */}
+              <div className="flex items-center gap-2 mb-3 bg-white px-3.5 py-2 rounded-xl border border-[#C9C1B1] focus-within:border-[#1B2632]">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/35 shrink-0"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
+                <input id="recherche-permission" type="text" value={recherchePerm} onChange={(e) => setRecherchePerm(e.target.value)}
+                  placeholder="Chercher une permission (livraison, export…)" className="w-full outline-none bg-transparent text-sm text-[#1B2632]" />
+                {recherchePerm && <button type="button" onClick={() => setRecherchePerm('')} className="text-xs text-[#1B2632]/40 hover:text-[#A35139]">✕</button>}
+              </div>
+              <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-5 pb-4">
+                {(() => {
+                  const t = recherchePerm.trim().toLowerCase()
+                  const visibles = permissions.filter((p) => !t || `${p.nom} ${p.code} ${p.description || ''} ${p.module || ''}`.toLowerCase().includes(t))
+                  const groupes = {}
+                  for (const p of visibles) (groupes[nomModule(p.module)] ||= []).push(p)
+                  const ordre = Object.keys(groupes).sort((a, b) => {
+                    const ia = ORDRE_MODULES.indexOf(a), ib = ORDRE_MODULES.indexOf(b)
+                    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b)
+                  })
+                  if (ordre.length === 0) return <p className="text-sm text-[#1B2632]/50 py-6 text-center">Aucune permission ne correspond.</p>
+                  return ordre.map((mod) => {
+                    const liste = groupes[mod].sort((a, b) => String(a.nom).localeCompare(String(b.nom)))
+                    const cochees = liste.filter((p) => estSuperAdminRole || rolePerms.includes(p.code)).length
+                    return (
+                      <section key={mod}>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 mb-2 flex items-center gap-2">
+                          {mod}
+                          <span className="font-semibold normal-case tracking-normal text-[#1B2632]/40">{cochees} / {liste.length}</span>
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {liste.map((perm) => {
+                            const coche = estSuperAdminRole || rolePerms.includes(perm.code)
+                            return (
+                              <label key={perm.code} className={`flex items-start gap-3 p-3 border rounded-xl cursor-pointer transition-colors ${coche ? 'border-[#1B2632]/30 bg-[#EEE9DF]/40' : 'border-[#C9C1B1]/50 hover:bg-[#EEE9DF]/20'}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={coche}
+                                  disabled={estSuperAdminRole}
+                                  onChange={() => togglePermission(perm.code)}
+                                  className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer"
+                                />
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-[#1B2632]">{perm.nom}</div>
+                                  {perm.description && <div className="text-xs text-[#1B2632]/55 mt-0.5">{perm.description}</div>}
+                                  <div className="text-[10px] font-mono text-[#1B2632]/30 mt-0.5">{perm.code}</div>
+                                </div>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </section>
+                    )
+                  })
+                })()}
               </div>
 
               <div className="flex gap-3 pt-6 mt-2 border-t border-gray-100">
