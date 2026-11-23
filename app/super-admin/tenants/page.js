@@ -209,18 +209,16 @@ export default function TenantsPage() {
     });
   };
 
+  // Badge lisible (23/11) : un point de couleur, le texte foncé.
   const badgeStatut = (statut) => {
-    const styles = {
-      actif: 'bg-[#2C3B4D]/10 text-[#2C3B4D] border-[#2C3B4D]/30',
-      suspendu: 'bg-[#A35139]/10 text-[#A35139] border-[#A35139]/30',
-      archive: 'bg-[#C9C1B1]/30 text-[#7a7365] border-[#C9C1B1]',
-    };
-    const labels = { actif: 'Actif', suspendu: 'Suspendu', archive: 'Archivé' };
-    const style = styles[statut] || styles.actif;
-    const label = labels[statut] || statut || 'Actif';
+    const points = { actif: '#2E7D53', suspendu: '#FFB162', archive: '#C9C1B1' };
+    const labels = { actif: 'Actif', suspendu: 'Suspendue', archive: 'Archivée' };
+    const couleur = points[statut] || points.actif;
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${style}`}>
-        {label}
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-[#1B2632] border whitespace-nowrap"
+        style={{ backgroundColor: `${couleur}22`, borderColor: `${couleur}66` }}>
+        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: couleur }} />
+        {labels[statut] || statut || 'Actif'}
       </span>
     );
   };
@@ -234,7 +232,7 @@ export default function TenantsPage() {
   }
 
   return (
-    <div className="max-w-[1400px] mx-auto space-y-6 relative pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
+    <div className="max-w-[1400px] mx-auto space-y-6 relative pt-4 sm:pt-2 px-4 sm:px-6 pb-10">
 
       {errorMsg && (
         <div className="bg-[#A35139]/10 border border-[#A35139]/30 text-[#A35139] px-4 py-3 rounded-xl">
@@ -243,16 +241,17 @@ export default function TenantsPage() {
       )}
 
       {/* En-tête */}
-      <div className="bg-white p-4 sm:p-6 shadow-sm rounded-xl border border-[#C9C1B1]/50 flex flex-wrap gap-3 justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-[#1B2632]">Gestion des Entreprises</h1>
-          <p className="text-sm text-[#7a7365] mt-1">Gérez les tenants et leurs administrateurs principaux.</p>
+      {/* En-tête compact (23/11), comme les autres pages. */}
+      <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#C9C1B1]/50 pb-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Entreprises</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{tenants.length}</span>
         </div>
         <button
           onClick={() => setIsModalOpen(true)}
           className="bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm cursor-pointer"
         >
-          <span className="text-lg leading-none">+</span> Nouvelle Entreprise
+          <span className="text-lg leading-none">+</span> Nouvelle entreprise
         </button>
       </div>
 
@@ -263,7 +262,6 @@ export default function TenantsPage() {
             <thead className="bg-[#EEE9DF]/60 text-[#7a7365] text-xs uppercase font-semibold border-b border-[#C9C1B1]/50">
               <tr>
                 <th className="px-6 py-4">Nom de l'entreprise</th>
-                <th className="px-6 py-4">ID Tenant</th>
                 <th className="px-6 py-4">Date de création</th>
                 <th className="px-6 py-4">Statut</th>
                 <th className="px-6 py-4 text-right">Actions</th>
@@ -272,7 +270,7 @@ export default function TenantsPage() {
             <tbody className="divide-y divide-[#EEE9DF]">
               {tenants.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-8 text-center text-[#9a9384] italic">
+                  <td colSpan="4" className="px-6 py-8 text-center text-[#9a9384] italic">
                     Aucune entreprise trouvée.
                   </td>
                 </tr>
@@ -284,30 +282,36 @@ export default function TenantsPage() {
                       <td className="px-6 py-4 font-bold text-[#1B2632]">
                         {tenant.nom_entreprise || 'Nom manquant'}
                       </td>
-                      <td className="px-6 py-4 font-mono text-xs text-[#9a9384]">{tenant.id}</td>
                       <td className="px-6 py-4">{formatDate(tenant.created_at)}</td>
                       <td className="px-6 py-4">{badgeStatut(tenant.statut)}</td>
                       <td className="px-6 py-4">
-                        <div className="flex justify-end gap-2">
+                        {/* Trois boutons de même taille (23/11) : Modifier plein, Suspendre
+                            contour orange, Supprimer contour rouge avec sa corbeille. */}
+                        <div className="flex justify-end items-center gap-2">
                           <button
                             onClick={() => ouvrirEdition(tenant)}
                             disabled={enCours}
-                            className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors text-[#1B2632] hover:bg-[#EEE9DF] disabled:opacity-40 cursor-pointer"
+                            className="text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40 cursor-pointer"
                           >
                             Modifier
                           </button>
                           <button
                             onClick={() => toggleSuspension(tenant)}
                             disabled={enCours}
-                            className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors text-[#A35139] hover:bg-[#A35139]/10 disabled:opacity-40 cursor-pointer"
+                            className={`text-xs font-bold px-3.5 py-1.5 rounded-lg border transition-colors disabled:opacity-40 cursor-pointer ${
+                              tenant.statut === 'suspendu'
+                                ? 'border-[#2E7D53]/50 text-[#2E7D53] hover:bg-[#2E7D53]/10'
+                                : 'border-[#FFB162] text-[#8a5a1f] hover:bg-[#FFB162]/15'}`}
                           >
                             {tenant.statut === 'suspendu' ? 'Réactiver' : 'Suspendre'}
                           </button>
                           <button
                             onClick={() => handleDeleteTenant(tenant)}
                             disabled={enCours}
-                            className="text-xs font-medium px-3 py-1.5 rounded-lg transition-colors text-[#A35139] hover:bg-[#A35139]/10 disabled:opacity-40 cursor-pointer"
+                            title="Supprimer l'entreprise"
+                            className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-lg border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 transition-colors disabled:opacity-40 cursor-pointer"
                           >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
                             Supprimer
                           </button>
                         </div>
@@ -398,6 +402,16 @@ export default function TenantsPage() {
             </div>
 
             <form onSubmit={handleUpdateTenant} className="p-6 space-y-4">
+              {/* L'identifiant (23/11) : retiré du tableau, gardé ici avec « Copier ». */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-[#7a7365] shrink-0">ID</span>
+                <code className="font-mono text-[#1B2632]/70 truncate">{editTenant.id}</code>
+                <button type="button"
+                  onClick={() => { navigator.clipboard?.writeText(editTenant.id).catch(() => {}) }}
+                  className="ml-auto shrink-0 px-2 py-1 rounded-md border border-[#C9C1B1] text-[#1B2632] hover:bg-[#EEE9DF] cursor-pointer">
+                  Copier
+                </button>
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-[#1B2632] mb-1">
                   Nom de l'entreprise *
