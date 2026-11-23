@@ -6,6 +6,35 @@ import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
 
+// Même minimum que Supabase Auth, Utilisateurs et Profil (23/11).
+const MIN_MOT_DE_PASSE = 8
+
+// « livreur » → « Livreur », « super_admin » → « Super admin » (23/11).
+const libelleRole = (nom) => String(nom || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) || '—'
+
+function Oeil({ voir, onClick }) {
+  return (
+    <button type="button" onClick={onClick} title={voir ? 'Masquer' : 'Afficher'}
+      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#1B2632]/45 hover:text-[#1B2632] cursor-pointer">
+      {voir ? (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+      ) : (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+      )}
+    </button>
+  )
+}
+
+function AideMotDePasse({ valeur, vide }) {
+  const n = (valeur || '').length
+  const court = n > 0 && n < MIN_MOT_DE_PASSE
+  return (
+    <p className={`text-[11px] mt-1 ${court ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/45'}`}>
+      {n === 0 && vide ? vide : `${MIN_MOT_DE_PASSE} caractères minimum${n ? ` · ${n} tapé${n > 1 ? 's' : ''}` : ''}`}
+    </p>
+  )
+}
+
 export default function SuperAdminComptes() {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
@@ -31,6 +60,13 @@ export default function SuperAdminComptes() {
   const [zonesTenant, setZonesTenant] = useState([])
   
   const [selectedUser, setSelectedUser] = useState(null)
+  // Trouver un compte (23/11) : recherche nom / e-mail + filtres entreprise et
+  // rôle, sur la liste déjà chargée — rien de plus n'est demandé à la base.
+  const [recherche, setRecherche] = useState('')
+  const [filtreEntreprise, setFiltreEntreprise] = useState('')
+  const [filtreRole, setFiltreRole] = useState('')
+  const [voirMdp, setVoirMdp] = useState(false)
+  const [voirMdpEdit, setVoirMdpEdit] = useState(false)
   
   // Redirection sécurisée via la matrice de permissions
   useEffect(() => {
@@ -160,6 +196,11 @@ export default function SuperAdminComptes() {
   
   const handleUpdateUser = async (e) => {
     e.preventDefault()
+    // Même règle que Supabase Auth (8 depuis le 17/11) : refusé ici, avant le serveur.
+    if (selectedUser.nouveau_mdp && selectedUser.nouveau_mdp.length < MIN_MOT_DE_PASSE) {
+      setMessage({ text: `Le nouveau mot de passe doit contenir au moins ${MIN_MOT_DE_PASSE} caractères.`, type: 'error' })
+      return
+    }
     setSubmitting(true)
     setMessage({ text: '', type: '' })
   
@@ -242,6 +283,11 @@ export default function SuperAdminComptes() {
   }
   
   const getRoleName = (id) => roles.find(r => r.id === id)?.nom || 'N/A'
+  const texteRecherche = recherche.trim().toLowerCase()
+  const comptesAffiches = comptes.filter((c) =>
+    (!texteRecherche || `${c.nom || ''} ${c.email || ''}`.toLowerCase().includes(texteRecherche))
+    && (!filtreEntreprise || (filtreEntreprise === 'global' ? !c.tenant_id : c.tenant_id === filtreEntreprise))
+    && (!filtreRole || c.role_id === filtreRole))
   const getTenantName = (id) => tenants.find(t => t.id === id)?.nom || tenants.find(t => t.id === id)?.nom_entreprise || 'Global'
   
   if (authLoading || permsLoading || !hasPermission('menu_comptes_acces')) {
@@ -249,14 +295,40 @@ export default function SuperAdminComptes() {
   }
   
   return (
-    <div className="space-y-6 pt-4 sm:pt-16 px-4 sm:px-6 pb-10 max-w-[1400px] mx-auto">
-      <div className="flex flex-wrap gap-3 justify-between items-center bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-[#C9C1B1]/40">
-        <div>
-          <h2 className="text-2xl font-bold text-[#1B2632]">Comptes & Accès</h2>
+    <div className="space-y-5 pt-4 sm:pt-2 px-4 sm:px-6 pb-10 max-w-[1400px] mx-auto">
+      {/* En-tête compact (23/11), comme Entreprises. */}
+      <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#C9C1B1]/50 pb-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold text-[#1B2632]">Comptes &amp; Accès</h1>
+          <span className="text-sm font-semibold text-[#1B2632]/50">{comptes.length}</span>
         </div>
-        <button onClick={() => setIsModalOpen(true)} className="bg-[#1B2632] hover:bg-[#2C3E50] text-white px-5 py-2.5 rounded-xl font-medium cursor-pointer transition-colors">
-          + Nouveau Compte
+        <button onClick={() => setIsModalOpen(true)} className="bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-5 py-2.5 rounded-xl text-sm font-bold cursor-pointer transition-colors">
+          + Nouveau compte
         </button>
+      </div>
+
+      {/* Trouver un compte (23/11). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 bg-white px-3.5 py-2.5 rounded-xl border border-[#C9C1B1] w-full sm:w-[300px] focus-within:border-[#1B2632]">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/35 shrink-0"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
+          <input id="recherche-compte" type="text" value={recherche} onChange={(e) => setRecherche(e.target.value)}
+            placeholder="Nom ou e-mail…" className="w-full outline-none bg-transparent text-sm text-[#1B2632]" />
+          {recherche && <button type="button" onClick={() => setRecherche('')} className="text-xs text-[#1B2632]/40 hover:text-[#A35139]">✕</button>}
+        </div>
+        <select id="filtre-entreprise" value={filtreEntreprise} onChange={(e) => setFiltreEntreprise(e.target.value)}
+          className="px-3 py-2.5 rounded-xl border border-[#C9C1B1] bg-white text-sm text-[#1B2632] outline-none cursor-pointer">
+          <option value="">Toutes les entreprises</option>
+          {tenants.map((t) => <option key={t.id} value={t.id}>{t.nom || t.nom_entreprise}</option>)}
+          <option value="global">Global (sans entreprise)</option>
+        </select>
+        <select id="filtre-role" value={filtreRole} onChange={(e) => setFiltreRole(e.target.value)}
+          className="px-3 py-2.5 rounded-xl border border-[#C9C1B1] bg-white text-sm text-[#1B2632] outline-none cursor-pointer">
+          <option value="">Tous les rôles</option>
+          {roles.map((r) => <option key={r.id} value={r.id}>{libelleRole(r.nom)}</option>)}
+        </select>
+        {(recherche || filtreEntreprise || filtreRole) && (
+          <span className="text-xs text-[#1B2632]/55">{comptesAffiches.length} sur {comptes.length}</span>
+        )}
       </div>
   
       <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-3 sm:p-6">
@@ -272,21 +344,25 @@ export default function SuperAdminComptes() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 text-sm">
-                {comptes.map((c, index) => (
+                {comptesAffiches.length === 0 && (
+                  <tr><td colSpan="4" className="py-8 text-center text-sm text-[#1B2632]/50">Aucun compte ne correspond.</td></tr>
+                )}
+                {comptesAffiches.map((c, index) => (
                   <tr key={c.id || c.user_id || index} className="hover:bg-gray-50/50">
                     <td className="py-4 px-4">
                       <div className="font-bold text-[#1B2632]">{c.nom || 'Sans nom'}</div>
                       <div className="font-medium text-xs text-gray-600 mt-0.5">{c.email || 'Email non renseigné'}</div>
-                      <div className="hidden sm:block font-mono text-[11px] text-gray-400 mt-0.5 break-all">{c.user_id}</div>
                     </td>
-                    <td className="py-4 px-4"><span className="px-3 py-1 bg-[#1B2632]/5 text-[#1B2632] font-semibold rounded-lg text-xs uppercase">{getRoleName(c.role_id)}</span></td>
+                    <td className="py-4 px-4"><span className="px-2.5 py-1 bg-[#EEE9DF] text-[#1B2632] font-semibold rounded-lg text-xs whitespace-nowrap">{libelleRole(getRoleName(c.role_id))}</span></td>
                     <td className="py-4 px-4 font-medium text-[#1B2632]">{getTenantName(c.tenant_id)}</td>
                     <td className="py-4 px-4">
                       <div className="flex justify-end gap-2 whitespace-nowrap">
-                      <button onClick={() => handleOpenEdit(c)} className="bg-[#1B2632]/10 hover:bg-[#1B2632] hover:text-white text-[#1B2632] px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors">
+                      <button onClick={() => handleOpenEdit(c)} className="text-xs font-bold px-3.5 py-1.5 rounded-lg bg-[#1B2632] text-white hover:bg-[#2C3B4D] cursor-pointer transition-colors">
                         Modifier
                       </button>
-                      <button onClick={() => handleDeleteUser(c.user_id)} className="bg-[#A35139]/10 hover:bg-[#A35139] hover:text-white text-[#A35139] px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors">
+                      <button onClick={() => handleDeleteUser(c.user_id)} title="Supprimer le compte"
+                        className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-lg border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 cursor-pointer transition-colors">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
                         Supprimer
                       </button>
                       </div>
@@ -312,14 +388,22 @@ export default function SuperAdminComptes() {
 
               <input type="text" name="nom" required placeholder="Nom / Prénom" value={formData.nom} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
               <input type="email" name="email" required placeholder="Email" value={formData.email} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
-              <input type="password" name="mot_de_passe" required placeholder="Mot de passe" value={formData.mot_de_passe} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
+              <div>
+                <div className="relative">
+                  <input type={voirMdp ? 'text' : 'password'} name="mot_de_passe" required minLength={MIN_MOT_DE_PASSE} autoComplete="new-password"
+                    placeholder="Mot de passe" value={formData.mot_de_passe} onChange={handleChange}
+                    className="w-full px-4 py-2.5 pr-11 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
+                  <Oeil voir={voirMdp} onClick={() => setVoirMdp((v) => !v)} />
+                </div>
+                <AideMotDePasse valeur={formData.mot_de_passe} />
+              </div>
               <select name="tenant_id" required value={formData.tenant_id} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
                 <option value="">Sélectionner une entreprise</option>
                 {tenants.map(t => <option key={t.id} value={t.id}>{t.nom || t.nom_entreprise}</option>)}
               </select>
               <select name="role_id" required value={formData.role_id} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
                 <option value="">Sélectionner un rôle</option>
-                {roles.map(r => <option key={r.id} value={r.id}>{r.nom.toUpperCase()}</option>)}
+                {roles.map(r => <option key={r.id} value={r.id}>{libelleRole(r.nom)}</option>)}
               </select>
 
               {besoinPays && (
@@ -375,6 +459,15 @@ export default function SuperAdminComptes() {
             </div>
   
             <form onSubmit={handleUpdateUser} className="space-y-4">
+              {/* L'identifiant (23/11) : retiré de la liste, gardé ici avec « Copier ». */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-[#1B2632]/50 shrink-0">ID</span>
+                <code className="font-mono text-[#1B2632]/70 truncate">{selectedUser.user_id}</code>
+                <button type="button" onClick={() => { navigator.clipboard?.writeText(selectedUser.user_id).catch(() => {}) }}
+                  className="ml-auto shrink-0 px-2 py-1 rounded-md border border-[#C9C1B1] text-[#1B2632] hover:bg-[#EEE9DF] cursor-pointer">
+                  Copier
+                </button>
+              </div>
               {message.text && (
                 <div className={`p-3 rounded-lg text-sm font-medium ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
                   {message.text}
@@ -406,20 +499,25 @@ export default function SuperAdminComptes() {
 
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nouveau mot de passe (optionnel)</label>
-                <input 
-                  type="password" 
-                  name="nouveau_mdp" 
-                  placeholder="Laisser vide pour ne pas changer" 
-                  value={selectedUser.nouveau_mdp || ''} 
-                  onChange={handleEditChange} 
-                  className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" 
-                />
+                <div className="relative">
+                  <input
+                    type={voirMdpEdit ? 'text' : 'password'}
+                    name="nouveau_mdp"
+                    autoComplete="new-password"
+                    placeholder="Laisser vide pour ne pas changer"
+                    value={selectedUser.nouveau_mdp || ''}
+                    onChange={handleEditChange}
+                    className="w-full px-4 py-2.5 pr-11 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]"
+                  />
+                  <Oeil voir={voirMdpEdit} onClick={() => setVoirMdpEdit((v) => !v)} />
+                </div>
+                <AideMotDePasse valeur={selectedUser.nouveau_mdp} vide="Vide = le mot de passe ne change pas." />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Rôle Principal</label>
                 <select name="role_id" value={selectedUser.role_id} onChange={handleEditChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.nom.toUpperCase()}</option>)}
+                  {roles.map(r => <option key={r.id} value={r.id}>{libelleRole(r.nom)}</option>)}
                 </select>
               </div>
 
