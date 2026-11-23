@@ -60,62 +60,79 @@ export function useDelaiPriseEnCharge(tenantId, debut, fin, actif) {
   return etat
 }
 
+// Les quatre tranches, une ligne chacune (23/11) : couleur, nom, nombre et
+// part du total, alignés comme un petit tableau — avant, une légende tassée en
+// police machine à écrire.
 function Tranches({ resume }) {
   const total = resume?.n || 0
   return (
-    <div className="flex flex-col gap-1.5" data-tranches>
+    <div className="flex flex-col gap-2.5" data-tranches>
       <div className="flex h-2.5 rounded-full overflow-hidden bg-[#EEE9DF]">
         {total > 0 && TRANCHES.map((t) => (
           <div key={t.cle} style={{ width: `${(resume.tranches[t.cle] / total) * 100}%`, backgroundColor: t.couleur }} />
         ))}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[#1B2632]/70">
-        {TRANCHES.map((t) => (
-          <span key={t.cle} className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: t.couleur }} />
-            {t.nom} : <b className="font-mono text-[#1B2632]">{resume?.tranches?.[t.cle] ?? 0}</b>
-          </span>
-        ))}
+      <div className="flex flex-col divide-y divide-[#C9C1B1]/30">
+        {TRANCHES.map((t) => {
+          const n = Number(resume?.tranches?.[t.cle] ?? 0)
+          return (
+            <div key={t.cle} className="flex items-center gap-2.5 py-1.5 text-sm">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.couleur }} />
+              <span className="text-[#1B2632]/70 flex-1">{t.nom}</span>
+              <span className="font-semibold text-[#1B2632] tabular-nums w-10 text-right">{n}</span>
+              <span className="text-xs text-[#1B2632]/45 tabular-nums w-12 text-right">{total > 0 ? `${Math.round((100 * n) / total)} %` : '—'}</span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-function BlocAttente({ resume }) {
+// Un chiffre et son nom, en carte (23/11).
+function Chiffre({ valeur, nom, alerte }) {
   return (
-    <div className="flex flex-col gap-3 p-5 rounded-xl border border-[#A35139]/30 bg-[#A35139]/[0.04]" data-bloc-attente>
+    <div className="flex flex-col gap-0.5">
+      <span className={`text-2xl font-bold tabular-nums ${alerte ? 'text-[#A35139]' : 'text-[#1B2632]'}`}>{valeur}</span>
+      <span className="text-xs text-[#1B2632]/55">{nom}</span>
+    </div>
+  )
+}
+
+function BlocAttente({ resume }) {
+  const n = resume?.n ?? 0
+  return (
+    <div className="flex flex-col gap-4 p-5 rounded-xl border border-[#C9C1B1] bg-white" data-bloc-attente>
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-[#A35139]">Encore en attente — maintenant</p>
-        <p className="text-[11px] text-[#1B2632]/55 mt-0.5">Toujours à l&apos;instant présent : la période choisie ne change pas ce chiffre.</p>
+        <h3 className="text-sm font-bold text-[#1B2632]">En attente maintenant</h3>
+        <p className="text-xs text-[#1B2632]/55 mt-0.5">Leads jamais pris en charge, à l&apos;instant présent (la période ne change rien ici).</p>
       </div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-bold font-mono text-[#1B2632]">{resume?.n ?? 0}</span>
-        <span className="text-sm text-[#1B2632]/70">lead{(resume?.n ?? 0) > 1 ? 's' : ''} jamais pris en charge</span>
+      <div className="grid grid-cols-3 gap-3">
+        <Chiffre valeur={n} nom={`lead${n > 1 ? 's' : ''} en attente`} alerte={n > 0} />
+        <Chiffre valeur={n ? formatDuree(resume.max_min) : '—'} nom="le plus ancien attend" />
+        <Chiffre valeur={n ? formatDuree(resume.mediane_min) : '—'} nom="attente médiane" />
       </div>
-      {(resume?.n ?? 0) > 0 && (
-        <p className="text-sm text-[#1B2632]/75">
-          Le plus ancien attend depuis <b>{formatDuree(resume.max_min)}</b> · médiane <b>{formatDuree(resume.mediane_min)}</b>
-        </p>
-      )}
       <Tranches resume={resume} />
     </div>
   )
 }
 
 function BlocPris({ resume, fermes }) {
+  const n = resume?.n ?? 0
   return (
-    <div className="flex flex-col gap-3 p-5 rounded-xl border border-[#C9C1B1] bg-white" data-bloc-pris>
+    <div className="flex flex-col gap-4 p-5 rounded-xl border border-[#C9C1B1] bg-white" data-bloc-pris>
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-[#1B2632]/70">Pris en charge — sur la période</p>
-        <p className="text-[11px] text-[#1B2632]/55 mt-0.5">Leads entrés dans la file pendant la période, et pris en charge depuis.</p>
+        <h3 className="text-sm font-bold text-[#1B2632]">Pris en charge sur la période</h3>
+        <p className="text-xs text-[#1B2632]/55 mt-0.5">Leads entrés dans la file pendant la période, et appelés depuis.</p>
       </div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-bold font-mono text-[#1B2632]">{formatDuree(resume?.mediane_min)}</span>
-        <span className="text-sm text-[#1B2632]/70">médiane · moyenne {formatDuree(resume?.moyenne_min)} · {resume?.n ?? 0} lead{(resume?.n ?? 0) > 1 ? 's' : ''}</span>
+      <div className="grid grid-cols-3 gap-3">
+        <Chiffre valeur={n} nom={`lead${n > 1 ? 's' : ''} pris en charge`} />
+        <Chiffre valeur={formatDuree(resume?.mediane_min)} nom="délai médian" />
+        <Chiffre valeur={formatDuree(resume?.moyenne_min)} nom="délai moyen" />
       </div>
       <Tranches resume={resume} />
       {fermes > 0 && (
-        <p className="text-[11px] text-[#1B2632]/55">{fermes} fermé{fermes > 1 ? 's' : ''} sans prise en charge enregistrée (statut corrigé sans appel).</p>
+        <p className="text-xs text-[#1B2632]/55">{fermes} lead{fermes > 1 ? 's' : ''} fermé{fermes > 1 ? 's' : ''} sans appel enregistré (statut corrigé à la main) : pas comptés.</p>
       )}
     </div>
   )
@@ -153,35 +170,75 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
         <p className="p-6 text-sm text-[#1B2632]/60">Calcul en cours...</p>
       ) : (
         <>
+          {/* Le tableau par agent, refait le 23/11 pour se lire comme celui des
+              agents : noms de colonnes clairs, l'attente en pastille, la médiane
+              toujours visible, et les quatre tranches en une petite barre de
+              couleur (survol = le détail) au lieu de quatre colonnes de chiffres. */}
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-[#EEE9DF]/40 text-[11px] uppercase tracking-wider text-[#1B2632]/60">
-                <tr>
-                  <th className="px-5 py-3">Agent</th>
-                  <th className="px-4 py-3 text-right">En attente</th>
-                  <th className="px-4 py-3 text-right">Plus ancien</th>
-                  <th className="px-4 py-3 text-right">Pris en charge</th>
-                  {details && <th className="px-4 py-3 text-right">Médiane</th>}
-                  {details && <th className="px-4 py-3 text-right">Moyenne</th>}
-                  {details && TRANCHES.map((t) => <th key={t.cle} className="px-3 py-3 text-right">{t.nom}</th>)}
+            <table className="w-full min-w-[720px] text-sm text-left border-collapse">
+              <thead>
+                <tr className="bg-white border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
+                  <th className="p-4">Agent</th>
+                  <th className="p-4">En attente maintenant</th>
+                  <th className="p-4 text-right">Pris en charge</th>
+                  <th className="p-4 text-right">Délai médian</th>
+                  {details && <th className="p-4 text-right">Délai moyen</th>}
+                  <th className="p-4 w-[220px]">Rapidité</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#C9C1B1]/40">
-                {donnees.par_agent.map((a) => (
-                  <tr key={a.cle} className={a.cle === 'sans' ? 'bg-[#A35139]/[0.03]' : ''}>
-                    <td className="px-5 py-3 font-semibold text-[#1B2632]">{a.agent}</td>
-                    <td className="px-4 py-3 text-right font-mono font-bold text-[#A35139]">{a.en_attente.n}</td>
-                    <td className="px-4 py-3 text-right font-mono text-[#1B2632]/75">{a.en_attente.n ? formatDuree(a.en_attente.max_min) : '—'}</td>
-                    <td className="px-4 py-3 text-right font-mono text-[#1B2632]">{a.pris_en_charge.n}</td>
-                    {details && <td className="px-4 py-3 text-right font-mono text-[#1B2632]/75">{formatDuree(a.pris_en_charge.mediane_min)}</td>}
-                    {details && <td className="px-4 py-3 text-right font-mono text-[#1B2632]/75">{formatDuree(a.pris_en_charge.moyenne_min)}</td>}
-                    {details && TRANCHES.map((t) => <td key={t.cle} className="px-3 py-3 text-right font-mono text-[#1B2632]/75">{a.pris_en_charge.tranches[t.cle]}</td>)}
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-[#C9C1B1]/30">
+                {donnees.par_agent.map((a) => {
+                  const tr = a.pris_en_charge.tranches || {}
+                  const total = TRANCHES.reduce((n, t) => n + Number(tr[t.cle] || 0), 0)
+                  return (
+                    <tr key={a.cle} className={`hover:bg-[#EEE9DF]/20 transition ${a.cle === 'sans' ? 'bg-[#A35139]/[0.03]' : ''}`}>
+                      <td className="p-4 font-medium text-[#1B2632]">{a.agent}</td>
+                      <td className="p-4">
+                        {a.en_attente.n > 0 ? (
+                          <span className="inline-flex items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[#A35139]/12 text-[#A35139] border border-[#A35139]/30 tabular-nums">
+                              {a.en_attente.n} lead{a.en_attente.n > 1 ? 's' : ''}
+                            </span>
+                            <span className="text-xs text-[#1B2632]/60 whitespace-nowrap">depuis {formatDuree(a.en_attente.max_min)}</span>
+                          </span>
+                        ) : (
+                          <span className="text-xs text-[#1B2632]/40">Personne n&apos;attend</span>
+                        )}
+                      </td>
+                      <td className="p-4 text-right font-semibold text-[#1B2632] tabular-nums">{a.pris_en_charge.n}</td>
+                      <td className="p-4 text-right font-semibold text-[#1B2632] tabular-nums whitespace-nowrap">{formatDuree(a.pris_en_charge.mediane_min)}</td>
+                      {details && <td className="p-4 text-right text-[#1B2632]/75 tabular-nums whitespace-nowrap">{formatDuree(a.pris_en_charge.moyenne_min)}</td>}
+                      <td className="p-4">
+                        {total > 0 ? (
+                          <div title={TRANCHES.map((t) => `${t.nom} : ${tr[t.cle] || 0}`).join(' · ')}>
+                            <div className="flex h-2.5 rounded-full overflow-hidden bg-[#EEE9DF]">
+                              {TRANCHES.map((t) => Number(tr[t.cle] || 0) > 0 && (
+                                <div key={t.cle} style={{ width: `${(100 * Number(tr[t.cle])) / total}%`, backgroundColor: t.couleur }} />
+                              ))}
+                            </div>
+                            <p className="text-[11px] text-[#1B2632]/55 mt-1 tabular-nums">
+                              {Math.round((100 * Number(tr.moins_15_min || 0)) / total)} % en moins de 15 min
+                            </p>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-[#1B2632]/40">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
-          <div className="px-5 py-3 border-t border-[#C9C1B1]/50">
+          <div className="px-5 py-3 border-t border-[#C9C1B1]/50 flex flex-wrap items-center justify-between gap-3">
+            {/* La légende de la barre « Rapidité » (23/11). */}
+            <span className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[#1B2632]/60 order-2">
+              {TRANCHES.map((t) => (
+                <span key={t.cle} className="inline-flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.couleur }} />{t.nom}
+                </span>
+              ))}
+            </span>
             <button type="button" onClick={() => setDetails((d) => !d)} aria-expanded={details}
               className="text-xs font-bold text-[#1B2632]/70 hover:text-[#1B2632] cursor-pointer" data-details>
               {details ? '▾ Détails' : '▸ Détails'}
@@ -193,12 +250,15 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
               <BlocPris resume={donnees.pris_en_charge} fermes={donnees.fermes_sans_prise_en_charge} />
             </div>
           )}
-          <div>
-            <p className="px-5 py-3 text-[11px] text-[#1B2632]/55">
-              « En attente » : l&apos;agent à qui le lead est affecté. « Pris en charge » : celui qui a enregistré la prise en charge.
-            </p>
-            <p className="px-5 pb-4 text-[11px] text-[#1B2632]/55">{EXPLICATION}</p>
+          {/* Les explications vivent dans « Détails » (23/11) : toujours ouvertes,
+              elles allongeaient la page pour un lecteur qui les connaît. */}
+          {details && (
+          <div className="mx-6 mb-6 px-4 py-3 rounded-xl bg-[#F4F0E6] text-xs text-[#1B2632]/70 flex flex-col gap-1.5">
+            <p className="font-bold text-[#1B2632]/80">Comment c&apos;est compté</p>
+            <p>• « En attente » est compté pour l&apos;agent à qui le lead est affecté ; « Pris en charge » pour celui qui a fait l&apos;appel.</p>
+            <p>• {EXPLICATION}</p>
           </div>
+          )}
         </>
       )}
     </section>

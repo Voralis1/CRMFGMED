@@ -8,6 +8,8 @@ import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 // Le délai de première prise en charge enregistrée (02/11) : responsables seulement.
 import { SectionDelai } from '../components/DelaiPriseEnCharge'
+// La période « Personnalisé » : le calendrier français des autres pages (23/11).
+import PlageDates from '../components/PlageDates'
 
 const PERIODES = [
   { id: 'aujourdhui', label: "Aujourd'hui" },
@@ -163,18 +165,12 @@ export default function PerformancesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-2 px-4 sm:px-6">
 
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
-        <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
-          <div>
-            <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">
-              Administration
-            </p>
-            <h1 className="text-3xl font-bold text-[#1B2632]">
-              Suivi des performances
-            </h1>
-          </div>
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+          {/* En-tête compact (23/11). */}
+          <h1 className="text-2xl font-bold text-[#1B2632]">Performances</h1>
 
           <button
             onClick={chargerPerformances}
@@ -203,35 +199,23 @@ export default function PerformancesPage() {
           </div>
 
           {periode === 'personnalise' && (
-            <div className="flex items-center gap-2 bg-white border border-[#C9C1B1] rounded-xl px-3 py-2 shadow-sm">
-              <input type="date" value={dateDebutPerso} onChange={(e) => setDateDebutPerso(e.target.value)} className="text-xs font-medium text-[#1B2632] outline-none bg-transparent" />
-              <span className="text-[#1B2632]/40 text-xs">→</span>
-              <input type="date" value={dateFinPerso} onChange={(e) => setDateFinPerso(e.target.value)} className="text-xs font-medium text-[#1B2632] outline-none bg-transparent" />
+            <div className="w-full sm:w-[250px]">
+              <style>{`.cm-input { width:100%; border:1px solid #C9C1B1; border-radius:12px; padding:8px 12px; font-size:13px; outline:none; background:#fff; color:#1B2632; }`}</style>
+              <PlageDates etiquette="performances" du={dateDebutPerso} au={dateFinPerso} placeholder="Choisir la période"
+                onChange={(du, au) => { setDateDebutPerso(du); setDateFinPerso(au) }} />
             </div>
           )}
         </div>
 
-        <div className="flex gap-4 mt-1">
-          <button
-            onClick={() => setOngletActif('agents')}
-            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
-              ongletActif === 'agents'
-                ? 'bg-[#1B2632] text-white shadow-md'
-                : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
-            }`}
-          >
-            Centre d'appel (Agents)
-          </button>
-          <button
-            onClick={() => setOngletActif('livreurs')}
-            className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer ${
-              ongletActif === 'livreurs'
-                ? 'bg-[#1B2632] text-white shadow-md'
-                : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
-            }`}
-          >
-            Centre logistique (Livreurs)
-          </button>
+        {/* Agents / Livreurs : des onglets (23/11), comme sur les autres pages. */}
+        <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 w-fit" role="tablist">
+          {[['agents', "Agents"], ['livreurs', 'Livreurs']].map(([cle, nom]) => (
+            <button key={cle} role="tab" aria-selected={ongletActif === cle} onClick={() => setOngletActif(cle)}
+              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
+                ongletActif === cle ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'}`}>
+              {nom}
+            </button>
+          ))}
         </div>
       </header>
 
@@ -241,9 +225,6 @@ export default function PerformancesPage() {
         </div>
       )}
 
-      {ongletActif === 'agents' && (
-        <SectionDelai tenantId={tenantId} debut={bornes.debut} fin={bornes.fin} roleNom={roleNom} />
-      )}
 
       {chargement ? (
         <p className="text-[#1B2632]/60 py-6">Calcul des statistiques en cours...</p>
@@ -279,7 +260,7 @@ export default function PerformancesPage() {
                       </span>
                     </td>
                     <td className="p-4 text-right font-medium text-[#1B2632]">{agent.total}</td>
-                    <td className="p-4 text-right font-bold text-[#A35139] text-lg">{agent.confirmations}</td>
+                    <td className="p-4 text-right font-bold text-[#2E7D53] text-lg">{agent.confirmations}</td>
                     <td className="p-4 text-right">
                       <span className="font-bold text-[#1B2632]">{agent.taux}%</span>
                       <BarreTaux valeur={agent.taux} couleur="#2C3B4D" />
@@ -348,6 +329,12 @@ export default function PerformancesPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* Le délai de prise en charge APRÈS le tableau des agents (23/11) : on
+          ouvre la page d'abord pour les appels et les confirmations. */}
+      {ongletActif === 'agents' && (
+        <SectionDelai tenantId={tenantId} debut={bornes.debut} fin={bornes.fin} roleNom={roleNom} />
       )}
 
     </div>
