@@ -60,7 +60,9 @@ export default function SuperAdminLayout({ children }) {
   return (
     // 🚀 L-MODIFICATION HNA: 7iydna <aside> kaml w khlina ghir l-contenu
     <div className="flex flex-1 min-h-full">
-      <main className="flex-1 overflow-y-auto p-10 bg-[#EEE9DF]/30">
+      {/* Sans marge propre (24/11) : AppLayout en met déjà une. Les deux
+          ensemble laissaient un grand vide en haut des 3 pages Super admin. */}
+      <main className="flex-1 min-w-0">
         {children}
       </main>
     </div>
