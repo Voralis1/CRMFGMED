@@ -6,6 +6,8 @@ import { supabase } from "../../lib/supabaseClient";
 import { libelleStatut } from "../../lib/libellesStatuts.mjs";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
+import { useMessages } from "../components/Messages";
+import { messageErreur } from "../../lib/messageErreur.mjs";
 import { retirerImage } from "../../lib/imageProduit";
 import DelaiReaffectation from "../components/DelaiReaffectation";
 import { PAYS_MONDE } from "../../lib/paysMonde";
@@ -29,6 +31,8 @@ const LIBELLE_MOUVEMENT = {
 export default function ParametresAdmin() {
   const { user, tenantId, loading: authLoading } = useAuth();
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
+  // Messages du CRM (24/11) au lieu du bandeau de la page et des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages();
 
   // Qui configure l'entreprise : pays, zones, statuts, entrepôts, stock. Rien
   // de tout cela n'appartient à un vendeur externe — ce sont les réglages de
@@ -61,7 +65,6 @@ export default function ParametresAdmin() {
 
   const [ongletActif, setOngletActif] = useState("pays");
   const [chargement, setChargement] = useState(true);
-  const [message, setMessage] = useState({ texte: "", type: "" });
 
   // --- États Frais vendeurs ---
   const [listeTarifs, setListeTarifs] = useState([]);
@@ -190,7 +193,7 @@ export default function ParametresAdmin() {
   // existe déjà sous une autre graphie. Le dire, au lieu d'« Erreur ».
   function messagePays(error, action) {
     if (error.code === "23505") return "Ce pays existe déjà (la casse et les espaces ne comptent pas).";
-    return `Erreur lors de ${action} : ${error.message}`;
+    return `Erreur lors de ${action} : ${messageErreur(error)}`;
   }
 
   async function ajouterPays(e) {
@@ -245,13 +248,14 @@ export default function ParametresAdmin() {
   // vide, ses fiches archivées que personne ne cite) part avec lui.
   async function supprimerPays(id, nom) {
     if (!tenantId) return;
-    if (!window.confirm(
-      `Supprimer « ${nom} » ?\n\n`
-      + "Ses zones, ses statuts et son entrepôt (s'il est vide) seront supprimés avec lui.",
-    )) return;
+    if (!(await confirmer({
+      titre: "Supprimer le pays",
+      message: `Supprimer « ${nom} » ?\n\nSes zones, ses statuts et son entrepôt (s'il est vide) seront supprimés avec lui.`,
+      bouton: "Supprimer", danger: true,
+    }))) return;
 
     const { data, error } = await supabase.rpc("supprimer_pays", { p_pays: id });
-    if (error) return afficherMessage(error.message, "erreur");
+    if (error) return afficherMessage(messageErreur(error), "erreur");
     afficherMessage(data || `« ${nom} » supprimé.`, "succes");
     chargerDonnees();
   }
@@ -277,7 +281,15 @@ export default function ParametresAdmin() {
 
   function preparerModificationZone(zone) { setNouvelleZone({ id: zone.id, nom_zone: zone.nom_zone || "", pays_id: zone.pays_id || "" }); setIsEditingZone(true); }
   function annulerEditionZone() { setNouvelleZone({ id: null, nom_zone: "", pays_id: "" }); setIsEditingZone(false); }
-  async function supprimerZone(id) { if (!tenantId || !window.confirm("Supprimer cette zone ?")) return; await supabase.from("zones").delete().eq("id", id).eq("tenant_id", tenantId); chargerDonnees(); }
+  // 24/11 : fenêtre du CRM, et le résultat est lu (avant, un refus passait pour un succès muet).
+  async function supprimerZone(id) {
+    if (!tenantId || !(await confirmer({ titre: "Supprimer la zone", message: "Supprimer cette zone ?", bouton: "Supprimer", danger: true }))) return;
+    const { data, error } = await supabase.from("zones").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
+    if (error) afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
+    else if (!data || data.length === 0) afficherMessage("Suppression refusée.", "erreur");
+    else afficherMessage("Zone supprimée.", "succes");
+    chargerDonnees();
+  }
 
   // =====================================================================
   // ACTIONS STATUTS
@@ -294,14 +306,21 @@ export default function ParametresAdmin() {
     } else {
       const codeGenere = nouveauStatut.nom.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s_]/g, "").replace(/\s+/g, "_");
       const { error } = await supabase.from("statuts").insert([{ nom: nouveauStatut.nom.trim(), code: codeGenere, couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, tenant_id: tenantId, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation, ferme_le_lead: nouveauStatut.ferme_le_lead }]);
-      if (error) afficherMessage("Erreur : " + error.message, "erreur");
+      if (error) afficherMessage("Erreur : " + messageErreur(error), "erreur");
       else { afficherMessage("Statut ajouté.", "succes"); setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); chargerDonnees(); }
     }
   }
 
   function preparerModificationStatut(statut) { setNouveauStatut({ id: statut.id, nom: statut.nom || "", couleur: statut.couleur || "#2C3B4D", pays_id: statut.pays_id || "", necessite_rappel: statut.necessite_rappel || false, declenche_assignation: statut.declenche_assignation || false, ferme_le_lead: statut.ferme_le_lead || false }); setIsEditingStatut(true); }
   function annulerEditionStatut() { setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); setIsEditingStatut(false); }
-  async function supprimerStatut(id) { if (!tenantId || !window.confirm("Supprimer ce statut ?")) return; await supabase.from("statuts").delete().eq("id", id).eq("tenant_id", tenantId); chargerDonnees(); }
+  async function supprimerStatut(id) {
+    if (!tenantId || !(await confirmer({ titre: "Supprimer le statut", message: "Supprimer ce statut ?", bouton: "Supprimer", danger: true }))) return;
+    const { data, error } = await supabase.from("statuts").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
+    if (error) afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
+    else if (!data || data.length === 0) afficherMessage("Suppression refusée.", "erreur");
+    else afficherMessage("Statut supprimé.", "succes");
+    chargerDonnees();
+  }
 
   // =====================================================================
   // ACTIONS PRODUITS
@@ -311,7 +330,7 @@ export default function ParametresAdmin() {
   // supprimer un fichier, et une fois le produit parti plus personne n'a le
   // droit de toucher au sien. Sans ça, ce bouton serait la source d'orphelins.
   async function supprimerProduit(pr) {
-    if (!tenantId || !window.confirm("Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.")) return;
+    if (!tenantId || !(await confirmer({ titre: "Supprimer le produit", message: "Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.", bouton: "Supprimer", danger: true }))) return;
     if (pr.image_chemin) {
       const err = await retirerImage(pr.image_chemin);
       if (err) return afficherMessage("Suppression annulée : l'image n'a pas pu être retirée (" + err + ").", "erreur");
@@ -320,7 +339,7 @@ export default function ParametresAdmin() {
     if (error) {
       // Le fichier est déjà parti : le produit ne doit plus le désigner.
       if (pr.image_chemin) await supabase.from("produits").update({ image_chemin: null }).eq("id", pr.id).eq("tenant_id", tenantId);
-      afficherMessage("Suppression refusée : " + error.message, "erreur");
+      afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
     } else afficherMessage("Produit supprimé.", "succes");
     chargerDonnees();
   }
@@ -352,7 +371,7 @@ export default function ParametresAdmin() {
       afficherMessage(
         error.code === "23505"
           ? `Il y a déjà un entrepôt pour ${pays?.nom || "ce pays"}.`
-          : "Erreur lors de l'ajout de l'entrepôt : " + error.message,
+          : "Erreur lors de l'ajout de l'entrepôt : " + messageErreur(error),
         "erreur",
       );
     } else {
@@ -384,29 +403,29 @@ export default function ParametresAdmin() {
     if (nbStocks) emporte.push(`${nbStocks} ligne(s) de stock`);
     if (nbMouvements) emporte.push(`${nbMouvements} mouvement(s)`);
 
-    if (!window.confirm(
+    if (!(await confirmer({ titre: "Supprimer l'entrepôt", bouton: "Supprimer", danger: true, message:
       `Supprimer l'entrepôt « ${entrepot.nom} » ?\n\n` +
       (emporte.length
         ? `Seront supprimés avec lui : ${emporte.join(" et ")}. Les quantités qu'il contenait ne seront plus comptées nulle part.\n\n`
         : "") +
       "Les commandes et expéditions déjà enregistrées sont conservées ; elles perdront seulement le lien vers lui."
-    )) return;
+    }))) return;
 
     // Dans cet ordre : les mouvements, puis les stocks, puis l'entrepôt.
     // L'inverse échouerait sur une clé étrangère, à mi-chemin.
     if (nbMouvements) {
       const { error } = await supabase.from("mouvements_stock").delete()
         .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId);
-      if (error) return afficherMessage("Suppression des mouvements refusée : " + error.message, "erreur");
+      if (error) return afficherMessage("Suppression des mouvements refusée : " + messageErreur(error), "erreur");
     }
     if (nbStocks) {
       const { error } = await supabase.from("stocks").delete()
         .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId);
-      if (error) return afficherMessage("Suppression du stock refusée : " + error.message, "erreur");
+      if (error) return afficherMessage("Suppression du stock refusée : " + messageErreur(error), "erreur");
     }
     const { error } = await supabase.from("entrepots").delete()
       .eq("id", entrepot.id).eq("tenant_id", tenantId);
-    if (error) afficherMessage("Suppression refusée : " + error.message, "erreur");
+    if (error) afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
     else { afficherMessage("Entrepôt supprimé.", "succes"); chargerDonnees(); }
   }
 
@@ -426,7 +445,7 @@ export default function ParametresAdmin() {
       afficherMessage(
         error.code === "23505"
           ? `Il y a déjà un entrepôt pour ${pays?.nom || "ce pays"}.`
-          : "Erreur : " + error.message,
+          : "Erreur : " + messageErreur(error),
         "erreur",
       );
     } else { afficherMessage("Pays de l'entrepôt enregistré.", "succes"); chargerDonnees(); }
@@ -443,7 +462,7 @@ export default function ParametresAdmin() {
       tenant_id: tenantId
     }]);
 
-    if (error) afficherMessage("Erreur : " + error.message, "erreur");
+    if (error) afficherMessage("Erreur : " + messageErreur(error), "erreur");
     else {
       afficherMessage("Mouvement enregistré ! L'inventaire a été mis à jour.", "succes");
       setNouveauMouvement({ produit_id: "", entrepot_id: "", type_mouvement: "entree", quantite: 1, notes: "" });
@@ -453,8 +472,7 @@ export default function ParametresAdmin() {
 
   // --- UTILITAIRES ---
   function afficherMessage(texte, type) {
-    setMessage({ texte, type });
-    setTimeout(() => setMessage({ texte: "", type: "" }), 5000);
+    annoncer(texte, type === "succes" ? "succes" : type === "erreur" ? "erreur" : "info");
   }
 
   // --- FRAIS VENDEURS ---
@@ -478,7 +496,7 @@ export default function ParametresAdmin() {
     if (t.valide_depuis) ligne.valide_depuis = t.valide_depuis;
     const { error } = await supabase.from("tarifs_vendeurs").insert([ligne]);
     if (error) {
-      afficherMessage(error.code === "23505" ? "Une ligne existe déjà pour ce pays, ce vendeur et cette date." : "Erreur : " + error.message, "erreur");
+      afficherMessage(error.code === "23505" ? "Une ligne existe déjà pour ce pays, ce vendeur et cette date." : "Erreur : " + messageErreur(error), "erreur");
       return;
     }
     afficherMessage("Frais enregistrés.", "succes");
@@ -488,9 +506,9 @@ export default function ParametresAdmin() {
 
   async function supprimerTarif(id) {
     if (!tenantId || !peutModifierFrais) return;
-    if (!window.confirm("Supprimer cette ligne de frais ? Les relevés déjà établis ne changent pas.")) return;
+    if (!(await confirmer({ titre: "Supprimer les frais", message: "Supprimer cette ligne de frais ? Les relevés déjà établis ne changent pas.", bouton: "Supprimer", danger: true }))) return;
     const { data, error } = await supabase.from("tarifs_vendeurs").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
-    if (error) return afficherMessage("Erreur : " + error.message, "erreur");
+    if (error) return afficherMessage("Erreur : " + messageErreur(error), "erreur");
     if (!data || data.length === 0) return afficherMessage("Suppression refusée.", "erreur");
     afficherMessage("Ligne supprimée.", "succes");
     chargerDonnees();
@@ -610,12 +628,6 @@ export default function ParametresAdmin() {
           <TabButton id="frais" label="Frais vendeurs" />
         </div>
       </header>
-
-      {message.texte && (
-        <div className={`p-4 rounded-xl text-sm font-semibold border ${message.type === 'succes' ? 'bg-[#d4edda] text-[#155724] border-[#c3e6cb]' : 'bg-[#f8d7da] text-[#721c24] border-[#f5c6cb]'}`}>
-          {message.texte}
-        </div>
-      )}
 
       {!peutModifier && (
         <div className="px-5 py-3 rounded-xl bg-[#FFB162]/10 border border-[#FFB162]/40 text-sm text-[#8a5a1f] font-medium">

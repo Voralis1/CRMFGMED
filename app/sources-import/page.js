@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 // Google Sheets : le code Apps Script généré, et le modèle de colonnes de
 // l'import CSV (la même liste, le même exemple).
 import { genererScriptSheets, colonnesSheets, COLONNE_STATUT, PREFIXE_SHEETS, MAX_LIGNES_SHEETS } from '../../lib/scriptGoogleSheets.mjs'
@@ -128,6 +130,8 @@ export default function SourcesImportPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu du bandeau de la page et des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   // Ce que l'écran PROPOSE. Ce qui est permis, c'est la base qui le décide
   // (RLS de sources_import, peut_gerer_source dans chaque fonction).
@@ -141,7 +145,6 @@ export default function SourcesImportPage() {
   const [paysListe, setPaysListe] = useState([])
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
-  const [message, setMessage] = useState({ texte: '', type: '' })
   const [copie, setCopie] = useState('')
 
   const [sourceId, setSourceId] = useState(null)
@@ -173,8 +176,7 @@ export default function SourcesImportPage() {
   const [enCours, setEnCours] = useState(false)
 
   const annonce = (texte, type = 'ok') => {
-    setMessage({ texte, type })
-    setTimeout(() => setMessage({ texte: '', type: '' }), 5000)
+    annoncer(texte, type === 'erreur' ? 'erreur' : 'succes')
   }
 
   useEffect(() => {
@@ -203,14 +205,14 @@ export default function SourcesImportPage() {
           : Promise.resolve({ data: [], error: null }),
         supabase.from('pays').select('id, nom').eq('tenant_id', tenantId).order('nom'),
       ])
-      if (s.error) throw new Error(s.error.message)
+      if (s.error) throw s.error
       const liste = s.data || []
       setSources(liste)
       setSellers(v.data || [])
       setPaysListe(p.data || [])
       setSourceId((avant) => (liste.some((x) => x.id === avant) ? avant : liste[0]?.id ?? null))
     } catch (e) {
-      setErreur(e?.message || 'Erreur de chargement')
+      setErreur(messageErreur(e, 'Erreur de chargement.'))
     } finally {
       setChargement(false)
     }
@@ -275,7 +277,7 @@ export default function SourcesImportPage() {
       p_vendeur: user?.id, p_secret_requis: true,
     })
     setEnCours(false)
-    if (error) return annonce('Création refusée : ' + error.message, 'erreur')
+    if (error) return annonce('Création refusée : ' + messageErreur(error), 'erreur')
     await charger()
     if (data?.[0]?.id) setSourceId(data[0].id)
   }
@@ -287,13 +289,13 @@ export default function SourcesImportPage() {
       p_tenant: tenantId, p_nom: nouvelle.nom.trim(), p_type: 'webhook',
       p_vendeur: nouvelle.vendeur_id || null, p_secret_requis: true,
     })
-    if (error) { setEnCours(false); return annonce('Création refusée : ' + error.message, 'erreur') }
+    if (error) { setEnCours(false); return annonce('Création refusée : ' + messageErreur(error), 'erreur') }
     // Une entreprise à un seul pays : la base l'a déjà mis (tr_sources_pays_defaut).
     // Sinon, le pays choisi dans le formulaire.
     if (nouvelle.pays_id && data?.[0]?.id) {
       const { error: e2 } = await supabase.from('sources_import')
         .update({ pays_defaut: nouvelle.pays_id }).eq('id', data[0].id).eq('tenant_id', tenantId)
-      if (e2) annonce('Source créée, mais le pays n\'a pas été enregistré : ' + e2.message, 'erreur')
+      if (e2) annonce('Source créée, mais le pays n\'a pas été enregistré : ' + messageErreur(e2), 'erreur')
     }
     setEnCours(false)
     setNouvelle(null)
@@ -308,7 +310,7 @@ export default function SourcesImportPage() {
   async function changerPays(s, paysId) {
     const { error } = await supabase.from('sources_import')
       .update({ pays_defaut: paysId || null }).eq('id', s.id).eq('tenant_id', tenantId)
-    if (error) return annonce('Erreur : ' + error.message, 'erreur')
+    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
     annonce(paysId
       ? `Les leads sans pays de « ${s.nom} » iront en ${paysListe.find((x) => x.id === paysId)?.nom ?? '?'}.`
       : `« ${s.nom} » n'a plus de pays : chaque lead devra écrire le sien.`)
@@ -321,21 +323,23 @@ export default function SourcesImportPage() {
   async function basculerActif(s) {
     const { error } = await supabase.from('sources_import')
       .update({ actif: !s.actif }).eq('id', s.id).eq('tenant_id', tenantId)
-    if (error) return annonce('Erreur : ' + error.message, 'erreur')
+    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
     annonce(s.actif ? `« ${s.nom} » est coupée : plus rien n'entre par elle.` : `« ${s.nom} » est réactivée.`)
     await charger()
   }
 
   async function supprimer(s) {
-    if (!confirm(
-      `Supprimer « ${s.nom} » ?\n\n` +
-      'Les commandes déjà entrées par cette source sont conservées ; elles ' +
-      'perdront seulement le lien vers elle. Pour arrêter une source sans rien ' +
-      'perdre, préférez « Couper ».'
-    )) return
+    if (!(await confirmer({
+      titre: 'Supprimer la source',
+      message: `Supprimer « ${s.nom} » ?\n\n` +
+        'Les commandes déjà entrées par cette source sont conservées ; elles ' +
+        'perdront seulement le lien vers elle. Pour arrêter une source sans rien ' +
+        'perdre, préférez « Couper ».',
+      bouton: 'Supprimer', danger: true,
+    }))) return
     const { error } = await supabase.from('sources_import')
       .delete().eq('id', s.id).eq('tenant_id', tenantId)
-    if (error) return annonce('Erreur : ' + error.message, 'erreur')
+    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
     annonce('Source supprimée.')
     await charger()
   }
@@ -356,7 +360,7 @@ export default function SourcesImportPage() {
     setErreurMdp('')
     const { data, error } = await supabase.rpc('reveler_secret_url', { p_source: source.id, p_mot_de_passe: motDePasse })
     setMotDePasse('')
-    if (error) return setErreurMdp('Erreur : ' + error.message)
+    if (error) return setErreurMdp(messageErreur(error))
     const r = data?.[0]
     if (r?.ok) {
       setSecretUrl(r.secret)
@@ -371,13 +375,15 @@ export default function SourcesImportPage() {
   }
 
   async function regenererIdentifiants() {
-    if (!source || !confirm(
-      `Régénérer la clé et le secret API de « ${source.nom} » ?\n\n` +
-      'L\'URL actuelle cesse de fonctionner aussitôt : votre boutique n\'enverra ' +
-      'plus rien tant que la nouvelle URL n\'y est pas collée.'
-    )) return
+    if (!source || !(await confirmer({
+      titre: 'Régénérer les identifiants',
+      message: `Régénérer la clé et le secret API de « ${source.nom} » ?\n\n` +
+        'L\'URL actuelle cesse de fonctionner aussitôt : votre boutique n\'enverra ' +
+        'plus rien tant que la nouvelle URL n\'y est pas collée.',
+      bouton: 'Régénérer', danger: true,
+    }))) return
     const { error } = await supabase.rpc('regenerer_identifiants_source', { p_source: source.id })
-    if (error) return annonce('Erreur : ' + error.message, 'erreur')
+    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
     annonce('Nouveaux identifiants. Collez la nouvelle URL dans votre boutique.')
     setSecretUrl(null)
     await chargerIdentifiants(source.id)
@@ -420,15 +426,6 @@ export default function SourcesImportPage() {
         </p>
       </header>
 
-      {message.texte && (
-        <div className={`px-4 py-3 rounded-xl text-sm font-medium border ${
-          message.type === 'erreur'
-            ? 'bg-[#A35139]/10 border-[#A35139]/30 text-[#A35139]'
-            : 'bg-[#2E7D53]/10 border-[#2E7D53]/30 text-[#2E7D53]'
-        }`}>
-          {message.texte}
-        </div>
-      )}
       {erreur && (
         <div className="px-4 py-3 rounded-xl bg-[#A35139]/10 border border-[#A35139]/30 text-sm text-[#A35139] font-medium">
           {erreur}

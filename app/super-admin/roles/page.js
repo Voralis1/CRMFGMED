@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
+import { useMessages } from '../../components/Messages'
+import { messageErreur } from '../../../lib/messageErreur.mjs'
 
 // Les permissions rangées par module (23/11) : la base les classe déjà en
 // 9 modules ; « general » et « Général » sont le même.
@@ -18,6 +20,8 @@ export default function SuperAdminRoles() {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   const [roles, setRoles] = useState([])
   const [permissions, setPermissions] = useState([])
@@ -143,7 +147,7 @@ export default function SuperAdminRoles() {
     })
     if (error) {
       console.error("Erreur mise à jour perms :", JSON.stringify(error, null, 2))
-      setMessage({ text: error.message || "Erreur lors de la mise à jour.", type: 'error' })
+      setMessage({ text: messageErreur(error, "Erreur lors de la mise à jour."), type: 'error' })
     } else {
       setMessage({ text: 'Permissions mises à jour !', type: 'success' })
       setNbPerms((n) => ({ ...n, [selectedRole.id]: rolePerms.length }))
@@ -158,18 +162,21 @@ export default function SuperAdminRoles() {
   // compte porte encore — sans ce refus, user_roles.role_id passait à NULL et ces
   // comptes perdaient toutes leurs permissions sans un mot (ON DELETE SET NULL).
   const handleDeleteRole = async (role) => {
-    const confirmation = window.confirm(
-      `Supprimer définitivement le rôle "${role.nom}" ?\n\nCette action est irréversible. Si des utilisateurs ont encore ce rôle, la suppression sera refusée.`
-    )
+    const confirmation = await confirmer({
+      titre: 'Supprimer le rôle',
+      message: `Supprimer définitivement le rôle « ${libelleRole(role.nom)} » ?\n\nCette action est irréversible. Si des comptes ont encore ce rôle, la suppression sera refusée.`,
+      bouton: 'Supprimer', danger: true,
+    })
     if (!confirmation) return
 
     setSuppressionEnCours(role.id)
     const { error } = await supabase.from('roles').delete().eq('id', role.id)
     if (error) {
       console.error("Erreur suppression rôle :", JSON.stringify(error, null, 2))
-      alert(error.message || "Erreur lors de la suppression du rôle.")
+      annoncer(messageErreur(error, "Erreur lors de la suppression du rôle."), 'erreur')
     } else {
       setRoles(roles.filter((r) => r.id !== role.id))
+      annoncer('Rôle supprimé.', 'succes')
     }
     setSuppressionEnCours(null)
   }

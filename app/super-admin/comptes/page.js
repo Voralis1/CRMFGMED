@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
+import { useMessages } from '../../components/Messages'
+import { messageErreur } from '../../../lib/messageErreur.mjs'
 
 // Même minimum que Supabase Auth, Utilisateurs et Profil (23/11).
 const MIN_MOT_DE_PASSE = 8
@@ -39,6 +41,11 @@ export default function SuperAdminComptes() {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
+  // Une erreur de la base (elle a un code) ou du réseau : traduite. Un texte
+  // levé avec le message de nos fonctions (déjà public, 16/11) : tel quel.
+  const texteErreur = (e, repli) => (e && (e.code !== undefined || e instanceof TypeError) ? messageErreur(e, repli) : (e?.message || repli))
   
   const [comptes, setComptes] = useState([])
   const [tenants, setTenants] = useState([])
@@ -188,7 +195,7 @@ export default function SuperAdminComptes() {
     } catch (error) {
       // Ce console.error affiche maintenant le VRAI message, plus la version tronquée
       console.error("Détail réel de l'erreur de création :", error.message)
-      setMessage({ text: error.message || "Erreur de création.", type: 'error' })
+      setMessage({ text: texteErreur(error, "Erreur de création."), type: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -241,14 +248,19 @@ export default function SuperAdminComptes() {
       setTimeout(() => { setIsEditModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
     } catch (error) {
       console.error("Détails de l'erreur :", error.message)
-      setMessage({ text: error.message || "Erreur lors de la mise à jour.", type: 'error' })
+      setMessage({ text: texteErreur(error, "Erreur lors de la mise à jour."), type: 'error' })
     } finally {
       setSubmitting(false)
     }
   }
 
   const handleDeleteUser = async (userId) => {
-    if (!window.confirm("Êtes-vous sûr de vouloir supprimer définitivement ce compte ? Cette action est irréversible.")) {
+    const compte = comptes.find((c) => c.user_id === userId)
+    if (!(await confirmer({
+      titre: 'Supprimer le compte',
+      message: `Supprimer définitivement le compte ${compte?.nom || compte?.email || ''} ? Il ne pourra plus se connecter. Cette action est irréversible.`,
+      bouton: 'Supprimer', danger: true,
+    }))) {
       return
     }
 
@@ -269,14 +281,14 @@ export default function SuperAdminComptes() {
         }
       )
 
-      const result = await response.json()
+      const result = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(result.error || result.message || "Erreur lors de la suppression.")
 
-      alert("Compte supprimé avec succès.")
+      annoncer('Compte supprimé.', 'succes')
       await chargerDonnees()
     } catch (error) {
       console.error("Erreur suppression :", error.message)
-      alert(error.message || "Erreur lors de la suppression.")
+      annoncer(texteErreur(error, "Erreur lors de la suppression."), 'erreur')
     } finally {
       setSubmitting(false)
     }

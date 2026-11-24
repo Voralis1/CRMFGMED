@@ -5,10 +5,14 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../context/PermissionsContext';
+import { useMessages } from '../../components/Messages';
+import { messageErreur } from '../../../lib/messageErreur.mjs';
 
 export default function TenantsPage() {
   const { user, loading: authLoading } = useAuth();
   const { hasPermission, loading: permsLoading } = usePermissions();
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages();
   const router = useRouter();
 
   const [tenants, setTenants] = useState([]);
@@ -91,7 +95,7 @@ export default function TenantsPage() {
       setNewTenantPays('');
     } catch (err) {
       console.error("Erreur de création détaillée :", err.message || JSON.stringify(err));
-      alert("Erreur lors de la création de l'entreprise : " + (err.message || "Vérifiez vos colonnes en base de données."));
+      annoncer(`Création impossible : ${messageErreur(err)}`, 'erreur');
     }
   }
 
@@ -110,7 +114,7 @@ export default function TenantsPage() {
     if (!editTenant || !editNom.trim()) return;
     const delai = Number(editDelai);
     if (!Number.isInteger(delai) || delai < 5 || delai > 480) {
-      alert('Délai de réaffectation : un nombre entier de minutes, entre 5 et 480.');
+      annoncer('Délai de réaffectation : un nombre entier de minutes, entre 5 et 480.', 'erreur');
       return;
     }
 
@@ -129,7 +133,7 @@ export default function TenantsPage() {
       setEditTenant(null);
     } catch (err) {
       console.error("Erreur de modification détaillée :", err.message || JSON.stringify(err));
-      alert("Erreur lors de la modification de l'entreprise : " + (err.message || "Erreur inconnue"));
+      annoncer(`Modification impossible : ${messageErreur(err)}`, 'erreur');
     } finally {
       setActionEnCours(null);
     }
@@ -140,10 +144,10 @@ export default function TenantsPage() {
   // ------------------------------------------------------------
   async function toggleSuspension(tenant) {
     const nouveauStatut = tenant.statut === 'suspendu' ? 'actif' : 'suspendu';
-    const confirmation = window.confirm(
+    const confirmation = await confirmer(
       nouveauStatut === 'suspendu'
-        ? `Suspendre "${tenant.nom_entreprise}" ? Ses utilisateurs ne pourront plus se connecter tant qu'elle est suspendue.`
-        : `Réactiver "${tenant.nom_entreprise}" ?`
+        ? { titre: 'Suspendre l\u2019entreprise', message: `Suspendre « ${tenant.nom_entreprise} » ? Ses utilisateurs ne pourront plus se connecter tant qu'elle est suspendue.`, bouton: 'Suspendre', danger: true }
+        : { titre: 'Réactiver l\u2019entreprise', message: `Réactiver « ${tenant.nom_entreprise} » ?`, bouton: 'Réactiver' }
     );
     if (!confirmation) return;
 
@@ -160,7 +164,7 @@ export default function TenantsPage() {
       setTenants(tenants.map((t) => (t.id === data.id ? data : t)));
     } catch (err) {
       console.error("Erreur de suspension :", err.message || err);
-      alert("Impossible de changer le statut : " + (err.message || "Erreur"));
+      annoncer(`Impossible de changer le statut : ${messageErreur(err)}`, 'erreur');
     } finally {
       setActionEnCours(null);
     }
@@ -170,9 +174,11 @@ export default function TenantsPage() {
   // Suppression définitive
   // ------------------------------------------------------------
   async function handleDeleteTenant(tenant) {
-    const confirmation = window.confirm(
-      `Supprimer définitivement "${tenant.nom_entreprise}" ?\n\nCette action est IRRÉVERSIBLE.`
-    );
+    const confirmation = await confirmer({
+      titre: 'Supprimer l\u2019entreprise',
+      message: `Supprimer définitivement « ${tenant.nom_entreprise} » ?\n\nCette action est IRRÉVERSIBLE.`,
+      bouton: 'Supprimer', danger: true,
+    });
     if (!confirmation) return;
 
     setActionEnCours(tenant.id);
@@ -186,7 +192,7 @@ export default function TenantsPage() {
         // 23503 (NO ACTION : commandes, agents, comptes) et 23001 (RESTRICT :
         // travail, argent, historique — fk_entreprises.sql, 12/11) : elle a travaillé.
         if (error.code === '23503' || error.code === '23001') {
-          alert(`Impossible de supprimer "${tenant.nom_entreprise}" : elle a des commandes, des comptes ou un historique.\n\nPour la fermer, passez son statut à « Archivé » (Modifier) : plus personne n'y accède et ses données restent.`);
+          annoncer(`Impossible de supprimer « ${tenant.nom_entreprise} » : elle a des commandes, des comptes ou un historique.\n\nPour la fermer, passez son statut à « Archivé » (Modifier) : plus personne n'y accède et ses données restent.`, 'erreur');
         } else {
           throw error;
         }
@@ -196,7 +202,7 @@ export default function TenantsPage() {
       setTenants(tenants.filter((t) => t.id !== tenant.id));
     } catch (err) {
       console.error("Erreur de suppression :", err.message || err);
-      alert("Erreur lors de la suppression de l'entreprise : " + (err.message || "Erreur"));
+      annoncer(`Suppression impossible : ${messageErreur(err)}`, 'erreur');
     } finally {
       setActionEnCours(null);
     }

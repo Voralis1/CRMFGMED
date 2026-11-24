@@ -8,6 +8,8 @@ import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import { PAYS_MONDE, drapeau, paysParNom } from '../../lib/paysMonde'
 import VignetteProduit from '../components/VignetteProduit'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 import { LIBELLES_EXPEDITION } from '../../lib/libellesStatuts.mjs'
 // Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
 import { contenuCSV } from '../../lib/celluleCSV.mjs'
@@ -75,6 +77,8 @@ export default function ExpeditionsPage() {
   const { entrepotId, entrepot } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu du bandeau de la page et des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
   const peutCreer = hasPermission('creer_expedition')
@@ -103,7 +107,6 @@ export default function ExpeditionsPage() {
   const [receptionEnvoi, setReceptionEnvoi] = useState(false)
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
-  const [message, setMessage] = useState({ texte: '', type: '' })
 
   const [recherche, setRecherche] = useState('')
   const [filtreStatut, setFiltreStatut] = useState('')
@@ -145,7 +148,7 @@ export default function ExpeditionsPage() {
       .order('created_at', { ascending: false })
 
     if (error) {
-      setErreur(error.message)
+      setErreur(messageErreur(error))
       setExpeditions([])
       setChargement(false)
       return
@@ -318,8 +321,7 @@ export default function ExpeditionsPage() {
   const enAttenteTousVendeurs = afficheesTousVendeurs.filter((e) => e.statut === 'en_attente').length
 
   function annonce(texte, type) {
-    setMessage({ texte, type })
-    setTimeout(() => setMessage({ texte: '', type: '' }), 6000)
+    annoncer(texte, type === 'succes' ? 'succes' : type === 'erreur' ? 'erreur' : 'info')
   }
 
   function ouvrirCreation() {
@@ -438,7 +440,7 @@ export default function ExpeditionsPage() {
 
     if (error) {
       setEnregistrement(false)
-      return annonce('Enregistrement refusé : ' + error.message, 'erreur')
+      return annonce('Enregistrement refusé : ' + messageErreur(error), 'erreur')
     }
     if (!data || data.length === 0) {
       setEnregistrement(false)
@@ -461,7 +463,7 @@ export default function ExpeditionsPage() {
       .eq('expedition_id', expeditionId).not('produit_id', 'is', null)
     if (erreurLecture) {
       setEnregistrement(false)
-      return annonce("Expédition enregistrée, mais ses produits n'ont pas pu être relus : " + erreurLecture.message, 'erreur')
+      return annonce("Expédition enregistrée, mais ses produits n'ont pas pu être relus : " + messageErreur(erreurLecture), 'erreur')
     }
 
     const voulues = lignes.filter((l) => !l.supprime)
@@ -476,14 +478,14 @@ export default function ExpeditionsPage() {
         .update({ quantite: v.quantite }).eq('id', parProduit.get(v.produit_id).id)
       if (e1) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais une quantité a été refusée : " + e1.message, 'erreur')
+        return annonce("Expédition enregistrée, mais une quantité a été refusée : " + messageErreur(e1), 'erreur')
       }
     }
     if (aRetirer.length > 0) {
       const { error: e2 } = await supabase.from('expeditions_produits').delete().in('id', aRetirer.map((r) => r.id))
       if (e2) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais un produit retiré n'a pas pu être supprimé : " + e2.message, 'erreur')
+        return annonce("Expédition enregistrée, mais un produit retiré n'a pas pu être supprimé : " + messageErreur(e2), 'erreur')
       }
     }
     if (aAjouter.length > 0) {
@@ -492,7 +494,7 @@ export default function ExpeditionsPage() {
       )
       if (e3) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais ses produits ont été refusés : " + e3.message, 'erreur')
+        return annonce("Expédition enregistrée, mais ses produits ont été refusés : " + messageErreur(e3), 'erreur')
       }
     }
 
@@ -518,7 +520,7 @@ export default function ExpeditionsPage() {
       .from('expeditions').update(maj)
       .eq('id', e.id).eq('tenant_id', tenantKey).select()
 
-    if (error) return annonce('Refusé par la base : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé par la base : ' + messageErreur(error), 'erreur')
     if (!data || data.length === 0) {
       return annonce("Votre rôle ne permet pas de confirmer une expédition.", 'erreur')
     }
@@ -540,13 +542,15 @@ export default function ExpeditionsPage() {
   // un stock vide, et personne ne saurait lequel des deux est vrai.
   async function confirmerEtRecevoir(e) {
     const sansStock = (nbProduits[e.id]?.lignes || []).filter((l) => l.sansMouvement)
-    if (!window.confirm(
-      `Confirmer ${e.reference} ?\n\n`
-      + "Les quantités déclarées entrent en stock, et cela ne se défait pas."
-      + (sansStock.length
-        ? '\n\n' + sansStock.map((l) => `${l.nom} ×${l.quantite} : produit supprimé — aucun mouvement de stock.`).join('\n')
-        : ''),
-    )) return
+    if (!(await confirmer({
+      titre: 'Confirmer la réception',
+      message: `Confirmer ${e.reference} ?\n\n`
+        + "Les quantités déclarées entrent en stock, et cela ne se défait pas."
+        + (sansStock.length
+          ? '\n\n' + sansStock.map((l) => `${l.nom} ×${l.quantite} : produit supprimé — aucun mouvement de stock.`).join('\n')
+          : ''),
+      bouton: 'Confirmer',
+    }))) return
 
     setReceptionEnvoi(true)
     const { data, error } = await supabase.rpc('receptionner_expedition', {
@@ -560,7 +564,7 @@ export default function ExpeditionsPage() {
     })
     setReceptionEnvoi(false)
 
-    if (error) return annonce(error.message, 'erreur')
+    if (error) return annonce(messageErreur(error), 'erreur')
 
     const r = Array.isArray(data) ? data[0] : data
     annonce(`Expédition confirmée : ${r?.total_recu ?? 0} pièce(s) entrées en stock.`, 'succes')
@@ -568,9 +572,9 @@ export default function ExpeditionsPage() {
   }
 
   async function supprimer(e) {
-    if (!window.confirm(`Supprimer l'expédition ${e.reference} ?`)) return
+    if (!(await confirmer({ titre: 'Supprimer l\u2019expédition', message: `Supprimer l'expédition ${e.reference} ?`, bouton: 'Supprimer', danger: true }))) return
     const { error } = await supabase.from('expeditions').delete().eq('id', e.id).eq('tenant_id', tenantKey)
-    if (error) return annonce('Suppression refusée : ' + error.message, 'erreur')
+    if (error) return annonce('Suppression refusée : ' + messageErreur(error), 'erreur')
     annonce('Expédition supprimée.', 'succes')
     charger()
   }
@@ -784,13 +788,6 @@ export default function ExpeditionsPage() {
         )}
       </header>
 
-      {message.texte && (
-        <div className={`px-4 py-3 rounded-xl text-sm font-medium ${
-          message.type === 'succes' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
-        }`}>
-          {message.texte}
-        </div>
-      )}
 
       {erreur && (
         <div className="px-4 py-3 rounded-xl text-sm bg-red-50 text-red-800 border border-red-200">
