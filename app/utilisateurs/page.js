@@ -5,10 +5,14 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext' 
 import { usePermissions } from '../context/PermissionsContext' 
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 
 export default function UtilisateursPage() {
   const { user, tenantId, loading: authLoading } = useAuth() 
   const { hasPermission, loading: permsLoading } = usePermissions() 
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
   const router = useRouter()
 
   // 🚀 EXTRACTION SÉCURISÉE DU TENANT ID
@@ -177,7 +181,7 @@ export default function UtilisateursPage() {
   async function basculerStatutAgent(id, statutActuel) {
     const { error } = await supabase.from('agents').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
-      alert('Erreur lors du changement de statut : ' + error.message)
+      annoncer(`Changement de statut impossible : ${messageErreur(error)}`, 'erreur')
     } else {
       await chargerDonnees()
     }
@@ -186,7 +190,7 @@ export default function UtilisateursPage() {
   async function basculerStatutLivreur(id, statutActuel) {
     const { error } = await supabase.from('livreurs').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
-      alert('Erreur lors du changement de statut : ' + error.message)
+      annoncer(`Changement de statut impossible : ${messageErreur(error)}`, 'erreur')
     } else {
       await chargerDonnees()
     }
@@ -197,11 +201,11 @@ export default function UtilisateursPage() {
   // "Comptes & Accès". The agent/livreur row is kept (inactive, user_id = null) so the
   // history of orders, deliveries and payments stays intact.
   async function supprimerCompte(userId, nom, type) {
-    if (!window.confirm(`Supprimer le compte de ${nom} ? Il ne pourra plus se connecter.`)) return
     if (!userId) {
-      alert("Ce profil n'est lié à aucun compte.")
+      annoncer("Ce profil n'est lié à aucun compte.", 'erreur')
       return
     }
+    if (!(await confirmer({ titre: 'Supprimer le compte', message: `Supprimer le compte de ${nom} ? Il ne pourra plus se connecter.\n\nSon historique (commandes, livraisons, paiements) est conservé.`, bouton: 'Supprimer', danger: true }))) return
 
     const { data: { session } } = await supabase.auth.getSession()
     const reponse = await fetch(
@@ -215,10 +219,10 @@ export default function UtilisateursPage() {
         body: JSON.stringify({ user_id: userId }),
       }
     )
-    const resultat = await reponse.json()
+    const resultat = await reponse.json().catch(() => ({}))
 
     if (!reponse.ok || resultat.error) {
-      alert('Erreur lors de la suppression : ' + (resultat.error || 'inconnue'))
+      annoncer(`Suppression impossible : ${messageErreur(resultat.error, 'erreur inconnue.')}`, 'erreur')
     } else {
       afficherMessage(type === 'livreur' ? 'Livreur supprimé.' : 'Agent supprimé.', 'succes')
       await chargerDonnees()
@@ -241,12 +245,12 @@ export default function UtilisateursPage() {
     const table = typeEdition === 'agent' ? 'agents' : 'livreurs'
 
     if (!editPays) {
-      alert('Le pays est obligatoire.')
+      annoncer('Le pays est obligatoire.', 'erreur')
       return
     }
 
     if (typeEdition === 'livreur' && !editZone) {
-      alert('La zone est obligatoire pour un livreur.')
+      annoncer('La zone est obligatoire pour un livreur.', 'erreur')
       return
     }
 
@@ -270,9 +274,9 @@ export default function UtilisateursPage() {
       .select()
 
     if (error) {
-      alert('Erreur Supabase : ' + error.message)
+      annoncer(`Enregistrement impossible : ${messageErreur(error)}`, 'erreur')
     } else if (!data || data.length === 0) {
-      alert("Aucune modification n'a été enregistrée.")
+      annoncer("Aucune modification n'a été enregistrée.", 'info')
     } else {
       afficherMessage('Modifications enregistrées avec succès !', 'succes')
       setModalOuverte(false)
@@ -375,11 +379,11 @@ export default function UtilisateursPage() {
                       </td>
                       <td className="px-4 py-4"><div className="flex justify-end gap-2 whitespace-nowrap">
                         {peutGerer ? (<>
-                        <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                        <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3.5 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
                         <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
                           {a.actif ? 'Désactiver' : 'Activer'}
                         </button>
-                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} title="Supprimer le compte" className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 rounded-lg text-xs font-bold cursor-pointer transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>Supprimer</button>
                         </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
                       </div></td>
                     </tr>
@@ -438,11 +442,11 @@ export default function UtilisateursPage() {
                       </td>
                       <td className="px-4 py-4"><div className="flex justify-end gap-2 whitespace-nowrap">
                         {peutGerer ? (<>
-                        <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3 py-1.5 bg-[#EEE9DF] hover:bg-[#C9C1B1] text-[#1B2632] rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                        <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3.5 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
                         <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
                           {l.actif ? 'Désactiver' : 'Activer'}
                         </button>
-                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} className="px-3 py-1.5 text-red-600 hover:bg-red-50 rounded-lg text-xs font-bold cursor-pointer transition-colors">Supprimer</button>
+                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} title="Supprimer le compte" className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 rounded-lg text-xs font-bold cursor-pointer transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>Supprimer</button>
                         </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
                       </div></td>
                     </tr>

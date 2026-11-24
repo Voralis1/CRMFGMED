@@ -26,6 +26,8 @@ import { orContient } from '../../lib/rechercheOr.mjs'
 import { nomsParGroupe, sousStatutOuvert, statutPrincipal } from '../../lib/affichageStatut.mjs'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import CommandesSupprimees from '../components/CommandesSupprimees'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 // Le filtre par agent, partagé avec le Centre d'appel : même liste, mêmes règles.
 import SelectAgent, { filtrerParAgent, nomFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 import PlageDates from '../components/PlageDates'
@@ -117,6 +119,8 @@ export default function GestionCommandesPage() {
   const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
 
@@ -591,7 +595,7 @@ export default function GestionCommandesPage() {
     setNbNonReconnu(nonReconnu && !nonReconnu.error ? nonReconnu.count : null)
 
     if (error) {
-      alert("Erreur lors du chargement : " + error.message)
+      annoncer(`Chargement impossible : ${messageErreur(error)}`, 'erreur')
     } else {
       setCommandes(data || [])
       setTotalCommandes(count || 0)
@@ -638,7 +642,7 @@ export default function GestionCommandesPage() {
     setDroitSuppression(peutSupprimer ? null : undefined)
     if (peutSupprimer) {
       supabase.rpc('suppression_commande_possible', { p_id: cmd.id }).then(({ data, error }) => {
-        setDroitSuppression(error ? { permis: false, motif: error.message } : (data || [])[0] || { permis: false, motif: 'Commande introuvable.' })
+        setDroitSuppression(error ? { permis: false, motif: messageErreur(error) } : (data || [])[0] || { permis: false, motif: 'Commande introuvable.' })
       })
     }
     if (peutChangerStatut) {
@@ -649,7 +653,7 @@ export default function GestionCommandesPage() {
         .order('created_at', { ascending: false })
         .limit(1)
         .then(({ data, error }) => {
-          if (error) { setLivraisonDetail({ erreur: error.message }); return }
+          if (error) { setLivraisonDetail({ erreur: messageErreur(error) }); return }
           const l = (data || [])[0]
           setLivraisonDetail(l ? { statut: l.statut, livreur: l.livreurs?.nom || 'sans nom' } : null)
         })
@@ -672,7 +676,7 @@ export default function GestionCommandesPage() {
       .eq('commande_id', cmd.id)
       .order('cree_le', { ascending: false })
 
-    if (error) { setErreurHistorique(error.message); setHistorique([]); return }
+    if (error) { setErreurHistorique(messageErreur(error)); setHistorique([]); return }
     setHistorique(data || [])
   }
 
@@ -713,13 +717,13 @@ export default function GestionCommandesPage() {
     // avant l'envoi ; la base revérifie.
     const refusRappel = rappelRefuse(listeStatutsDB, lotStatut, null, rappelIso)
     if (refusRappel) { setErreurLot(refusRappel); return }
-    if (!confirm(`Passer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page en « ${libelleStatut(lotStatut)} » ?`)) return
+    if (!(await confirmer({ titre: 'Changer le statut', message: `Passer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page en « ${libelleStatut(lotStatut)} » ?`, bouton: 'Appliquer' }))) return
 
     setLotEnCours(true)
     const { data, error } = await appelerChangerStatut(lignes.map((c) => c.id), lotStatut, lotMotif.trim(), rappelIso)
     setLotEnCours(false)
     const action = `Statut « ${libelleStatut(lotStatut)} »`
-    if (error) { setResultatLot({ action, erreur: error.message }); return }
+    if (error) { setResultatLot({ action, erreur: messageErreur(error) }); return }
     const resume = resumerLot(action, data, lignes)
     setResultatLot(resume)
     setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
@@ -736,13 +740,13 @@ export default function GestionCommandesPage() {
     const raison = raisonSuppression.trim()
     if (!raison) { setErreurSuppression('La raison est obligatoire.'); return }
     const avertir = droitSuppression.avertissement ? `\n\n${droitSuppression.avertissement}` : ''
-    if (!confirm(`Supprimer la commande ${detail.lead_id || ''} ? Elle disparaît de Commandes et du Centre d'appel. Pas de retour possible.${avertir}`)) return
+    if (!(await confirmer({ titre: 'Supprimer la commande', message: `Supprimer la commande ${detail.lead_id || ''} ? Elle disparaît de Commandes et du Centre d'appel. Pas de retour possible.${avertir}`, bouton: 'Supprimer', danger: true }))) return
     setSuppressionEnCours(true)
     setErreurSuppression('')
     const { data, error } = await supabase.rpc('supprimer_commandes', { p_tenant: tenantKey, p_ids: [detail.id], p_raison: raison })
     setSuppressionEnCours(false)
     const r = (data || [])[0]
-    if (error || r?.resultat !== 'applique') { setErreurSuppression(error?.message || r?.motif || 'Suppression refusée.'); return }
+    if (error || r?.resultat !== 'applique') { setErreurSuppression(error ? messageErreur(error, 'Suppression refusée.') : (r?.motif || 'Suppression refusée.')); return }
     setDetail(null)
     await chargerCommandes(pageActuelle)
   }
@@ -751,13 +755,18 @@ export default function GestionCommandesPage() {
     const lignes = lignesCochees
     if (!lignes.length) return
     setErreurLot('')
-    const raison = (window.prompt(`Supprimer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page ? Elles disparaissent de Commandes et du Centre d'appel ; le stock sorti revient. Pas de retour possible.\n\nRaison (obligatoire) :`) || '').trim()
+    const raison = await confirmer({
+      titre: 'Supprimer les commandes',
+      message: `Supprimer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page ? Elles disparaissent de Commandes et du Centre d'appel ; le stock sorti revient. Pas de retour possible.`,
+      saisie: { label: 'Raison', placeholder: 'Ex. : test, doublon, client injoignable…' },
+      bouton: 'Supprimer', danger: true,
+    })
     if (!raison) return
     setLotEnCours(true)
     const { data, error } = await supabase.rpc('supprimer_commandes', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_raison: raison })
     setLotEnCours(false)
     const action = 'Suppression'
-    if (error) { setResultatLot({ action, erreur: error.message }); return }
+    if (error) { setResultatLot({ action, erreur: messageErreur(error) }); return }
     const resume = resumerLot(action, data, lignes)
     setResultatLot(resume)
     setRefusParId(Object.fromEntries(resume.refus.map((r) => [r.id, r.motif])))
@@ -794,7 +803,7 @@ export default function GestionCommandesPage() {
       const r = (data || [])[0]
       if (error || r?.resultat === 'refuse') {
         setChangementEnCours(false)
-        setErreurStatut(error ? error.message : r.motif)
+        setErreurStatut(error ? messageErreur(error) : r.motif)
         return
       }
       if (!adresseChange) {
@@ -854,7 +863,7 @@ export default function GestionCommandesPage() {
     const { data, error } = await appelerChangerStatut([detail.id], 'Pending', motifRenvoi.trim(), null)
     setChangementEnCours(false)
     const r = (data || [])[0]
-    if (error) { setErreurStatut(error.message); return }
+    if (error) { setErreurStatut(messageErreur(error)); return }
     if (r?.resultat === 'refuse') { setErreurStatut(r.motif); return }
     const maj = { ...detail, statut_confirmation: 'Pending', date_rappel: null }
     setDetail(maj)
@@ -876,7 +885,7 @@ export default function GestionCommandesPage() {
       .eq('tenant_id', tenantKey)
 
     if (error) {
-      alert("Erreur d'assignation : " + error.message)
+      annoncer(`Assignation impossible : ${messageErreur(error)}`, 'erreur')
     } else {
       setCommandes(prev => prev.map(cmd => cmd.id === commandeId ? { ...cmd, agent_id: valueToSet } : cmd))
     }
@@ -891,7 +900,7 @@ export default function GestionCommandesPage() {
     // lui-même le « vendeur » et la commande n'entrait dans aucun relevé.
     const vendeurId = estSeller ? (user?.id || null) : (newCmd.vendeur_id || null)
     if (!vendeurId) {
-      alert('Choisissez le vendeur de cette commande.')
+      annoncer('Choisissez le vendeur de cette commande.', 'erreur')
       return
     }
     setCreationLoading(true)
@@ -899,7 +908,7 @@ export default function GestionCommandesPage() {
     const refusPays = await refusPaysSansEntrepot(newCmd.pays_id)
     if (refusPays) {
       setCreationLoading(false)
-      alert(refusPays)
+      annoncer(refusPays, 'erreur')
       return
     }
 
@@ -926,7 +935,7 @@ export default function GestionCommandesPage() {
     setCreationLoading(false)
 
     if (error) {
-      alert("Erreur lors de la création : " + error.message)
+      annoncer(`Création impossible : ${messageErreur(error)}`, 'erreur')
     } else {
       setIsCreateModalOpen(false)
       setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '', vendeur_id: '' })
@@ -961,7 +970,7 @@ export default function GestionCommandesPage() {
       }
     } catch (e) {
       setExportEnCours(false)
-      alert("Export impossible : " + (e?.message || e))
+      annoncer(`Export impossible : ${messageErreur(e)}`, 'erreur')
       return
     }
     setExportEnCours(false)
@@ -971,7 +980,7 @@ export default function GestionCommandesPage() {
 
   function exporterCSV(commandes, nomFichier) {
     if (commandes.length === 0) {
-      alert("Aucune commande à exporter dans cette vue.");
+      annoncer('Aucune commande à exporter dans cette vue.', 'info');
       return;
     }
 
@@ -1164,7 +1173,7 @@ export default function GestionCommandesPage() {
         })),
       })
     } catch (e) {
-      setApercu({ erreur: e?.message || 'Fichier illisible' })
+      setApercu({ erreur: messageErreur(e, 'Fichier illisible.') })
     }
   }
 
@@ -1177,7 +1186,7 @@ export default function GestionCommandesPage() {
     const cible = cibleImport
     // Sans pays, impossible de savoir quel agent doit recevoir les leads :
     // mieux vaut refuser tout de suite que les faire entrer orphelins.
-    if (!cible) { alert(estSeller ? 'Choisissez le pays.' : 'Choisissez l\u2019entrepôt.'); return }
+    if (!cible) { annoncer(estSeller ? 'Choisissez le pays.' : 'Choisissez l\u2019entrepôt.', 'erreur'); return }
     // Le filet : les sélecteurs ne proposent déjà qu'un pays qui a un
     // entrepôt (vendeur : v_pays_livrables ; responsable : un entrepôt qui a
     // un pays). Relu ici au cas où il aurait changé depuis le chargement.
@@ -1299,7 +1308,7 @@ export default function GestionCommandesPage() {
 
       for (let i = 0; i < aInserer.length; i += 500) {
         const { error } = await supabase.from('commandes').insert(aInserer.slice(i, i + 500))
-        if (error) { erreur = error.message; break }
+        if (error) { erreur = messageErreur(error); break }
         inserees += aInserer.slice(i, i + 500).length
       }
 
@@ -1313,7 +1322,7 @@ export default function GestionCommandesPage() {
 
       if (inserees > 0) { chargerCommandes(0); setPageActuelle(0) }
     } catch (e) {
-      setImportResultat({ erreur: e?.message || 'Erreur de lecture du fichier.' })
+      setImportResultat({ erreur: messageErreur(e, 'Erreur de lecture du fichier.') })
     }
     setImportEnCours(false)
   }
@@ -1668,7 +1677,7 @@ export default function GestionCommandesPage() {
                     <td className="px-4 py-3.5 align-top">
                       <div className="font-mono font-bold text-[#1B2632] text-[13px] whitespace-nowrap">{cmd.lead_id || '—'}</div>
                       {refusParId[cmd.id] && (
-                        <div className="text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px]">Refusé : {refusParId[cmd.id]}</div>
+                        <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">Refusé</span></div>
                       )}
                       <div className="text-[10px] text-[#5c5648] uppercase bg-[#EEE9DF] px-1.5 py-0.5 rounded w-fit mt-1">
                         {cmd.source || 'direct'}{cmd.source_sheet ? ` · ${cmd.source_sheet}` : ''}

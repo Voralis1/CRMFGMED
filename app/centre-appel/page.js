@@ -9,6 +9,8 @@ import { usePermissions } from '../context/PermissionsContext'
 import { parsePhoneNumberFromString } from 'libphonenumber-js'
 import VignetteProduit from '../components/VignetteProduit'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 // Le filtre par agent, partagé avec Commandes : même liste, mêmes règles.
 import SelectAgent, { AUCUN_AGENT, nomFiltreAgent as nomDuFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 // Le filtre produit par PRODUIT (produit_id), partagé avec Commandes.
@@ -165,6 +167,8 @@ export default function CentreAppelAgent() {
   const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions() 
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
 
@@ -438,9 +442,9 @@ export default function CentreAppelAgent() {
     const { data, error } = await supabase.rpc('affecter_agent_lot', { p_tenant: tenantKey, p_ids: [commandeId], p_agent: agentId })
     setAgentEnCours(null)
 
-    if (error) { alert('Erreur : ' + error.message); return }
+    if (error) { annoncer(messageErreur(error), 'erreur'); return }
     const r = (data || [])[0]
-    if (r?.resultat === 'refuse') { alert(r.motif); return }
+    if (r?.resultat === 'refuse') { annoncer(r.motif, 'erreur'); return }
 
     setCommandes((prec) => prec.map((c) => (c.id === commandeId ? { ...c, agent_id: agentId } : c)))
     setAgentChoisi((prec) => ({ ...prec, [commandeId]: '' }))
@@ -454,14 +458,14 @@ export default function CentreAppelAgent() {
     const lignes = commandes.filter((c) => selection[c.id])
     const agent = listeAgents.find((a) => a.id === agentLot)
     if (!lignes.length || !agent) return
-    if (!confirm(`Affecter ${lignes.length} lead${lignes.length > 1 ? 's' : ''} de cette page à ${agent.nom} ?`)) return
+    if (!(await confirmer({ titre: 'Affecter les leads', message: `Affecter ${lignes.length} lead${lignes.length > 1 ? 's' : ''} de cette page à ${agent.nom} ?`, bouton: 'Affecter' }))) return
 
     setLotEnCours(true)
     const { data, error } = await supabase.rpc('affecter_agent_lot', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_agent: agentLot })
     setLotEnCours(false)
     const action = `Affectation à ${agent.nom}`
     if (error) {
-      setResultatLot({ action, erreur: error.message })
+      setResultatLot({ action, erreur: messageErreur(error) })
       return
     }
     const resume = resumerLot(action, data, lignes)
@@ -609,9 +613,9 @@ export default function CentreAppelAgent() {
   async function remonterLeads() {
     if (statutsBas.length === 0) return
     const { count, error: erreurCompte } = await groupeARemonter(supabase.from('commandes').select('id', { count: 'exact', head: true }))
-    if (erreurCompte) { alert('Erreur : ' + erreurCompte.message); return }
-    if (!count) { alert('Aucun lead en attente de rappel ne correspond aux filtres.'); return }
-    if (!confirm(`Remonter ${count} lead${count > 1 ? 's' : ''} en attente de rappel${filtreAgent ? ` (filtre agent : ${nomFiltreAgent})` : ''} ?\n\nIls passent en tête de la file de leur agent. Leur statut ne change pas.`)) return
+    if (erreurCompte) { annoncer(messageErreur(erreurCompte), 'erreur'); return }
+    if (!count) { annoncer('Aucun lead en attente de rappel ne correspond aux filtres.', 'info'); return }
+    if (!(await confirmer({ titre: 'Remonter les leads', message: `Remonter ${count} lead${count > 1 ? 's' : ''} en attente de rappel${filtreAgent ? ` (filtre agent : ${nomFiltreAgent})` : ''} ?\n\nIls passent en tête de la file de leur agent. Leur statut ne change pas.`, bouton: 'Remonter' }))) return
 
     setRemonteeEnCours(true)
     try {
@@ -631,9 +635,9 @@ export default function CentreAppelAgent() {
         if (error) throw error
         remontes += data || 0
       }
-      alert(`${remontes} lead${remontes > 1 ? 's' : ''} remonté${remontes > 1 ? 's' : ''}.`)
+      annoncer(`${remontes} lead${remontes > 1 ? 's' : ''} remonté${remontes > 1 ? 's' : ''}.`, 'succes')
     } catch (e) {
-      alert('Erreur : ' + (e?.message || e))
+      annoncer(messageErreur(e), 'erreur')
     }
     setRemonteeEnCours(false)
     allerPage1()
@@ -687,7 +691,7 @@ export default function CentreAppelAgent() {
     setNbNonReconnu(nrA.error || nrB.error ? null : (nrA.count || 0) + (nrB.count || 0))
     const eT = totA.error || totB.error
     if (eA || eB || eT) {
-      setErreurChargement((eA || eB || eT).message)
+      setErreurChargement(messageErreur(eA || eB || eT))
       setCommandes([]); setComptes(null); setLoading(false)
       return
     }
@@ -736,7 +740,7 @@ export default function CentreAppelAgent() {
     try {
       data = (await Promise.all(lectures)).flat()
     } catch (e) {
-      setErreurChargement(e?.message || String(e))
+      setErreurChargement(messageErreur(e))
       setCommandes([]); setComptes(null); setLoading(false)
       return
     }
@@ -851,7 +855,7 @@ export default function CentreAppelAgent() {
 
   async function validerAppel() {
     if (!statutChoisi) {
-      alert("Veuillez sélectionner un résultat d'appel.");
+      annoncer("Choisissez un résultat d'appel.", 'erreur');
       return;
     }
     // Même règle que confirmer-appel, dite avant l'envoi. Le serveur reste
@@ -878,7 +882,11 @@ export default function CentreAppelAgent() {
       return
     }
 
-    const reponse = await fetch(
+    // Réseau coupé (24/11) : avant, l'erreur n'était pas attrapée et le bouton
+    // restait sur « envoi en cours » sans rien dire.
+    let reponse, resultat
+    try {
+    reponse = await fetch(
       `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-appel`,
       {
         method: 'POST',
@@ -899,7 +907,12 @@ export default function CentreAppelAgent() {
       }
     )
 
-    const resultat = await reponse.json()
+    resultat = await reponse.json()
+    } catch (e) {
+      setEnvoiEnCours(false)
+      setErreurEnvoi(messageErreur(e, "L'appel n'a pas pu être enregistré."))
+      return
+    }
     setEnvoiEnCours(false)
 
     if (resultat.error) {
@@ -913,9 +926,9 @@ export default function CentreAppelAgent() {
       const { data: apres } = await supabase.from('commandes')
         .select('statut_confirmation').eq('id', commandeSelectionnee.id).maybeSingle()
       if (apres?.statut_confirmation === 'Rupture de stock') {
-        alert(`Commande mise en « Out of stock » : pas assez de « ${formData.produit} » disponible dans l'entrepôt. Elle reviendra « En attente » toute seule quand le stock reviendra.`)
+        annoncer(`Commande mise en « Out of stock » : pas assez de « ${formData.produit} » disponible dans l'entrepôt. Elle reviendra « En attente » toute seule quand le stock reviendra.`, 'info')
       } else if (apres?.statut_confirmation === 'Produit non reconnu') {
-        alert(`Commande mise en « Produit non reconnu » : le CRM ne trouve pas « ${formData.produit} » au catalogue. Prévenez un responsable pour relier le produit.`)
+        annoncer(`Commande mise en « Produit non reconnu » : le CRM ne trouve pas « ${formData.produit} » au catalogue. Prévenez un responsable pour relier le produit.`, 'info')
       }
     }
 
@@ -1307,7 +1320,7 @@ export default function CentreAppelAgent() {
                         {/* Le Lead ID, sous le client : on le cherche rarement des yeux. */}
                         <div className="font-mono text-[11px] text-[#1B2632]/40 mt-0.5 whitespace-nowrap">#{cmd.lead_id || 'N/A'}</div>
                         {refusParId[cmd.id] && (
-                          <div className="text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px] whitespace-normal">Refusé : {refusParId[cmd.id]}</div>
+                          <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">Refusé</span></div>
                         )}
                       </td>
                       {/* Le lieu (17/11) : ville et pays sur une ligne, sans répéter un

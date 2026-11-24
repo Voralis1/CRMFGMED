@@ -3,6 +3,7 @@ import AppLayout from './components/AppLayout'
 import { AuthProvider } from './context/AuthContext'
 import { PermissionsProvider } from './context/PermissionsContext.js' // 🚀 Import ajouté
 import { EntrepotProvider } from './context/EntrepotContext'
+import { MessagesProvider } from './components/Messages'
 
 export const metadata = {
   title: 'CRM FGMED',
@@ -18,9 +19,13 @@ export default function RootLayout({ children }) {
           <PermissionsProvider>
             {/* L'entrepôt regardé (11/11) : le filtre de tous les écrans. */}
             <EntrepotProvider>
-              <AppLayout>
-                {children}
-              </AppLayout>
+              {/* Les messages du CRM (24/11) : annonces + confirmations, au lieu
+                  des fenêtres du navigateur. */}
+              <MessagesProvider>
+                <AppLayout>
+                  {children}
+                </AppLayout>
+              </MessagesProvider>
             </EntrepotProvider>
           </PermissionsProvider>
         </AuthProvider>

@@ -9,49 +9,95 @@
 //
 // resultat : { action, appliques, inchanges, refus: [{ id, lead, client, motif }] }
 // ou { action, erreur } quand l'appel entier a échoué (rien n'a été appliqué).
+// Refait le 24/11 (sa remarque : « pas joli ») : avant, « 0 appliqué » disait
+// quand même « Les autres sont faits », tout était rouge et la même raison
+// se répétait sur chaque ligne. Maintenant : une couleur selon l'issue (tout
+// fait / en partie / rien), une phrase juste, et les refus RANGÉS PAR RAISON —
+// la raison une fois, puis les commandes qu'elle concerne.
+const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? 's' : ''}`
+
+function Fermer({ onFermer }) {
+  return (
+    <button onClick={onFermer} aria-label="Fermer" title="Fermer"
+      className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[#1B2632]/40 hover:text-[#1B2632] hover:bg-[#1B2632]/5 cursor-pointer">
+      ✕
+    </button>
+  )
+}
+
 export default function ResultatLot({ resultat, onFermer }) {
   if (!resultat) return null
 
   if (resultat.erreur) {
     return (
-      <div className="rounded-2xl border border-[#A35139] bg-[#A35139]/5 p-4 text-sm text-[#1B2632]">
-        <div className="flex items-start justify-between gap-3">
-          <p>
-            <b className="text-[#A35139]">{resultat.action} : rien n'a été appliqué.</b>{' '}
-            {resultat.erreur}
-          </p>
-          <button onClick={onFermer} className="text-xs font-semibold text-[#1B2632]/50 hover:text-[#A35139] shrink-0">Fermer</button>
+      <div role="alert" className="rounded-2xl border border-[#A35139]/40 bg-[#F8ECE8] px-4 py-3 text-sm text-[#1B2632] flex items-start gap-3">
+        <span className="shrink-0 mt-0.5 w-5 h-5 rounded-full bg-[#A35139] text-white text-xs font-bold flex items-center justify-center">!</span>
+        <div className="flex-1">
+          <p className="font-bold">{resultat.action} : rien n&apos;a été appliqué.</p>
+          <p className="text-[#1B2632]/75 mt-0.5">{resultat.erreur}</p>
         </div>
+        <Fermer onFermer={onFermer} />
       </div>
     )
   }
 
   const { appliques, inchanges, refus } = resultat
+  const faits = appliques + inchanges
+  const issue = refus.length === 0 ? 'ok' : faits === 0 ? 'rien' : 'partiel'
+  const style = {
+    ok: { bord: '#2E7D53', fond: '#EAF4EE', icone: '✓' },
+    partiel: { bord: '#C9822F', fond: '#FBF1E4', icone: '!' },
+    rien: { bord: '#A35139', fond: '#F8ECE8', icone: '!' },
+  }[issue]
+
+  // Les refus rangés par raison, dans l'ordre où ils arrivent.
+  const parMotif = new Map()
+  for (const r of refus) {
+    const m = r.motif || 'Refusé.'
+    if (!parMotif.has(m)) parMotif.set(m, [])
+    parMotif.get(m).push(r)
+  }
+
   return (
-    <div className={`rounded-2xl border p-4 text-sm text-[#1B2632] ${refus.length ? 'border-[#A35139] bg-[#A35139]/5' : 'border-[#C9C1B1] bg-[#EEE9DF]/40'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <p className="font-semibold">
-          {resultat.action} : {appliques} appliqué{appliques > 1 ? 's' : ''}
-          {inchanges > 0 && <> · {inchanges} déjà ainsi</>}
-          {refus.length > 0 && <span className="text-[#A35139]"> · {refus.length} refusé{refus.length > 1 ? 's' : ''}</span>}
-        </p>
-        <button onClick={onFermer} className="text-xs font-semibold text-[#1B2632]/50 hover:text-[#A35139] shrink-0">Fermer</button>
-      </div>
-      {refus.length > 0 && (
-        <>
-          <p className="text-xs text-[#1B2632]/60 mt-1">
-            Les autres sont faits. Ceux-ci n'ont pas bougé et restent cochés :
+    <div role={issue === 'ok' ? 'status' : 'alert'} className="rounded-2xl border px-4 py-3 text-sm text-[#1B2632]"
+      style={{ background: style.fond, borderColor: `${style.bord}66` }}>
+      <div className="flex items-start gap-3">
+        <span className="shrink-0 mt-0.5 w-5 h-5 rounded-full text-white text-xs font-bold flex items-center justify-center" style={{ background: style.bord }}>{style.icone}</span>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold">
+            {issue === 'rien'
+              ? `${resultat.action} : aucune commande traitée, ${refus.length} refusée${refus.length > 1 ? 's' : ''}`
+              : <>{resultat.action} : {pluriel(appliques, 'commande')} traitée{appliques > 1 ? 's' : ''}
+                  {inchanges > 0 && <span className="font-semibold text-[#1B2632]/60"> · {inchanges} déjà ainsi</span>}
+                  {refus.length > 0 && <span style={{ color: style.bord }}> · {refus.length} refusée{refus.length > 1 ? 's' : ''}</span>}</>}
           </p>
-          <ul className="mt-2 flex flex-col gap-1">
-            {refus.map((r) => (
-              <li key={r.id} className="text-xs">
-                <span className="font-mono font-semibold">#{r.lead || '?'}</span>
-                {r.client && <span className="text-[#1B2632]/70"> — {r.client}</span>}
-                <span className="text-[#A35139]"> : {r.motif}</span>
-              </li>
-            ))}
-          </ul>
-        </>
+          {refus.length > 0 && (
+            <p className="text-xs text-[#1B2632]/60 mt-0.5">
+              {refus.length === 1
+                ? `${issue === 'rien' ? 'Elle n’a pas été modifiée' : 'La refusée n’a pas bougé'} ; elle reste cochée.`
+                : `${issue === 'rien' ? 'Aucune n’a été modifiée' : 'Les refusées n’ont pas bougé'} ; elles restent cochées.`}
+            </p>
+          )}
+        </div>
+        <Fermer onFermer={onFermer} />
+      </div>
+
+      {refus.length > 0 && (
+        <div className="mt-3 ml-8 flex flex-col gap-2.5">
+          {[...parMotif.entries()].map(([motif, liste]) => (
+            <div key={motif} className="rounded-xl bg-white/70 border border-[#C9C1B1]/50 px-3 py-2.5">
+              <p className="text-[13px] font-semibold text-[#1B2632]">{motif}</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {liste.map((r) => (
+                  <span key={r.id} className="inline-flex items-center gap-1.5 text-xs bg-[#EEE9DF] rounded-md px-2 py-1">
+                    <span className="font-mono font-semibold">{r.lead || '?'}</span>
+                    {r.client && <span className="text-[#1B2632]/60">{r.client}</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

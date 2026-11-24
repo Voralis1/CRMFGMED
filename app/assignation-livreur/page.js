@@ -386,7 +386,7 @@ export default function AssignationLivreurPage() {
                         <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80 whitespace-nowrap">
                           #{cmd.lead_id || 'N/A'}
                           {refusParId[cmd.id] && (
-                            <div className="font-sans text-[11px] font-semibold text-[#A35139] mt-1 max-w-[220px]">Refusé : {refusParId[cmd.id]}</div>
+                            <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">Refusé</span></div>
                           )}
                         </td>
 
