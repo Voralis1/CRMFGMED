@@ -7,6 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import VignetteProduit from '../components/VignetteProduit'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 // Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
 import { contenuCSV } from '../../lib/celluleCSV.mjs'
 // Lien de vérification : http(s) seulement (16/11).
@@ -72,6 +74,8 @@ export default function ProduitsPage() {
   const { entrepotId } = useEntrepot()
   const [produitsEntrepot, setProduitsEntrepot] = useState(null)   // Set des id, ou null = tous
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
+  // Messages du CRM (24/11) : annonces en bas à droite + fenêtres de confirmation.
+  const { annoncer, confirmer } = useMessages()
   const router = useRouter()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
@@ -99,7 +103,6 @@ export default function ProduitsPage() {
   const [stocksParProduit, setStocksParProduit] = useState({})
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
-  const [message, setMessage] = useState({ texte: '', type: '' })
 
   const [recherche, setRecherche] = useState('')
   const [filtreType, setFiltreType] = useState('')
@@ -171,7 +174,7 @@ export default function ProduitsPage() {
     if (error) {
       // Le message de la base, pas une supposition : si une colonne manque
       // parce que le SQL n'a pas été lancé, il le dit noir sur blanc.
-      setErreur(error.message)
+      setErreur(messageErreur(error))
       setProduits([])
       setChargement(false)
       return
@@ -350,7 +353,7 @@ export default function ProduitsPage() {
       const { error: eProp } = await supabase.rpc('proposer_sku', {
         p_source: source, p_sku: sku.trim(), p_produit: produit, p_multiplicateur: n,
       })
-      if (eProp) return annonce('Proposition refusée : ' + eProp.message, 'erreur')
+      if (eProp) return annonce('Proposition refusée : ' + messageErreur(eProp), 'erreur')
       annonce(`SKU « ${sku.trim()} » proposé : un manager ou un admin doit l\u2019approuver.`, 'succes')
       setNouveauSku({ sku: '', pack: '1', source: '' })
       charger()
@@ -359,7 +362,7 @@ export default function ProduitsPage() {
     const { data, error } = await supabase.rpc('ajouter_correspondance_sku', {
       p_source: source, p_sku: sku.trim(), p_produit: produit, p_multiplicateur: n,
     })
-    if (error) return annonce('SKU refusé : ' + error.message, 'erreur')
+    if (error) return annonce('SKU refusé : ' + messageErreur(error), 'erreur')
     const relies = data?.[0]?.commandes_reliees ?? 0
     annonce(`SKU « ${sku.trim()} » ajouté${relies ? ` : ${relies} lead${relies > 1 ? 's' : ''} relié${relies > 1 ? 's' : ''}` : ''}.`, 'succes')
     setNouveauSku({ sku: '', pack: '1', source: '' })
@@ -381,7 +384,7 @@ export default function ProduitsPage() {
     for (const x of lignes) {
       const args = { p_source: source, p_sku: x.sku.trim(), p_produit: produitId, p_multiplicateur: parseInt(x.pack, 10) || 1 }
       const { data: r, error: eSku } = await supabase.rpc(estSeller ? 'proposer_sku' : 'ajouter_correspondance_sku', args)
-      if (eSku) refus.push(`${x.sku.trim()} (${eSku.message})`)
+      if (eSku) refus.push(`${x.sku.trim()} (${messageErreur(eSku)})`)
       else if (!estSeller) relies += r?.[0]?.commandes_reliees ?? 0
     }
     const faits = lignes.length - refus.length
@@ -392,24 +395,26 @@ export default function ProduitsPage() {
 
   async function approuverSku(x) {
     const { data, error } = await supabase.rpc('approuver_sku', { p_proposition: x.id })
-    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
     annonce(`SKU « ${x.sku} » approuvé${data ? ` : ${data} lead${data > 1 ? 's' : ''} relié${data > 1 ? 's' : ''}` : ''}.`, 'succes')
     if (ficheOuverte) await chargerSkusProduit(ficheOuverte.id)
     charger()
   }
 
   async function refuserSku(x) {
-    if (!window.confirm(estSeller ? `Retirer votre proposition « ${x.sku} » ?` : `Refuser le SKU « ${x.sku} » ?`)) return
+    if (!(await confirmer(estSeller
+      ? { titre: 'Retirer la proposition', message: `Retirer votre proposition « ${x.sku} » ?`, bouton: 'Retirer', danger: true }
+      : { titre: 'Refuser le SKU', message: `Refuser le SKU « ${x.sku} » ?`, bouton: 'Refuser', danger: true }))) return
     const { error } = await supabase.rpc('refuser_sku', { p_proposition: x.id })
-    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
     annonce(estSeller ? 'Proposition retirée.' : `SKU « ${x.sku} » refusé.`, 'succes')
     charger()
   }
 
   async function retirerSku(m) {
-    if (!window.confirm(`Retirer le SKU « ${m.sku} » ?`)) return
+    if (!(await confirmer({ titre: 'Retirer le SKU', message: `Retirer le SKU « ${m.sku} » ?`, bouton: 'Retirer', danger: true }))) return
     const { error } = await supabase.rpc('retirer_correspondance_sku', { p_correspondance: m.id })
-    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
     annonce(`SKU « ${m.sku} » retiré.`, 'succes')
     if (ficheOuverte) await chargerSkusProduit(ficheOuverte.id)
   }
@@ -431,7 +436,7 @@ export default function ProduitsPage() {
       .eq('produit_id', p.id)
       .order('created_at', { ascending: false })
 
-    if (error) { annonce('Historique illisible : ' + error.message, 'erreur'); return }
+    if (error) { annonce('Historique illisible : ' + messageErreur(error), 'erreur'); return }
 
     // Stock actuel par entrepôt, point de départ de la remontée.
     const courant = {}
@@ -511,9 +516,9 @@ export default function ProduitsPage() {
     setModaleOuverte(true)
   }
 
+  // Le bandeau de la page est remplacé par les annonces du CRM (24/11).
   function annonce(texte, type) {
-    setMessage({ texte, type })
-    setTimeout(() => setMessage({ texte: '', type: '' }), 6000)
+    annoncer(texte, type === 'succes' ? 'succes' : type === 'erreur' ? 'erreur' : 'info')
   }
 
   // Après l'enregistrement du produit, dans le même clic. Ordre : envoyer la
@@ -527,13 +532,13 @@ export default function ProduitsPage() {
       try {
         chemin = await envoyerImage(tenantKey, produit.id, imageChoisie)
       } catch (err) {
-        return `L\u2019image n\u2019a pas été enregistrée (${err.message}). Réessayez avec « Modifier ».`
+        return `L\u2019image n\u2019a pas été enregistrée (${messageErreur(err)}). Réessayez avec « Modifier ».`
       }
       const { error } = await supabase.from('produits')
         .update({ image_chemin: chemin }).eq('id', produit.id).eq('tenant_id', tenantKey)
       if (error) {
         await retirerImage(chemin)
-        return `L\u2019image n\u2019a pas été enregistrée (${error.message}).`
+        return `L\u2019image n\u2019a pas été enregistrée (${messageErreur(error)}).`
       }
       if (ancienne) await retirerImage(ancienne)
       oublierImage()
@@ -542,7 +547,7 @@ export default function ProduitsPage() {
     if (imageRetiree && ancienne) {
       const { error } = await supabase.from('produits')
         .update({ image_chemin: null }).eq('id', produit.id).eq('tenant_id', tenantKey)
-      if (error) return `L\u2019image n\u2019a pas été retirée (${error.message}).`
+      if (error) return `L\u2019image n\u2019a pas été retirée (${messageErreur(error)}).`
       await retirerImage(ancienne)
       oublierImage()
     }
@@ -613,7 +618,7 @@ export default function ProduitsPage() {
       if (error.code === '23505' && String(error.message).includes('idx_produits_code_unique')) {
         return annonce('Ce vendeur a déjà un produit avec ce code. Choisissez-en un autre.', 'erreur')
       }
-      return annonce('Enregistrement refusé : ' + error.message, 'erreur')
+      return annonce('Enregistrement refusé : ' + messageErreur(error), 'erreur')
     }
     if (!data || data.length === 0) {
       setEnregistrement(false)
@@ -636,7 +641,7 @@ export default function ProduitsPage() {
       setEnregistrement(false)
 
       if (errPays) {
-        return annonce('Produit enregistré, mais les pays ont été refusés : ' + errPays.message, 'erreur')
+        return annonce('Produit enregistré, mais les pays ont été refusés : ' + messageErreur(errPays), 'erreur')
       }
 
       // La base dit ce qu'elle a vraiment fait. Un pays décoché dont
@@ -677,7 +682,7 @@ export default function ProduitsPage() {
       )
       if (errStock) {
         setEnregistrement(false)
-        return annonce('Produit enregistré, mais les entrepôts ont été refusés : ' + errStock.message, 'erreur')
+        return annonce('Produit enregistré, mais les entrepôts ont été refusés : ' + messageErreur(errStock), 'erreur')
       }
     }
 
@@ -710,7 +715,7 @@ export default function ProduitsPage() {
   }
 
   async function supprimer(p) {
-    if (!window.confirm(`Supprimer « ${p.product} » ?\n\nSes commandes, ses mouvements de stock et ses lignes d\u2019expédition gardent son nom. Ses lignes de stock disparaissent avec lui.`)) return
+    if (!(await confirmer({ titre: 'Supprimer le produit', message: `Supprimer « ${p.product} » ?\n\nSes commandes, ses mouvements de stock et ses lignes d\u2019expédition gardent son nom. Ses lignes de stock disparaissent avec lui.`, bouton: 'Supprimer', danger: true }))) return
     // L'image d'abord : la base ne sait pas supprimer un fichier, et une fois
     // le produit parti, plus personne n'a le droit de toucher au sien.
     if (p.image_chemin) {
@@ -722,7 +727,7 @@ export default function ProduitsPage() {
       // Le fichier est déjà parti : le produit ne doit plus le désigner.
       if (p.image_chemin) await supabase.from('produits').update({ image_chemin: null }).eq('id', p.id).eq('tenant_id', tenantKey)
       charger()
-      return annonce('Suppression refusée : ' + error.message, 'erreur')
+      return annonce('Suppression refusée : ' + messageErreur(error), 'erreur')
     }
     annonce('Produit supprimé.', 'succes')
     charger()
@@ -945,16 +950,6 @@ export default function ProduitsPage() {
           </div>
         )}
       </header>
-
-      {message.texte && (
-        <div className={`px-4 py-3 rounded-xl text-sm font-medium ${
-          message.type === 'succes'
-            ? 'bg-green-50 text-green-800 border border-green-200'
-            : 'bg-red-50 text-red-800 border border-red-200'
-        }`}>
-          {message.texte}
-        </div>
-      )}
 
       {erreur && (
         <div className="px-4 py-3 rounded-xl text-sm bg-red-50 text-red-800 border border-red-200">
