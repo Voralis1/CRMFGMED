@@ -8,6 +8,8 @@ import { useAuth } from '../context/AuthContext'
 import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 // Le drapeau du pays dans la colonne Lieu (19/11).
 import { drapeau } from '../../lib/paysMonde'
 
@@ -21,6 +23,8 @@ export default function AssignationLivreurPage() {
   const { entrepotId, entrepot } = useEntrepot()
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
 
@@ -114,7 +118,7 @@ export default function AssignationLivreurPage() {
         .order('id', { ascending: false })
         .range(debut, fin)
 
-      if (error) alert('Erreur: ' + error.message)
+      if (error) annoncer(`Chargement impossible : ${messageErreur(error)}`, 'erreur')
       else {
         setCommandes((data || []).map((c) => ({ ...c, livreur_actuel: null })))
         setTotalCommandes(count || 0)
@@ -134,7 +138,7 @@ export default function AssignationLivreurPage() {
         .order('id', { ascending: false })
         .range(debut, fin)
 
-      if (error) alert('Erreur: ' + error.message)
+      if (error) annoncer(`Chargement impossible : ${messageErreur(error)}`, 'erreur')
       else {
         setCommandes(
           (data || [])
@@ -175,7 +179,7 @@ export default function AssignationLivreurPage() {
   async function assigner(commandeId) {
     const livreurId = livreurChoisiParCommande[commandeId]
     if (!livreurId) {
-      alert('Choisis un livreur avant d\'assigner')
+      annoncer('Choisissez un livreur avant d\'assigner.', 'erreur')
       return
     }
 
@@ -183,9 +187,9 @@ export default function AssignationLivreurPage() {
     const { data, error } = await supabase.rpc('affecter_livreur_lot', { p_tenant: tenantKey, p_ids: [commandeId], p_livreur: livreurId })
     setEnvoiEnCoursId(null)
 
-    if (error) { alert('Erreur : ' + error.message); return }
+    if (error) { annoncer(messageErreur(error), 'erreur'); return }
     const r = (data || [])[0]
-    if (r?.resultat === 'refuse') { alert(r.motif); return }
+    if (r?.resultat === 'refuse') { annoncer(r.motif, 'erreur'); return }
 
     await chargerCommandes(pageActuelle, ongletActif)
   }
@@ -197,14 +201,14 @@ export default function AssignationLivreurPage() {
     const lignes = commandes.filter((c) => selection[c.id])
     const livreur = livreurs.find((l) => l.id === livreurLot)
     if (!lignes.length || !livreur) return
-    if (!confirm(`Assigner ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page à ${livreur.nom} ?`)) return
+    if (!(await confirmer({ titre: 'Assigner au livreur', message: `Assigner ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page à ${livreur.nom} ?`, bouton: 'Assigner' }))) return
 
     setLotEnCours(true)
     const { data, error } = await supabase.rpc('affecter_livreur_lot', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_livreur: livreurLot })
     setLotEnCours(false)
     const action = `Assignation à ${livreur.nom}`
     if (error) {
-      setResultatLot({ action, erreur: error.message })
+      setResultatLot({ action, erreur: messageErreur(error) })
       return
     }
     const resume = resumerLot(action, data, lignes)

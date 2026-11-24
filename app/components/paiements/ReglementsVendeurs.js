@@ -8,6 +8,8 @@ import { usePermissions } from '../../context/PermissionsContext'
 import { LIBELLES_RELEVE } from '../../../lib/libellesStatuts.mjs'
 // La période du relevé : le calendrier français des autres pages (20/11).
 import PlageDates from '../PlageDates'
+import { useMessages } from '../Messages'
+import { messageErreur } from '../../../lib/messageErreur.mjs'
 
 // Le relevé de paiement du vendeur. À ne pas confondre avec « Paiements »,
 // qui suit l'argent encaissé par le livreur chez le client : ici c'est ce que
@@ -79,6 +81,8 @@ export default function ReglementsVendeurs() {
   const { user, tenantId, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer, confirmer } = useMessages()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
   const peutGerer = hasPermission('gerer_reglements')
@@ -90,7 +94,6 @@ export default function ReglementsVendeurs() {
   const [personnel, setPersonnel] = useState([])
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState('')
-  const [message, setMessage] = useState({ texte: '', type: '' })
 
   const [recherche, setRecherche] = useState('')
   const [filtreStatut, setFiltreStatut] = useState('')
@@ -141,7 +144,7 @@ export default function ReglementsVendeurs() {
       .eq('tenant_id', tenantKey)
       .order('created_at', { ascending: false })
 
-    if (error) { setErreur(error.message); setReleves([]); setChargement(false); return }
+    if (error) { setErreur(messageErreur(error)); setReleves([]); setChargement(false); return }
     setReleves(data || [])
 
     const { data: gens } = await supabase
@@ -216,9 +219,10 @@ export default function ReglementsVendeurs() {
   }, [lignes])
 
 
+  // Les bandeaux de la page et de la fiche sont remplacés par les annonces du
+  // CRM (24/11) : elles passent au-dessus de la fenêtre du relevé.
   function annonce(texte, type) {
-    setMessage({ texte, type })
-    setTimeout(() => setMessage({ texte: '', type: '' }), 6000)
+    annoncer(texte, type === 'succes' ? 'succes' : type === 'erreur' ? 'erreur' : 'info')
   }
 
   async function ouvrirFiche(r) {
@@ -240,7 +244,7 @@ export default function ReglementsVendeurs() {
       .from('reglements_commandes')
       .select('commande_id, montant, quantite, total_commande, frais_commande, frais_livraison, frais_upsell, net, commandes(lead_id, client_nom, produit, quantite, prix, updated_at, produits(product))')
       .eq('reglement_id', r.id)
-    if (error) { annonce('Détail illisible : ' + error.message, 'erreur'); return }
+    if (error) { annonce('Détail illisible : ' + messageErreur(error), 'erreur'); return }
     setLignes(data || [])
   }
 
@@ -272,7 +276,7 @@ export default function ReglementsVendeurs() {
     const { data, error } = await requete.order('updated_at')
 
     setRechercheEnCours(false)
-    if (error) return annonce('Recherche impossible : ' + error.message, 'erreur')
+    if (error) return annonce('Recherche impossible : ' + messageErreur(error), 'erreur')
 
     setCandidates(data || [])
     setChoisies((data || []).map((c) => c.commande_id))
@@ -319,7 +323,7 @@ export default function ReglementsVendeurs() {
     })
 
     setEnregistrement(false)
-    if (error) return annonce('Relevé refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Relevé refusé : ' + messageErreur(error), 'erreur')
 
     const r = data?.[0]
     annonce(`Relevé ${r?.reference || ''} établi : ${r?.nb_commandes ?? retenues.length} commande${(r?.nb_commandes ?? retenues.length) > 1 ? 's' : ''}.`, 'succes')
@@ -381,7 +385,7 @@ export default function ReglementsVendeurs() {
       p_note: credit.note,
     })
     setCreditEnCours(false)
-    if (error) { annonce('Refusé : ' + error.message, 'erreur'); return false }
+    if (error) { annonce('Refusé : ' + messageErreur(error), 'erreur'); return false }
     annonce(vide ? 'Pas d\u2019expédition sur ce relevé.' : 'Crédit d\u2019expédition enregistré.', 'succes')
     await rechargerFiche(fiche.id)
     return true
@@ -395,7 +399,7 @@ export default function ReglementsVendeurs() {
     const t = tauxMad === '' ? null : Number(tauxMad)
     if (t !== null && (!Number.isFinite(t) || t <= 0)) { annonce('Le taux MAD doit être plus grand que 0 (ou vide).', 'erreur'); return false }
     const { error } = await supabase.rpc('fixer_taux_mad', { p_reglement: fiche.id, p_taux: t })
-    if (error) { annonce('Refusé : ' + error.message, 'erreur'); return false }
+    if (error) { annonce('Refusé : ' + messageErreur(error), 'erreur'); return false }
     annonce(t === null ? 'Équivalent MAD retiré.' : 'Taux MAD enregistré.', 'succes')
     await rechargerFiche(fiche.id)
     return true
@@ -414,22 +418,22 @@ export default function ReglementsVendeurs() {
       p_en_plus: a.type === 'correction' ? a.sens === 'plus' : null, p_note: a.note,
     })
     setAjustEnCours(false)
-    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
     setNouvelAjust(AJUST_VIDE)
     annonce('Ajustement ajouté.', 'succes')
     await rechargerFiche(fiche.id)
   }
 
   async function retirerAjustement(a) {
-    if (!fiche || !window.confirm(`Retirer « ${TYPES_AJUST[a.type] || a.type} — ${a.note} » ?`)) return
+    if (!fiche || !(await confirmer({ titre: 'Retirer l\u2019ajustement', message: `Retirer « ${TYPES_AJUST[a.type] || a.type} — ${a.note} » ?`, bouton: 'Retirer', danger: true }))) return
     const { error } = await supabase.rpc('retirer_ajustement', { p_ajustement: a.id })
-    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
     annonce('Ajustement retiré.', 'succes')
     await rechargerFiche(fiche.id)
   }
 
   async function marquerPaye(r) {
-    if (!window.confirm(`Marquer ${r.reference} comme payé ?\n\nAprès cela, ses montants et ses commandes ne pourront plus changer.`)) return
+    if (!(await confirmer({ titre: 'Marquer comme payé', message: `Marquer ${r.reference} comme payé ?\n\nAprès cela, ses montants et ses commandes ne pourront plus changer.`, bouton: 'Marquer payé' }))) return
     // Rien de ce qui est tapé n'est perdu au paiement : le crédit modifié part
     // d'abord ; un ajustement tapé mais pas ajouté arrête (on ne devine pas).
     if (ajustTape) return annonce('Un ajustement est tapé mais pas ajouté : cliquez « Ajouter » ou videz-le.', 'erreur')
@@ -438,7 +442,7 @@ export default function ReglementsVendeurs() {
     const { data, error } = await supabase
       .from('reglements').update({ statut: 'paye' })
       .eq('id', r.id).eq('tenant_id', tenantKey).select()
-    if (error) return annonce('Refusé : ' + error.message, 'erreur')
+    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
     if (!data || data.length === 0) return annonce("Votre rôle ne permet pas de payer un relevé.", 'erreur')
     annonce('Relevé marqué payé.', 'succes')
     setFiche(null)
@@ -446,9 +450,9 @@ export default function ReglementsVendeurs() {
   }
 
   async function supprimer(r) {
-    if (!window.confirm(`Supprimer ${r.reference} ?\n\nSes commandes redeviendront disponibles pour un autre relevé.`)) return
+    if (!(await confirmer({ titre: 'Supprimer le relevé', message: `Supprimer ${r.reference} ?\n\nSes commandes redeviendront disponibles pour un autre relevé.`, bouton: 'Supprimer', danger: true }))) return
     const { error } = await supabase.from('reglements').delete().eq('id', r.id).eq('tenant_id', tenantKey)
-    if (error) return annonce('Suppression refusée : ' + error.message, 'erreur')
+    if (error) return annonce('Suppression refusée : ' + messageErreur(error), 'erreur')
     annonce('Relevé supprimé.', 'succes')
     setFiche(null)
     charger()
@@ -528,12 +532,6 @@ export default function ReglementsVendeurs() {
           )}
         </div>
       </header>
-
-      {message.texte && (
-        <div className={`px-4 py-3 rounded-xl text-sm font-medium sans-impression ${
-          message.type === 'succes' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
-        }`}>{message.texte}</div>
-      )}
 
       {erreur && (
         <div className="px-4 py-3 rounded-xl text-sm bg-red-50 text-red-800 border border-red-200 sans-impression">
@@ -838,13 +836,6 @@ export default function ReglementsVendeurs() {
                 )}
               </div>
 
-              {/* Le message s'affiche ICI : celui du haut de page est caché
-                  derrière la fenêtre du relevé. */}
-              {message.texte && (
-                <div className={`mx-8 mb-4 px-4 py-3 rounded-xl text-sm font-medium sans-impression ${
-                  message.type === 'succes' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'
-                }`}>{message.texte}</div>
-              )}
 
               <div className="flex flex-col sm:flex-row justify-end gap-3 px-8 py-5 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-b-2xl sans-impression">
                 <button onClick={() => window.print()}

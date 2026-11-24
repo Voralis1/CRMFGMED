@@ -6,6 +6,8 @@ import { supabase } from '../../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext' // 👈 Conservé pour tenantId et user
 import { useEntrepot } from '../../context/EntrepotContext'
 import { usePermissions } from '../../context/PermissionsContext' // 🚀 Import du contexte des permissions
+import { useMessages } from '../Messages'
+import { messageErreur } from '../../../lib/messageErreur.mjs'
 
 const TAILLE_PAGE = 50
 
@@ -16,6 +18,8 @@ export default function CaisseLivreurs() {
   const { entrepotId } = useEntrepot()
   const { hasPermission, loading: permsLoading } = usePermissions() // 🚀 Récupération des droits dynamiques
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer } = useMessages()
 
   const [paiements, setPaiements] = useState([])
   const [totalPaiements, setTotalPaiements] = useState(0)
@@ -54,7 +58,7 @@ export default function CaisseLivreurs() {
       .range(debut, debut + TAILLE_PAGE - 1)
 
     if (error) {
-      alert('Erreur paiements: ' + error.message)
+      annoncer(`Paiements illisibles : ${messageErreur(error)}`, 'erreur')
       setPaiements([])
       setTotalPaiements(0)
     } else {
@@ -76,7 +80,7 @@ export default function CaisseLivreurs() {
       .order('livreur_nom')
 
     if (error) {
-      alert('Erreur caisses: ' + error.message)
+      annoncer(`Caisses illisibles : ${messageErreur(error)}`, 'erreur')
       return
     }
 
@@ -148,6 +152,9 @@ export default function CaisseLivreurs() {
     setEnvoiEnCoursId(paiementId)
     const { data: { session } } = await supabase.auth.getSession()
 
+    // Réseau coupé (24/11) : le bouton ne reste plus bloqué.
+    let resultat
+    try {
     const reponse = await fetch(
       `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/encaisser-paiement`,
       {
@@ -160,11 +167,16 @@ export default function CaisseLivreurs() {
       }
     )
 
-    const resultat = await reponse.json()
+    resultat = await reponse.json()
+    } catch (e) {
+      setEnvoiEnCoursId(null)
+      annoncer(messageErreur(e, 'Encaissement non enregistré.'), 'erreur')
+      return
+    }
     setEnvoiEnCoursId(null)
 
     if (resultat.error) {
-      alert('Erreur : ' + resultat.error)
+      annoncer(messageErreur(resultat.error), 'erreur')
       return
     }
 
@@ -178,6 +190,8 @@ export default function CaisseLivreurs() {
     setEnvoiEnCoursId(cleBouton)
     const { data: { session } } = await supabase.auth.getSession()
 
+    let resultat
+    try {
     const reponse = await fetch(
       `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/remettre-caisse`,
       {
@@ -190,15 +204,20 @@ export default function CaisseLivreurs() {
       }
     )
 
-    const resultat = await reponse.json()
+    resultat = await reponse.json()
+    } catch (e) {
+      setEnvoiEnCoursId(null)
+      annoncer(messageErreur(e, 'Remise non enregistrée.'), 'erreur')
+      return
+    }
     setEnvoiEnCoursId(null)
 
     if (resultat.error) {
-      alert('Erreur : ' + resultat.error)
+      annoncer(messageErreur(resultat.error), 'erreur')
       return
     }
 
-    alert(`Remise validée : ${resultat.total_remis} ${devise} encaissés pour ${resultat.nombre_paiements} paiement(s)`)
+    annoncer(`Remise validée : ${Number(resultat.total_remis).toLocaleString('fr-FR')} ${devise} encaissés pour ${resultat.nombre_paiements} paiement${resultat.nombre_paiements > 1 ? 's' : ''}.`, 'succes')
     await chargerTout()
   }
 

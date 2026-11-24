@@ -8,6 +8,8 @@ import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 import VignetteProduit from '../components/VignetteProduit'
+import { useMessages } from '../components/Messages'
+import { messageErreur } from '../../lib/messageErreur.mjs'
 import { produitDeCommande } from '../../lib/verdictImport.mjs'
 // Le vendeur : la commande sans l'agent ni qui l'a remontée (02/11).
 import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
@@ -91,6 +93,8 @@ export default function LivraisonsPage() {
   const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
+  const { annoncer } = useMessages()
 
   const estLivreur = String(roleNom || '').toLowerCase() === 'livreur'
   // Le vendeur (02/11) : ni le livreur ni l'agent n'arrivent dans son
@@ -362,10 +366,9 @@ export default function LivraisonsPage() {
       const { data, error, count } = await requete.range(debut, debut + parPage - 1)
 
       if (error) {
-        // Le texte brut de la base, pas un message maison : « column
-        // commandes.adresse does not exist » dit tout de suite quoi corriger,
-        // là où « Erreur de chargement » oblige à ouvrir la console.
-        setErreur([error.message, error.details, error.hint].filter(Boolean).join(' — '))
+        // 24/11 : plus le texte brut de la base à l'écran ; l'erreur complète
+        // part dans la console avec la référence affichée.
+        setErreur(messageErreur(error))
         setLivraisons([]); setTotal(0)
       } else {
         setLivraisons(data || [])
@@ -373,7 +376,7 @@ export default function LivraisonsPage() {
         if (estLivreur) chargerProduitsDuLivreur(data || [])
       }
     } catch (e) {
-      setErreur(e?.message || 'Erreur inattendue pendant le chargement.')
+      setErreur(messageErreur(e, 'Erreur inattendue pendant le chargement.'))
       setLivraisons([]); setTotal(0)
     } finally {
       setChargement(false)
@@ -440,8 +443,8 @@ export default function LivraisonsPage() {
     const { data, error } = await requete.range(0, 4999)
     setExportEnCours(false)
 
-    if (error) { alert('Erreur export : ' + error.message); return }
-    if (!data || data.length === 0) { alert('Aucune livraison à exporter avec ces filtres.'); return }
+    if (error) { annoncer(`Export impossible : ${messageErreur(error)}`, 'erreur'); return }
+    if (!data || data.length === 0) { annoncer('Aucune livraison à exporter avec ces filtres.', 'info'); return }
 
     // Le livreur (30/10) : son export, sans Lead ID, sans date, sans livreur
     // (lui) ni vendeur — les colonnes de son écran.
@@ -503,6 +506,9 @@ export default function LivraisonsPage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.replace('/'); return }
 
+    // Réseau coupé (24/11) : le bouton ne reste plus bloqué, et le livreur le sait.
+    let resultat
+    try {
     const reponse = await fetch(
       `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/confirmer-livraison`,
       {
@@ -517,9 +523,14 @@ export default function LivraisonsPage() {
       },
     )
 
-    const resultat = await reponse.json()
+    resultat = await reponse.json()
+    } catch (e) {
+      setEnvoiEnCours(false)
+      annoncer(messageErreur(e, 'La livraison n\u2019a pas pu être enregistrée.'), 'erreur')
+      return
+    }
     setEnvoiEnCours(false)
-    if (resultat.error) { alert('Erreur : ' + resultat.error); return }
+    if (resultat.error) { annoncer(messageErreur(resultat.error), 'erreur'); return }
 
     setDetail(null)
     await charger()
