@@ -7,6 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
+import { useLangue } from '../context/LangueContext'
+import { traduire } from '../../lib/langues/index.mjs'
 // Google Sheets : le code Apps Script généré, et le modèle de colonnes de
 // l'import CSV (la même liste, le même exemple).
 import { genererScriptSheets, colonnesSheets, COLONNE_STATUT, PREFIXE_SHEETS, MAX_LIGNES_SHEETS } from '../../lib/scriptGoogleSheets.mjs'
@@ -38,24 +40,26 @@ const URL_FONCTION = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/impor
 const CHAMPS = [
   { champ: 'telephone', autres: ['tel', 'phone', 'mobile', 'gsm', 'billing.phone'], obligatoire: 'oui' },
   { champ: 'nom', autres: ['name', 'client', 'full_name', 'first_name + last_name'], obligatoire: 'non' },
-  { champ: 'pays', autres: ['country', 'country_code', 'billing.country'], note: 'nom ou code ISO', obligatoire: 'si la source n\u2019a pas de pays' },
+  { champ: 'pays', autres: ['country', 'country_code', 'billing.country'], note: 'api.ch.nomIso', obligatoire: 'api.ch.paysObl' },
   { champ: 'ville', autres: ['city', 'zone', 'billing.city'], obligatoire: 'non' },
   { champ: 'adresse', autres: ['address', 'address_1', 'billing.address_1'], obligatoire: 'non' },
   { champ: 'produit', autres: ['product', 'article', 'line_items[].name'], obligatoire: 'non' },
-  { champ: 'code', autres: ['sku', 'product_code'], note: 'reconnu avant le nom', obligatoire: 'non' },
+  { champ: 'code', autres: ['sku', 'product_code'], note: 'api.ch.avantNom', obligatoire: 'non' },
   { champ: 'quantite', autres: ['qty', 'quantity'], obligatoire: 'non' },
-  { champ: 'prix', autres: ['price', 'total', 'montant', 'montant_a_encaisser', 'valor'], note: 'montant de toute la commande, jamais multiplié par la quantité', obligatoire: 'non' },
-  { champ: 'lead_id', autres: ['id', 'order_id', 'reference'], note: 'votre n° de commande', obligatoire: 'non' },
+  { champ: 'prix', autres: ['price', 'total', 'montant', 'montant_a_encaisser', 'valor'], note: 'api.ch.montantTotal', obligatoire: 'non' },
+  { champ: 'lead_id', autres: ['id', 'order_id', 'reference'], note: 'api.ch.numCommande', obligatoire: 'non' },
   { champ: 'notes', autres: ['note', 'commentaire', 'customer_note'], obligatoire: 'non' },
 ]
 
 const VERT = '#2E7D53', AMBRE = '#C98A2B', BRIQUE = '#A35139'
+// sens = une clé de texte (25/11) : traduite à l'affichage, dans le composant
+// (ici, hors composant, la fonction de traduction n'existe pas encore).
 const REPONSES = [
-  { code: 200, couleur: VERT, corps: '{"status":"ok"}', sens: 'Le lead est entré. Un lead_id est renvoyé.' },
-  { code: 200, couleur: AMBRE, corps: '{"status":"deja_importe"}', sens: 'Déjà reçu. Rien n’a été créé en double.' },
-  { code: 400, couleur: BRIQUE, corps: '{"status":"rejete"}', sens: 'Téléphone manquant, pays inconnu, ou JSON illisible. Le motif est dans la réponse (error).' },
-  { code: 401, couleur: BRIQUE, corps: '—', sens: 'Clé ou secret absent, faux, ou source coupée.' },
-  { code: 429, couleur: BRIQUE, corps: '—', sens: 'Trop de requêtes. L’en-tête Retry-After dit quand revenir.' },
+  { code: 200, couleur: VERT, corps: '{"status":"ok"}', sens: 'api.rep201' },
+  { code: 200, couleur: AMBRE, corps: '{"status":"deja_importe"}', sens: 'api.rep200' },
+  { code: 400, couleur: BRIQUE, corps: '{"status":"rejete"}', sens: 'api.rep400' },
+  { code: 401, couleur: BRIQUE, corps: '—', sens: 'api.rep401' },
+  { code: 429, couleur: BRIQUE, corps: '—', sens: 'api.rep429' },
 ]
 
 // Google Sheets : ce que le vendeur doit savoir de SA feuille. Pas les
@@ -63,19 +67,19 @@ const REPONSES = [
 // quand même) et le n° de commande est obligatoire. Seul le montant est repris tel
 // quel. `pays` : le nom du pays de la source, ou null.
 const consignesSheets = (pays) => [
-  'Les en-têtes de l\u2019ancien modèle, en anglais (Order ID, Phone number…), restent reconnues : une feuille déjà en place n\u2019a rien à changer. Majuscules et accents ne comptent pas.',
-  'Une ligne part dès qu\u2019elle est complète : toutes les colonnes obligatoires remplies. Tant qu\u2019il en manque une, rien ne part, et la colonne « Statut CRM » dit laquelle.',
-  `${nomColonne('order_id')} : votre numéro de commande, un par ligne, jamais réutilisé. C\u2019est lui qui empêche une commande d\u2019entrer deux fois. Il arrive dans le CRM précédé de ${PREFIXE_SHEETS} (727 devient ${PREFIXE_SHEETS}727).`,
-  'Une correction après l\u2019envoi se fait dans le CRM, pas dans la feuille.',
-  `${nomColonne('produit')} : le code du produit au catalogue. Il n\u2019y a pas d\u2019aperçu comme pour l\u2019import de fichier : un produit inconnu entre quand même, sans mouvement de stock.`,
-  CONSIGNES_IMPORT.find((c) => c.titre === 'Montant à encaisser')?.texte,
-  pays
-    ? `Pas de colonne pays : toutes les commandes de cette feuille arrivent en ${pays}.`
-    : 'Pas de colonne pays : les commandes prennent le pays de la source, et cette source n\u2019en a pas. Tant qu\u2019un responsable ne l\u2019a pas fixé, chaque ligne est refusée (« pays manquant »).',
-  `Un Google Form relié à la feuille marche aussi : donnez à ses questions les noms des colonnes (${['produit', 'client', 'telephone'].map(nomColonne).join(', ')}…). Le ${nomColonne('order_id')} est fait tout seul avec la date de la réponse ; ajoutez une colonne « ${nomColonne('order_id')} » à droite des réponses pour le voir.`,
-  'Zapier, Make, AppSheet ou toute autre application qui écrit dans la feuille : Google ne prévient pas le script, ces lignes ne partiraient pas. Branchez plutôt cette application directement sur votre API (choix « API directe » dans « Brancher »).',
-  `Coller plusieurs lignes : ${MAX_LIGNES_SHEETS} au plus à la fois.`,
-  'Statut CRM « trop de requêtes, réessayez » ou « erreur réseau, réessayez » : retapez une case de la ligne (le téléphone, par exemple), elle repart. Une ligne déjà reçue répond « déjà importé » : rien n\u2019est créé deux fois.',
+  // Textes de lib/langues (25/11), lus à l'appel : la page parente se redessine
+  // quand la langue change. Les noms de colonnes restent ceux du modèle.
+  traduire('api.cs.anciensEnTetes'),
+  traduire('api.cs.ligneComplete'),
+  traduire('api.cs.orderId', { col: nomColonne('order_id'), prefixe: PREFIXE_SHEETS }),
+  traduire('api.cs.correction'),
+  traduire('api.cs.produit', { col: nomColonne('produit') }),
+  traduire('api.cs.montant'),
+  pays ? traduire('api.cs.paysFixe', { pays }) : traduire('api.cs.paysAucun'),
+  traduire('api.cs.form', { cols: ['produit', 'client', 'telephone'].map(nomColonne).join(', '), col: nomColonne('order_id') }),
+  traduire('api.cs.zapier'),
+  traduire('api.cs.coller', { n: MAX_LIGNES_SHEETS }),
+  traduire('api.cs.reessayer'),
 ].filter(Boolean)
 
 // Les composants du CRM, une fois.
@@ -132,6 +136,12 @@ export default function SourcesImportPage() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu du bandeau de la page et des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11). Les guides pas à pas
+  // (WooCommerce, Shopify, Google Sheets) restent en français pour l'instant.
+  const { t, locale, langue } = useLangue()
+  // Les guides pas à pas ont une version anglaise entière (25/11) : du texte
+  // mêlé de gras et de code se lit mieux d'un bloc que découpé en clés.
+  const en = langue === 'en'
 
   // Ce que l'écran PROPOSE. Ce qui est permis, c'est la base qui le décide
   // (RLS de sources_import, peut_gerer_source dans chaque fonction).
@@ -212,7 +222,7 @@ export default function SourcesImportPage() {
       setPaysListe(p.data || [])
       setSourceId((avant) => (liste.some((x) => x.id === avant) ? avant : liste[0]?.id ?? null))
     } catch (e) {
-      setErreur(messageErreur(e, 'Erreur de chargement.'))
+      setErreur(messageErreur(e, t('api.erreurChargement')))
     } finally {
       setChargement(false)
     }
@@ -262,7 +272,7 @@ export default function SourcesImportPage() {
       setCopie(quoi)
       setTimeout(() => setCopie(''), 2000)
     } catch {
-      annonce('Copie impossible : sélectionnez le texte et copiez-le à la main.', 'erreur')
+      annonce(t('api.copieImpossible'), 'erreur')
     }
   }
 
@@ -277,29 +287,29 @@ export default function SourcesImportPage() {
       p_vendeur: user?.id, p_secret_requis: true,
     })
     setEnCours(false)
-    if (error) return annonce('Création refusée : ' + messageErreur(error), 'erreur')
+    if (error) return annonce(t('api.creationRefusee', { erreur: messageErreur(error) }), 'erreur')
     await charger()
     if (data?.[0]?.id) setSourceId(data[0].id)
   }
 
   async function creerSource() {
-    if (!nouvelle?.nom.trim()) return annonce('Donnez un nom à la source.', 'erreur')
+    if (!nouvelle?.nom.trim()) return annonce(t('api.nomObligatoire'), 'erreur')
     setEnCours(true)
     const { data, error } = await supabase.rpc('creer_source_api', {
       p_tenant: tenantId, p_nom: nouvelle.nom.trim(), p_type: 'webhook',
       p_vendeur: nouvelle.vendeur_id || null, p_secret_requis: true,
     })
-    if (error) { setEnCours(false); return annonce('Création refusée : ' + messageErreur(error), 'erreur') }
+    if (error) { setEnCours(false); return annonce(t('api.creationRefusee', { erreur: messageErreur(error) }), 'erreur') }
     // Une entreprise à un seul pays : la base l'a déjà mis (tr_sources_pays_defaut).
     // Sinon, le pays choisi dans le formulaire.
     if (nouvelle.pays_id && data?.[0]?.id) {
       const { error: e2 } = await supabase.from('sources_import')
         .update({ pays_defaut: nouvelle.pays_id }).eq('id', data[0].id).eq('tenant_id', tenantId)
-      if (e2) annonce('Source créée, mais le pays n\'a pas été enregistré : ' + messageErreur(e2), 'erreur')
+      if (e2) annonce(t('api.paysNonEnregistre', { erreur: messageErreur(e2) }), 'erreur')
     }
     setEnCours(false)
     setNouvelle(null)
-    annonce(`« ${data?.[0]?.nom ?? 'La source'} » est créée.`)
+    annonce(t('api.sourceCreee', { nom: data?.[0]?.nom ?? t('api.laSource') }))
     await charger()
     if (data?.[0]?.id) setSourceId(data[0].id)
   }
@@ -310,10 +320,10 @@ export default function SourcesImportPage() {
   async function changerPays(s, paysId) {
     const { error } = await supabase.from('sources_import')
       .update({ pays_defaut: paysId || null }).eq('id', s.id).eq('tenant_id', tenantId)
-    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
+    if (error) return annonce(t('api.erreur', { erreur: messageErreur(error) }), 'erreur')
     annonce(paysId
-      ? `Les leads sans pays de « ${s.nom} » iront en ${paysListe.find((x) => x.id === paysId)?.nom ?? '?'}.`
-      : `« ${s.nom} » n'a plus de pays : chaque lead devra écrire le sien.`)
+      ? t('api.paysSource', { nom: s.nom, pays: paysListe.find((x) => x.id === paysId)?.nom ?? '?' })
+      : t('api.plusDePays', { nom: s.nom }))
     await charger()
   }
 
@@ -323,24 +333,21 @@ export default function SourcesImportPage() {
   async function basculerActif(s) {
     const { error } = await supabase.from('sources_import')
       .update({ actif: !s.actif }).eq('id', s.id).eq('tenant_id', tenantId)
-    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
-    annonce(s.actif ? `« ${s.nom} » est coupée : plus rien n'entre par elle.` : `« ${s.nom} » est réactivée.`)
+    if (error) return annonce(t('api.erreur', { erreur: messageErreur(error) }), 'erreur')
+    annonce(s.actif ? t('api.coupee', { nom: s.nom }) : t('api.reactivee', { nom: s.nom }))
     await charger()
   }
 
   async function supprimer(s) {
     if (!(await confirmer({
-      titre: 'Supprimer la source',
-      message: `Supprimer « ${s.nom} » ?\n\n` +
-        'Les commandes déjà entrées par cette source sont conservées ; elles ' +
-        'perdront seulement le lien vers elle. Pour arrêter une source sans rien ' +
-        'perdre, préférez « Couper ».',
-      bouton: 'Supprimer', danger: true,
+      titre: t('api.supprimerTitre'),
+      message: t('api.supprimerMsg', { nom: s.nom }),
+      bouton: t('api.supprimer'), danger: true,
     }))) return
     const { error } = await supabase.from('sources_import')
       .delete().eq('id', s.id).eq('tenant_id', tenantId)
-    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
-    annonce('Source supprimée.')
+    if (error) return annonce(t('api.erreur', { erreur: messageErreur(error) }), 'erreur')
+    annonce(t('api.supprimee'))
     await charger()
   }
 
@@ -366,25 +373,23 @@ export default function SourcesImportPage() {
       setSecretUrl(r.secret)
       setDemandeMdp(false)
     } else if (r?.reessayer_dans > 0) {
-      setErreurMdp(`Trop d'essais. Réessayez dans ${r.reessayer_dans} s.`)
+      setErreurMdp(t('api.tropEssais', { n: r.reessayer_dans }))
     } else {
       // Rien de plus : la base donne la même réponse pour « mauvais mot de
       // passe » et « source qu'on ne gère pas ».
-      setErreurMdp('Mot de passe incorrect.')
+      setErreurMdp(t('api.mdpIncorrect'))
     }
   }
 
   async function regenererIdentifiants() {
     if (!source || !(await confirmer({
-      titre: 'Régénérer les identifiants',
-      message: `Régénérer la clé et le secret API de « ${source.nom} » ?\n\n` +
-        'L\'URL actuelle cesse de fonctionner aussitôt : votre boutique n\'enverra ' +
-        'plus rien tant que la nouvelle URL n\'y est pas collée.',
-      bouton: 'Régénérer', danger: true,
+      titre: t('api.regenererTitre'),
+      message: t('api.regenererMsg', { nom: source.nom }),
+      bouton: t('api.regenerer'), danger: true,
     }))) return
     const { error } = await supabase.rpc('regenerer_identifiants_source', { p_source: source.id })
-    if (error) return annonce('Erreur : ' + messageErreur(error), 'erreur')
-    annonce('Nouveaux identifiants. Collez la nouvelle URL dans votre boutique.')
+    if (error) return annonce(t('api.erreur', { erreur: messageErreur(error) }), 'erreur')
+    annonce(t('api.nouveauxIdentifiants'))
     setSecretUrl(null)
     await chargerIdentifiants(source.id)
   }
@@ -393,18 +398,18 @@ export default function SourcesImportPage() {
   const formulaireMotDePasse = (id = 'mdp') => (
     <form className="border-t border-dashed border-[#C9C1B1] pt-2.5 flex gap-2 flex-wrap items-center"
       onSubmit={(e) => { e.preventDefault(); revelerSecretUrl() }}>
-      <label className={LABEL} htmlFor={id}>Mot de passe</label>
+      <label className={LABEL} htmlFor={id}>{t('api.mdp')}</label>
       <input id={id} type="password" autoComplete="current-password" autoFocus
-        className={`${INPUT} flex-[1_1_180px] min-w-0`} placeholder="Votre mot de passe"
+        className={`${INPUT} flex-[1_1_180px] min-w-0`} placeholder={t('api.votreMdp')}
         value={motDePasse} onChange={(e) => setMotDePasse(e.target.value)} />
-      <button type="submit" className={BTN_PLEIN} disabled={!motDePasse}>Afficher</button>
-      <button type="button" className={BTN} onClick={() => { setDemandeMdp(false); setErreurMdp('') }}>Annuler</button>
+      <button type="submit" className={BTN_PLEIN} disabled={!motDePasse}>{t('api.afficher')}</button>
+      <button type="button" className={BTN} onClick={() => { setDemandeMdp(false); setErreurMdp('') }}>{t('api.annuler')}</button>
       {erreurMdp && <span className="w-full text-xs font-semibold text-[#A35139]">{erreurMdp}</span>}
     </form>
   )
 
   if (authLoading || permsLoading || !hasPermission('menu_sources_import')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('api.verif')}</div>
   }
 
   // L'URL, en morceaux pour teinter la clé et le secret.
@@ -419,10 +424,9 @@ export default function SourcesImportPage() {
     <div className="flex flex-col gap-5 w-full max-w-[980px] mx-auto pt-4 sm:pt-2 px-4 sm:px-6 pb-14">
 
       <header>
-        <h1 className="text-2xl font-bold text-[#1B2632]">Mon API</h1>
+        <h1 className="text-2xl font-bold text-[#1B2632]">{t('api.titre')}</h1>
         <p className="mt-1.5 max-w-[62ch] text-sm text-[#1B2632]/60">
-          Branchez votre boutique ou votre formulaire. Les leads arrivent directement dans
-          le centre d&apos;appel, à votre nom.
+          {t('api.intro')}
         </p>
       </header>
 
@@ -437,45 +441,45 @@ export default function SourcesImportPage() {
         <div className="flex flex-wrap items-center gap-2">
           {sources.length > 0 && (
             <>
-              <label className={LABEL} htmlFor="choix-source">Source</label>
+              <label className={LABEL} htmlFor="choix-source">{t('api.source')}</label>
               <select id="choix-source" className={`${INPUT} min-w-[220px]`} value={sourceId ?? ''}
                 onChange={(e) => setSourceId(e.target.value)}>
                 {sources.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.nom}
-                    {peutGererTout ? ` — ${nomVendeur(s.vendeur_id) || 'sans vendeur'}` : ''}
-                    {s.actif ? '' : ' (coupée)'}
+                    {peutGererTout ? (nomVendeur(s.vendeur_id) ? ` — ${nomVendeur(s.vendeur_id)}` : t('api.sansVendeurTiret')) : ''}
+                    {s.actif ? '' : t('api.coupeeParenthese')}
                   </option>
                 ))}
               </select>
             </>
           )}
           {peutGererTout && source && (
-            <button className={BTN_DANGER} onClick={() => supprimer(source)}>Supprimer</button>
+            <button className={BTN_DANGER} onClick={() => supprimer(source)}>{t('api.supprimer')}</button>
           )}
           {peutGererTout && (nouvelle ? (
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:ml-auto">
-              <input className={`${INPUT} w-44`} placeholder="Nom de la source" autoFocus
+              <input className={`${INPUT} w-44`} placeholder={t('api.nomSource')} autoFocus
                 value={nouvelle.nom} onChange={(e) => setNouvelle({ ...nouvelle, nom: e.target.value })} />
               <select className={INPUT} value={nouvelle.vendeur_id}
                 onChange={(e) => setNouvelle({ ...nouvelle, vendeur_id: e.target.value })}>
-                <option value="">Sans vendeur</option>
+                <option value="">{t('api.sansVendeur')}</option>
                 {sellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
               </select>
               {/* Un seul pays : la base le met d'office, rien à choisir. */}
               {paysListe.length > 1 && (
                 <select className={INPUT} value={nouvelle.pays_id}
                   onChange={(e) => setNouvelle({ ...nouvelle, pays_id: e.target.value })}>
-                  <option value="">Pays des leads...</option>
+                  <option value="">{t('api.paysLeadsChoix')}</option>
                   {paysListe.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
                 </select>
               )}
-              <button className={BTN_PLEIN} onClick={creerSource} disabled={enCours}>Créer</button>
-              <button className={BTN} onClick={() => setNouvelle(null)}>Annuler</button>
+              <button className={BTN_PLEIN} onClick={creerSource} disabled={enCours}>{t('api.creer')}</button>
+              <button className={BTN} onClick={() => setNouvelle(null)}>{t('api.annuler')}</button>
             </div>
           ) : (
             <button className={`${BTN} sm:ml-auto`} onClick={() => setNouvelle({ nom: '', vendeur_id: '', pays_id: '' })}>
-              + Nouvelle source
+              {t('api.nouvelle')}
             </button>
           ))}
         </div>
@@ -483,7 +487,7 @@ export default function SourcesImportPage() {
 
       {/* Les trois parties (20/11). */}
       <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 w-fit max-w-full flex-wrap" role="tablist">
-        {[['identifiants', 'Identifiants'], ['brancher', 'Brancher'], ['reference', 'Référence technique']].map(([cle, nom]) => (
+        {[['identifiants', t('api.partie.identifiants')], ['brancher', t('api.partie.brancher')], ['reference', t('api.partie.reference')]].map(([cle, nom]) => (
           <button key={cle} role="tab" aria-selected={partie === cle} onClick={() => setPartie(cle)}
             className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
               partie === cle ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'}`}>
@@ -493,26 +497,25 @@ export default function SourcesImportPage() {
       </div>
 
       {partie !== 'identifiants' ? null : chargement ? (
-        <div className={`${CARTE} px-5 py-10 text-center text-sm text-[#1B2632]/60`}>Chargement...</div>
+        <div className={`${CARTE} px-5 py-10 text-center text-sm text-[#1B2632]/60`}>{t('api.chargement')}</div>
       ) : !source ? (
         // Pas de source : un vendeur a UN bouton ; sinon, une ligne.
         <section className={CARTE}>
-          <TeteCarte titre="Identifiants API" />
+          <TeteCarte titre={t('api.identifiantsTitre')} />
           <div className="px-5 pb-5 flex flex-col gap-3 items-start">
             {peutGererSiennes && !peutGererTout ? (
               <>
                 <p className="text-sm text-[#1B2632]/70">
-                  Vous n&apos;avez pas encore d&apos;API. Créez-la : votre clé et votre secret
-                  s&apos;affichent aussitôt ici.
+                  {t('api.pasEncore')}
                 </p>
                 <button className={BTN_PLEIN} onClick={creerMonApi} disabled={enCours}>
-                  {enCours ? 'Création...' : 'Créer mon API'}
+                  {enCours ? t('api.creation') : t('api.creerMonApi')}
                 </button>
               </>
             ) : peutGererTout ? (
-              <p className="text-sm text-[#1B2632]/70">Aucune source. « + Nouvelle source » pour en créer une.</p>
+              <p className="text-sm text-[#1B2632]/70">{t('api.aucuneSource')}</p>
             ) : (
-              <p className="text-sm text-[#1B2632]/70">Aucune source pour l&apos;instant.</p>
+              <p className="text-sm text-[#1B2632]/70">{t('api.aucuneSourceCourt')}</p>
             )}
           </div>
         </section>
@@ -521,19 +524,19 @@ export default function SourcesImportPage() {
           {/* Le pays des leads : ce que la source donne à un lead qui n'écrit
               pas le sien. Visible de tous ; seul un responsable le change. */}
           <section className={`${CARTE} px-5 py-3.5 flex flex-wrap items-center gap-3`}>
-            <span className={LABEL}>Pays des leads</span>
+            <span className={LABEL}>{t('api.paysLeads')}</span>
             {peutGererTout ? (
               <select className={INPUT} value={source.pays_defaut ?? ''} onChange={(e) => changerPays(source, e.target.value)}>
-                <option value="">Aucun — chaque lead doit écrire son pays</option>
+                <option value="">{t('api.aucunPays')}</option>
                 {paysListe.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
               </select>
             ) : (
               <span className="text-sm font-semibold text-[#1B2632]">
                 {paysListe.find((x) => x.id === source.pays_defaut)?.nom
-                  || <span className="font-normal text-[#A35139]">Aucun : chaque lead doit envoyer son pays. Un responsable peut le fixer.</span>}
+                  || <span className="font-normal text-[#A35139]">{t('api.aucunPaysAide')}</span>}
               </span>
             )}
-            <span className={AIDE}>Un lead qui envoie son pays garde le sien.</span>
+            <span className={AIDE}>{t('api.leadGardePays')}</span>
           </section>
 
           {/* Dernière commande reçue (20/11) : en orange après deux jours sans rien,
@@ -543,11 +546,11 @@ export default function SourcesImportPage() {
             const alerte = derniereCommande === null || jours >= 2
             return (
               <section className={`${CARTE} px-5 py-3.5 flex flex-wrap items-center gap-3 ${alerte ? '!border-[#FFB162] !bg-[#FFB162]/10' : ''}`}>
-                <span className={LABEL}>Dernière commande reçue</span>
+                <span className={LABEL}>{t('api.derniereCommande')}</span>
                 <span className={`text-sm font-semibold ${alerte ? 'text-[#8a5a1f]' : 'text-[#1B2632]'}`}>
                   {derniereCommande === null
-                    ? 'Aucune commande reçue par cette source.'
-                    : `${new Date(derniereCommande).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} · ${jours === 0 ? "aujourd'hui" : jours === 1 ? 'hier' : `il y a ${jours} jours`}`}
+                    ? t('api.aucuneCommandeRecue')
+                    : `${new Date(derniereCommande).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })} · ${jours === 0 ? t('api.aujourdhui') : jours === 1 ? t('api.hier') : t('api.ilYa', { n: jours })}`}
                 </span>
                 {alerte && derniereCommande !== null && (
                   <span className={AIDE}>Plus rien depuis {jours} jours : vérifiez que la boutique envoie toujours.</span>
@@ -558,29 +561,28 @@ export default function SourcesImportPage() {
 
           {/* 1. Identifiants API */}
           <section className={CARTE}>
-            <TeteCarte titre={<>Identifiants API {!source.actif && <span className="ml-2 align-middle"><Pastille couleur={BRIQUE}>Coupée</Pastille></span>}</>}>
-              Ces deux valeurs authentifient vos requêtes. Elles ne changent pas tant que
-              vous ne les régénérez pas.
+            <TeteCarte titre={<>Identifiants API {!source.actif && <span className="ml-2 align-middle"><Pastille couleur={BRIQUE}>{t('api.coupeeBadge')}</Pastille></span>}</>}>
+              {t('api.identifiantsAide')}
             </TeteCarte>
 
             {identifiantsRefuses ? (
               <div className="px-5 pb-5">
                 <p className="text-sm text-[#1B2632]/70">
-                  Les identifiants ne sont visibles que par qui gère cette source.
+                  {t('api.visibles')}
                 </p>
               </div>
             ) : !identifiants ? (
-              <div className="px-5 pb-5"><p className={AIDE}>Chargement...</p></div>
+              <div className="px-5 pb-5"><p className={AIDE}>{t('api.chargement')}</p></div>
             ) : (
               <>
                 <div className="px-5 pb-5 flex flex-col gap-3.5">
                   <div className={IDENT}>
-                    <span className={LABEL}>Clé API</span>
+                    <span className={LABEL}>{t('api.cle')}</span>
                     {cle ? (
                       <div className="flex items-center gap-2.5 flex-wrap">
                         <span className={VALEUR}>{cle}</span>
                         <button className={BTN} onClick={() => copier(cle, 'cle')}>
-                          {copie === 'cle' ? 'Copié ✓' : 'Copier'}
+                          {copie === 'cle' ? t('api.copie') : 'Copier'}
                         </button>
                       </div>
                     ) : (
@@ -592,28 +594,28 @@ export default function SourcesImportPage() {
                   </div>
 
                   <div className={IDENT}>
-                    <span className={LABEL}>Secret API</span>
+                    <span className={LABEL}>{t('api.secret')}</span>
                     <div className="flex items-center gap-2.5 flex-wrap">
                       {secretUrl ? (
                         <>
                           <span className={VALEUR}>{secretUrl}</span>
                           <button className={BTN} onClick={() => copier(secretUrl, 'secret')}>
-                            {copie === 'secret' ? 'Copié ✓' : 'Copier'}
+                            {copie === 'secret' ? t('api.copie') : 'Copier'}
                           </button>
                         </>
                       ) : (
                         <>
                           <span className={MASQUE}>••••••••••••••••••••••••••••••••</span>
                           {identifiants.secret_url_existe && !demandeMdp && (
-                            <button className={BTN} onClick={() => demanderMotDePasse('carte')}>Révéler</button>
+                            <button className={BTN} onClick={() => demanderMotDePasse('carte')}>{t('api.reveler')}</button>
                           )}
                         </>
                       )}
                     </div>
                     <p className={AIDE}>
                       {secretUrl
-                        ? 'Affiché. Il se remasque au rechargement de la page.'
-                        : 'Masqué. Votre mot de passe est demandé pour l’afficher.'}
+                        ? t('api.affiche')
+                        : t('api.masque')}
                     </p>
                     {demandeMdp && ouMdp === 'carte' && formulaireMotDePasse()}
                   </div>
@@ -622,15 +624,13 @@ export default function SourcesImportPage() {
                 {peutGerer && (
                   <div className="border-t border-[#C9C1B1]/55 bg-[#F4F0E6] px-5 py-3.5 flex flex-wrap items-center gap-3 justify-between">
                     <p className={`${AIDE} flex-[1_1_320px] min-w-0`}>
-                      Régénérer remplace la clé <em>et</em> le secret. L&apos;ancienne paire cesse de
-                      fonctionner aussitôt : votre boutique n&apos;enverra plus rien jusqu&apos;à ce que
-                      la nouvelle URL y soit collée. Couper arrête la source sans rien changer.
+                      {t('api.regenererAide')}
                     </p>
                     <div className="flex gap-2 flex-wrap">
                       <button className={BTN} onClick={() => basculerActif(source)}>
-                        {source.actif ? 'Couper' : 'Réactiver'}
+                        {source.actif ? t('api.couper') : t('api.reactiver')}
                       </button>
-                      <button className={BTN_DANGER} onClick={regenererIdentifiants}>Régénérer les identifiants</button>
+                      <button className={BTN_DANGER} onClick={regenererIdentifiants}>{t('api.regenererTitre')}</button>
                     </div>
                   </div>
                 )}
@@ -642,7 +642,7 @@ export default function SourcesImportPage() {
           {identifiants && cle && (
             <section className="bg-[#1B2632] text-white rounded-2xl px-5 py-[18px] flex flex-col gap-2.5">
               <span className="text-[11px] font-bold uppercase tracking-[.06em] text-white/50">
-                URL à coller dans votre boutique
+                {t('api.urlAColler')}
               </span>
               <code className="font-mono text-[12.5px] break-all leading-relaxed">
                 POST {URL_FONCTION}?<span className="text-[#9FD3B4]">key={cle}</span>&amp;<span className="text-[#F0B27A]">secret={secretUrl ?? '••••••••'}</span>
@@ -650,21 +650,20 @@ export default function SourcesImportPage() {
               </code>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <button className={BTN_CLAIR} disabled={!urlComplete} onClick={() => copier(urlComplete, 'url')}>
-                  {copie === 'url' ? 'Copié ✓' : 'Copier l’URL complète'}
+                  {copie === 'url' ? t('api.copie') : t('api.copierUrl')}
                 </button>
                 <label className="flex items-center gap-2 text-xs text-white/60">
                   <code className="font-mono bg-white/10 rounded px-1.5 py-px text-white">source</code> =
                   <input className="bg-white/10 border border-white/15 rounded-lg px-2 py-1 text-xs text-white w-36 outline-none focus:border-white/40"
                     value={etiquette} onChange={(e) => setEtiquette(e.target.value)} placeholder="WooCommerce" />
                 </label>
-                <span className="text-xs text-white/50">l&apos;étiquette affichée sur vos commandes. Changez-la librement.</span>
+                <span className="text-xs text-white/50">{t('api.etiquetteAide')}</span>
               </div>
               {!secretUrl && (
-                <p className="text-xs text-white/50">Révélez le secret API ci-dessus pour copier l&apos;URL complète.</p>
+                <p className="text-xs text-white/50">{t('api.revelerPourCopier')}</p>
               )}
               <p className="text-xs text-white/50">
-                Cette URL contient vos deux identifiants : ne la publiez nulle part et ne
-                l&apos;envoyez pas par message.
+                {t('api.urlDanger')}
               </p>
             </section>
           )}
@@ -674,12 +673,12 @@ export default function SourcesImportPage() {
       {/* 3. Brancher votre boutique */}
       {partie === 'brancher' && (
       <section className={CARTE}>
-        <TeteCarte titre="Brancher votre boutique">
-          Choisissez votre plateforme. L&apos;ordre des étapes est celui des écrans.
+        <TeteCarte titre={t('api.brancherTitre')}>
+          {t('api.choisirPlateforme')}
         </TeteCarte>
         <div className="px-5 pb-5 flex flex-col gap-3.5">
           <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 w-fit max-w-full flex-wrap" role="tablist">
-            {[['woo', 'WooCommerce'], ['shopify', 'Shopify'], ['direct', 'API directe'], ['sheets', 'Google Sheets']].map(([cleOnglet, nom]) => (
+            {[['woo', 'WooCommerce'], ['shopify', 'Shopify'], ['direct', t('api.direct')], ['sheets', 'Google Sheets']].map(([cleOnglet, nom]) => (
               <button key={cleOnglet} role="tab" aria-selected={onglet === cleOnglet} onClick={() => setOnglet(cleOnglet)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
                   onglet === cleOnglet ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'
@@ -690,7 +689,16 @@ export default function SourcesImportPage() {
           </div>
 
           {onglet === 'woo' && (
-            <Etapes items={[
+            <Etapes items={en ? [
+              <><strong>WooCommerce → Settings → Advanced → Webhooks</strong>, then « Add webhook ».</>,
+              <><strong>Name</strong>: anything you like, for example <code className={CODE}>CRM FGMED</code>.</>,
+              <><strong>Status</strong>: <code className={CODE}>Active</code>.</>,
+              <><strong>Topic</strong>: <code className={CODE}>Order created</code>. Every new order then reaches us within a second.</>,
+              <><strong>Delivery URL</strong>: paste the full URL (« Credentials » tab), with <code className={CODE}>key</code> and{' '}
+                <code className={CODE}>secret</code>.</>,
+              <><strong>API version</strong>: <code className={CODE}>WP REST API Integration v3</code>.
+                Save, then place a test order: it must appear in the call center.</>,
+            ] : [
               <><strong>WooCommerce → Réglages → Avancé → Webhooks</strong>, puis « Ajouter un webhook ».</>,
               <><strong>Nom</strong> : ce que vous voulez, par exemple <code className={CODE}>CRM FGMED</code>.</>,
               <><strong>État</strong> : <code className={CODE}>Actif</code>.</>,
@@ -704,7 +712,14 @@ export default function SourcesImportPage() {
           )}
 
           {onglet === 'shopify' && (
-            <Etapes items={[
+            <Etapes items={en ? [
+              <><strong>Settings → Notifications → Webhooks</strong>, « Create webhook ».</>,
+              <><strong>Event</strong>: <code className={CODE}>Order creation</code>, format{' '}
+                <code className={CODE}>JSON</code>.</>,
+              <><strong>URL</strong>: paste the full URL, « Credentials » tab (set <code className={CODE}>Shopify</code> as the{' '}
+                <code className={CODE}>source</code> label if you want to tell them apart).</>,
+              <>Save, then place a test order: it must appear in the call center.</>,
+            ] : [
               <><strong>Paramètres → Notifications → Webhooks</strong>, « Créer un webhook ».</>,
               <><strong>Événement</strong> : <code className={CODE}>Création de commande</code>, format{' '}
                 <code className={CODE}>JSON</code>.</>,
@@ -717,8 +732,7 @@ export default function SourcesImportPage() {
 
           {onglet === 'direct' && (
             <div className="flex flex-col gap-2.5">
-              <p className={AIDE}>Pour un formulaire, Zapier, Make ou un script. Un seul niveau de champs,
-                en français ou en anglais.</p>
+              <p className={AIDE}>{t('api.directAide')}</p>
               <pre className="bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl p-3.5 overflow-x-auto font-mono text-xs leading-relaxed text-[#1B2632]">
 {`curl -X POST \\
   '${URL_FONCTION}?key=<clé>&secret=<secret>' \\
@@ -734,14 +748,14 @@ export default function SourcesImportPage() {
     "prix": 15000
   }'`}
               </pre>
-              <p className={AIDE}>Clé et secret peuvent aussi passer en en-têtes :{' '}
-                <code className={CODE}>x-import-token</code> et <code className={CODE}>x-api-secret</code>.</p>
-              <p className={AIDE}>Jusqu&apos;à 200 leads en un appel : envoyez{' '}
-                <code className={CODE}>{'{"leads": [ … ]}'}</code>. Pratique pour rattraper un retard.</p>
+              <p className={AIDE}>{t('api.enTetes')}{' '}
+                <code className={CODE}>x-import-token</code> {t('api.et')} <code className={CODE}>x-api-secret</code>.</p>
+              <p className={AIDE}>{t('api.jusqua200')}{' '}
+                <code className={CODE}>{'{"leads": [ … ]}'}</code>. {t('api.rattraper')}</p>
             </div>
           )}
           {onglet === 'sheets' && (
-            <p className={AIDE}>La feuille Google envoie ses lignes toute seule : format, code et installation ci-dessous.</p>
+            <p className={AIDE}>{t('api.sheetsIntro')}</p>
           )}
         </div>
       </section>
@@ -761,65 +775,61 @@ export default function SourcesImportPage() {
         return (
           <section className={CARTE}>
             <TeteCarte titre="Google Sheets">
-              Les commandes tapées dans votre feuille Google, ou arrivées par un Google Form relié à
-              la feuille, partent seules vers le centre d&apos;appel, ligne par ligne.
+              {t('api.sheetsAide')}
             </TeteCarte>
             <div className="px-5 pb-5 flex flex-col gap-4">
               <p className="text-sm">
-                <span className={LABEL}>Pays des commandes</span>{' '}
+                <span className={LABEL}>{t('api.paysCommandes')}</span>{' '}
                 {paysSource
                   ? <strong className="text-[#1B2632]">{paysSource}</strong>
-                  : <span className="font-semibold text-[#A35139]">aucun — chaque ligne sera refusée tant qu&apos;un responsable ne l&apos;a pas fixé (en haut de la page).</span>}
+                  : <span className="font-semibold text-[#A35139]">{t('api.aucunPaysSheets')}</span>}
               </p>
 
               {!sheetsOuvert ? (
                 <button className={`${BTN_PLEIN} w-fit`} onClick={() => setSheetsOuvert(true)}>
-                  Générer le code d&apos;intégration
+                  {t('api.genererCode')}
                 </button>
               ) : !cle ? (
                 <p className="text-sm text-[#A35139]">
-                  Cette source a une ancienne clé, impossible à mettre dans le code : « Régénérer les
-                  identifiants » (onglet « Identifiants »), puis revenez ici.
+                  {t('api.ancienneCle')}
                 </p>
               ) : (
                 <>
                   {/* 1. Le format */}
                   <div className="flex flex-col gap-2.5">
-                    <h3 className="text-base font-bold text-[#1B2632]">1. Le format de votre feuille</h3>
+                    <h3 className="text-base font-bold text-[#1B2632]">{t('api.etape1')}</h3>
                     <p className="text-sm text-[#1B2632]/75">
-                      En ligne 1, ces en-têtes (les mêmes que le modèle d&apos;import de fichier).
-                      Obligatoires : <strong>{requis.join(', ')}</strong>. {facultatives.join(' et ')} peuvent rester vides.
+                      {t('api.ligne1')} {t('api.obligatoires')} <strong>{requis.join(', ')}</strong>. {t('api.peuventResterVides', { liste: facultatives.join(t('api.et2')) })}
                     </p>
                     <div className="overflow-x-auto border border-[#C9C1B1]/70 rounded-xl">
                       <table className="w-full min-w-[480px] text-left border-collapse">
                         <thead>
                           <tr className="bg-[#F4F0E6] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
-                            <th className="px-4 py-2.5">Colonne</th><th className="px-4 py-2.5">Obligatoire</th><th className="px-4 py-2.5">Exemple</th>
+                            <th className="px-4 py-2.5">{t('api.colonne')}</th><th className="px-4 py-2.5">{t('api.obligatoire')}</th><th className="px-4 py-2.5">{t('api.exemple')}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {colonnes.map((c, i) => (
                             <tr key={c.nom} className={i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
                               <td className="px-4 py-2 text-[13px]"><code className={CODE}>{c.nom}</code></td>
-                              <td className={`px-4 py-2 text-[13px] ${c.obligatoire ? 'font-semibold' : 'text-[#1B2632]/70'}`}>{c.obligatoire ? 'oui' : 'non'}</td>
+                              <td className={`px-4 py-2 text-[13px] ${c.obligatoire ? 'font-semibold' : 'text-[#1B2632]/70'}`}>{c.obligatoire ? t('api.oui') : t('api.non')}</td>
                               <td className="px-4 py-2 text-[13px] font-mono text-[#1B2632]/70">{exemple(c.nom)}</td>
                             </tr>
                           ))}
                           <tr className={colonnes.length % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
                             <td className="px-4 py-2 text-[13px]"><code className={CODE}>{COLONNE_STATUT}</code></td>
-                            <td className="px-4 py-2 text-[13px] text-[#1B2632]/70">non — recommandée</td>
+                            <td className="px-4 py-2 text-[13px] text-[#1B2632]/70">{t('api.recommandee')}</td>
                             <td className="px-4 py-2 text-[13px] text-[#1B2632]/70">
-                              Laissez-la vide : le script y écrit la réponse du CRM (« importé », « déjà importé »,
-                              « refusé : téléphone manquant »…). Sans elle tout marche, mais une ligne refusée ne se voit pas.
+                              {t('api.statutCrmAide')}
                             </td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                     <button className={`${BTN} w-fit`} onClick={() => copier(enTetes, 'entetes')}>
-                      {copie === 'entetes' ? 'Copié ✓' : 'Copier les en-têtes'}
+                      {copie === 'entetes' ? t('api.copie') : t('api.copierEntetes')}
                     </button>
-                    <p className={AIDE}>Collez-les dans la case A1 : chaque en-tête prend sa colonne.</p>
+                    <p className={AIDE}>{t('api.collerA1')}</p>
                     <ul className="flex flex-col gap-1.5 list-disc pl-5 text-sm text-[#1B2632]/80">
                       {consignesSheets(paysSource).map((t) => <li key={t}>{t}</li>)}
                     </ul>
@@ -827,17 +837,13 @@ export default function SourcesImportPage() {
 
                   {/* 2. Le code */}
                   <div className="flex flex-col gap-2.5">
-                    <h3 className="text-base font-bold text-[#1B2632]">2. Le code à coller</h3>
+                    <h3 className="text-base font-bold text-[#1B2632]">{t('api.etape2')}</h3>
                     <div className="rounded-xl border border-[#C98A2B]/50 bg-[#C98A2B]/10 px-3.5 py-3 text-[13px] text-[#1B2632]/85 flex flex-col gap-1.5">
                       <p>
-                        <strong>Le secret API sera écrit en clair dans ce code.</strong> Toute personne qui peut
-                        modifier votre feuille peut l&apos;y lire. Ne partagez la feuille qu&apos;avec les personnes
-                        qui envoient des commandes.
+                        <strong>{t('api.secretEnClair')}</strong> {t('api.secretEnClairAide')}
                       </p>
                       <p>
-                        S&apos;il fuit : « Régénérer les identifiants » (onglet « Identifiants », un clic), puis recollez un
-                        nouveau code ici. L&apos;ancien cesse aussitôt de marcher — et votre boutique, si elle
-                        utilise la même source, devra recevoir la nouvelle URL.
+                        {t('api.siFuite')}
                       </p>
                     </div>
                     {!secretUrl && (
@@ -845,26 +851,53 @@ export default function SourcesImportPage() {
                         {!(demandeMdp && ouMdp === 'sheets') && (
                           <button className={`${BTN_PLEIN} w-fit`} disabled={!identifiants.secret_url_existe}
                             onClick={() => demanderMotDePasse('sheets')}>
-                            Révéler le secret
+                            {t('api.revelerSecret')}
                           </button>
                         )}
                         {demandeMdp && ouMdp === 'sheets' && formulaireMotDePasse('mdp-sheets')}
-                        <p className={AIDE}>Votre mot de passe est demandé. Le secret remplace alors {'« COLLEZ_ICI_LE_SECRET_API »'} dans le code.</p>
+                        <p className={AIDE}>{t('api.mdpDemande')}</p>
                       </div>
                     )}
                     <pre className="bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl p-3.5 overflow-auto max-h-[360px] font-mono text-[11.5px] leading-relaxed text-[#1B2632]">
                       {codeSheets}
                     </pre>
                     <button className={`${BTN_PLEIN} w-fit`} disabled={!secretUrl} onClick={() => copier(codeSheets, 'code')}>
-                      {copie === 'code' ? 'Copié ✓' : 'Copier le code'}
+                      {copie === 'code' ? t('api.copie') : t('api.copierCode')}
                     </button>
-                    {!secretUrl && <p className={AIDE}>Révélez d&apos;abord le secret : sans lui, le code ne peut rien envoyer.</p>}
+                    {!secretUrl && <p className={AIDE}>{t('api.revelerDabord')}</p>}
                   </div>
 
                   {/* 3. Les étapes */}
                   <div className="flex flex-col gap-2.5">
-                    <h3 className="text-base font-bold text-[#1B2632]">3. L&apos;installer dans votre feuille</h3>
-                    <Etapes items={[
+                    <h3 className="text-base font-bold text-[#1B2632]">{t('api.etape3')}</h3>
+                    <Etapes items={en ? [
+                      <>Open your Google sheet. In <strong>row 1</strong>, put the headers of the format above
+                        (« Copy the headers », then paste into cell <strong>A1</strong>).</>,
+                      <>At the very top of the sheet, in the menu bar (<em>File, Edit, View, Insert, Format, Data, Tools,{' '}
+                        <strong>Extensions</strong>, Help</em>), click <strong>Extensions</strong>, then <strong>Apps Script</strong>.
+                        A new browser tab opens.</>,
+                      <>On the left, under <strong>Files</strong>, click <strong>Code.gs</strong>. It already has a few lines
+                        (<code className={CODE}>function myFunction()</code>…): select everything (<strong>Ctrl+A</strong>,
+                        or <strong>Cmd+A</strong> on Mac) and delete it.</>,
+                      <>Here, « Reveal the secret », then « Copy the code ». Go back to Code.gs and paste
+                        (<strong>Ctrl+V</strong>, or <strong>Cmd+V</strong>).</>,
+                      <><strong>Save</strong>: the disk icon above the code, or <strong>Ctrl+S</strong>. Do not skip it: until it is
+                        saved, « installer » does not appear in the next step.</>,
+                      <>Above the code, to the right of the <strong>Run</strong> button, a list shows a function name. Choose{' '}
+                        <code className={CODE}>installer</code>, then click <strong>Run</strong>. Only once: it connects the sheet,
+                        for typing by hand as well as for a Google Form.{' '}
+                        <strong>Run it from the Google account that will keep access to this sheet</strong>: the sheet sends in
+                        that account's name. If that person loses access or leaves the company, nothing is sent any more, with no
+                        message — someone else must then run <code className={CODE}>installer</code> again from their own account.</>,
+                      <>Google asks for permission: <strong>Review permissions</strong>, then choose your account. If it shows
+                        « Google hasn't verified this app », click <strong>Advanced</strong>, then{' '}
+                        <strong>Go to … (unsafe)</strong>: it is your own script, it only asks for this sheet and for sending to the
+                        CRM. Then <strong>Allow</strong>.</>,
+                      <>At the bottom, the <strong>Execution log</strong> shows « Installation terminée » and what it found in each
+                        tab. A red message says what is wrong: fix it, then run <code className={CODE}>installer</code> again.</>,
+                      <>Test: type a complete row in the sheet. The « Statut CRM » column shows « importé », and the order appears
+                        in the call center.</>,
+                    ] : [
                       <>Ouvrez votre feuille Google. En <strong>ligne 1</strong>, mettez les en-têtes du format
                         ci-dessus (« Copier les en-têtes », puis collez dans la case <strong>A1</strong>).</>,
                       <>Tout en haut de la feuille, dans la barre de menus (<em>Fichier, Édition, Affichage,
@@ -909,15 +942,14 @@ export default function SourcesImportPage() {
       {/* 4. Champs reconnus + 5. Réponses : la partie « Référence technique » (20/11). */}
       {partie === 'reference' && (<>
       <section className={CARTE}>
-        <TeteCarte titre="Champs reconnus">
-          Les formats WooCommerce et Shopify sont lus automatiquement : vous n&apos;avez rien à
-          mapper. Ce tableau sert aux envois manuels.
+        <TeteCarte titre={t('api.champsReconnus')}>
+          {t('api.formatsAuto')}
         </TeteCarte>
         <div className="overflow-x-auto border-t border-[#C9C1B1]/55">
           <table className="w-full min-w-[520px] text-left border-collapse">
             <thead>
               <tr className="bg-[#F4F0E6] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
-                <th className="px-4 py-2.5">Champ</th><th className="px-4 py-2.5">Autres noms acceptés</th><th className="px-4 py-2.5">Obligatoire</th>
+                <th className="px-4 py-2.5">{t('api.champ')}</th><th className="px-4 py-2.5">{t('api.autresNoms')}</th><th className="px-4 py-2.5">Obligatoire</th>
               </tr>
             </thead>
             <tbody>
@@ -928,10 +960,10 @@ export default function SourcesImportPage() {
                     {c.autres.map((a, j) => (
                       <Fragment key={a}>{j > 0 && ', '}<code className={CODE}>{a}</code></Fragment>
                     ))}
-                    {c.note && <span className="text-[#1B2632]/55"> ({c.note})</span>}
+                    {c.note && <span className="text-[#1B2632]/55"> ({t(c.note)})</span>}
                   </td>
                   <td className={`px-4 py-2.5 text-[13px] align-top ${c.obligatoire === 'oui' ? 'font-semibold' : 'text-[#1B2632]/70'}`}>
-                    {c.obligatoire}
+                    {c.obligatoire === 'oui' ? t('api.oui') : c.obligatoire === 'non' ? t('api.non') : t(c.obligatoire)}
                   </td>
                 </tr>
               ))}
@@ -942,15 +974,14 @@ export default function SourcesImportPage() {
 
       {/* 5. Réponses */}
       <section className={CARTE}>
-        <TeteCarte titre="Réponses">
-          Une commande déjà reçue renvoie <code className={CODE}>200</code> et non une erreur : c&apos;est ce qui
-          empêche WooCommerce de renvoyer la même commande indéfiniment.
+        <TeteCarte titre={t('api.reponses')}>
+          {t('api.dejaRecue200')}
         </TeteCarte>
         <div className="overflow-x-auto border-t border-[#C9C1B1]/55">
           <table className="w-full min-w-[520px] text-left border-collapse">
             <thead>
               <tr className="bg-[#F4F0E6] text-[10.5px] uppercase tracking-[.07em] text-[#1B2632]/70 font-bold">
-                <th className="px-4 py-2.5">Code</th><th className="px-4 py-2.5">Corps</th><th className="px-4 py-2.5">Ce que ça veut dire</th>
+                <th className="px-4 py-2.5">{t('api.code')}</th><th className="px-4 py-2.5">{t('api.corps')}</th><th className="px-4 py-2.5">{t('api.sens')}</th>
               </tr>
             </thead>
             <tbody>
@@ -958,7 +989,7 @@ export default function SourcesImportPage() {
                 <tr key={i} className={i % 2 === 1 ? 'bg-[#F7F9FB]' : 'bg-white'}>
                   <td className="px-4 py-2.5 align-top"><Pastille couleur={r.couleur}>{r.code}</Pastille></td>
                   <td className="px-4 py-2.5 text-[13px] align-top">{r.corps === '—' ? '—' : <code className={CODE}>{r.corps}</code>}</td>
-                  <td className="px-4 py-2.5 text-[13px] align-top">{r.sens}</td>
+                  <td className="px-4 py-2.5 text-[13px] align-top">{t(r.sens)}</td>
                 </tr>
               ))}
             </tbody>

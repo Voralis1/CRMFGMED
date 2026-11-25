@@ -10,13 +10,15 @@ import { usePermissions } from '../context/PermissionsContext'
 import { SectionDelai } from '../components/DelaiPriseEnCharge'
 // La période « Personnalisé » : le calendrier français des autres pages (23/11).
 import PlageDates from '../components/PlageDates'
+import { useLangue } from '../context/LangueContext'
 
 const PERIODES = [
-  { id: 'aujourdhui', label: "Aujourd'hui" },
-  { id: 'hier', label: 'Hier' },
-  { id: '7jours', label: '7 jours' },
-  { id: '30jours', label: '30 jours' },
-  { id: 'personnalise', label: 'Personnalisé' },
+  // label = une clé de texte (25/11, lib/langues).
+  { id: 'aujourdhui', label: 'perf.p.aujourdhui' },
+  { id: 'hier', label: 'perf.p.hier' },
+  { id: '7jours', label: 'perf.p.7' },
+  { id: '30jours', label: 'perf.p.30' },
+  { id: 'personnalise', label: 'perf.p.perso' },
 ]
 
 // Calcule les bornes ISO d'une période nommée
@@ -61,6 +63,8 @@ export default function PerformancesPage() {
   // L'entrepôt regardé (en haut, 11/11) : les appels et livraisons de ses commandes.
   const { entrepotId } = useEntrepot()
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions()
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue()
   const router = useRouter()
 
   const [ongletActif, setOngletActif] = useState('agents')
@@ -161,7 +165,7 @@ export default function PerformancesPage() {
   }, [tenantId, chargerPerformances])
 
   if (authLoading || permsLoading || !hasPermission('menu_performances')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('perf.verif')}</div>
   }
 
   return (
@@ -170,14 +174,14 @@ export default function PerformancesPage() {
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
           {/* En-tête compact (23/11). */}
-          <h1 className="text-2xl font-bold text-[#1B2632]">Performances</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('perf.titre')}</h1>
 
           <button
             onClick={chargerPerformances}
             disabled={chargement}
             className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm cursor-pointer disabled:opacity-50 w-fit"
           >
-            {chargement ? 'Actualisation...' : '↻ Rafraîchir'}
+            {chargement ? t('perf.actualisation') : `↻ ${t('perf.rafraichir')}`}
           </button>
         </div>
 
@@ -193,7 +197,7 @@ export default function PerformancesPage() {
                     : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                {p.label}
+                {t(p.label)}
               </button>
             ))}
           </div>
@@ -201,7 +205,7 @@ export default function PerformancesPage() {
           {periode === 'personnalise' && (
             <div className="w-full sm:w-[250px]">
               <style>{`.cm-input { width:100%; border:1px solid #C9C1B1; border-radius:12px; padding:8px 12px; font-size:13px; outline:none; background:#fff; color:#1B2632; }`}</style>
-              <PlageDates etiquette="performances" du={dateDebutPerso} au={dateFinPerso} placeholder="Choisir la période"
+              <PlageDates etiquette="performances" du={dateDebutPerso} au={dateFinPerso} placeholder={t('perf.choisirPeriode')}
                 onChange={(du, au) => { setDateDebutPerso(du); setDateFinPerso(au) }} />
             </div>
           )}
@@ -209,7 +213,7 @@ export default function PerformancesPage() {
 
         {/* Agents / Livreurs : des onglets (23/11), comme sur les autres pages. */}
         <div className="flex gap-1.5 bg-[#F4F0E6] p-1 rounded-xl border border-[#C9C1B1]/60 w-fit" role="tablist">
-          {[['agents', "Agents"], ['livreurs', 'Livreurs']].map(([cle, nom]) => (
+          {[['agents', t('perf.agents')], ['livreurs', t('perf.livreurs')]].map(([cle, nom]) => (
             <button key={cle} role="tab" aria-selected={ongletActif === cle} onClick={() => setOngletActif(cle)}
               className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
                 ongletActif === cle ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'}`}>
@@ -221,28 +225,28 @@ export default function PerformancesPage() {
 
       {avertissementLivraison && ongletActif === 'agents' && (
         <div className="p-4 bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-xl text-sm font-medium text-[#8a5a1f]">
-          Aucun statut n'est marqué "déclenche l'assignation" dans Paramètres → Statuts configurables — aucune confirmation ne peut donc être comptée (0 pour chaque agent). Cochez ce drapeau sur le statut qui confirme une commande.
+          {t('perf.avertissement')}
         </div>
       )}
 
 
       {chargement ? (
-        <p className="text-[#1B2632]/60 py-6">Calcul des statistiques en cours...</p>
+        <p className="text-[#1B2632]/60 py-6">{t('perf.calcul')}</p>
       ) : ongletActif === 'agents' ? (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
           <div className="p-6 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
-            <h2 className="text-lg font-bold text-[#1B2632]">Centre d'appel (Agents)</h2>
-            <p className="text-sm text-[#1B2632]/60 mt-1">Volume traité et taux de confirmation sur la période sélectionnée</p>
+            <h2 className="text-lg font-bold text-[#1B2632]">{t('perf.centreAppel')}</h2>
+            <p className="text-sm text-[#1B2632]/60 mt-1">{t('perf.agentsAide')}</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="bg-white border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
-                  <th className="p-4">Nom de l'agent</th>
-                  <th className="p-4 text-center">Statut</th>
-                  <th className="p-4 text-right">Appels traités</th>
-                  <th className="p-4 text-right">Confirmations</th>
-                  <th className="p-4 text-right w-[160px]">Taux de confirmation</th>
+                  <th className="p-4">{t('perf.nomAgent')}</th>
+                  <th className="p-4 text-center">{t('perf.statut')}</th>
+                  <th className="p-4 text-right">{t('perf.appels')}</th>
+                  <th className="p-4 text-right">{t('perf.confirmations')}</th>
+                  <th className="p-4 text-right w-[160px]">{t('perf.tauxConfirmation')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -269,7 +273,7 @@ export default function PerformancesPage() {
                 ))}
                 {statsAgents.length === 0 && (
                   <tr>
-                    <td colSpan="5" className="p-4 text-center text-[#1B2632]/60">Aucun agent trouvé sur cette période.</td>
+                    <td colSpan="5" className="p-4 text-center text-[#1B2632]/60">{t('perf.aucunAgent')}</td>
                   </tr>
                 )}
               </tbody>
@@ -279,18 +283,18 @@ export default function PerformancesPage() {
       ) : (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col">
           <div className="p-6 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
-            <h2 className="text-lg font-bold text-[#1B2632]">Centre logistique (Livreurs)</h2>
-            <p className="text-sm text-[#1B2632]/60 mt-1">Volume traité et taux de livraison sur la période sélectionnée</p>
+            <h2 className="text-lg font-bold text-[#1B2632]">{t('perf.logistique')}</h2>
+            <p className="text-sm text-[#1B2632]/60 mt-1">{t('perf.livreursAide')}</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="bg-white border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
-                  <th className="p-4">Nom & Zone</th>
-                  <th className="p-4 text-center">Statut</th>
-                  <th className="p-4 text-right">Livraisons assignées</th>
-                  <th className="p-4 text-right">Colis livrés</th>
-                  <th className="p-4 text-right w-[160px]">Taux de livraison</th>
+                  <th className="p-4">{t('perf.nomZone')}</th>
+                  <th className="p-4 text-center">{t('perf.statut')}</th>
+                  <th className="p-4 text-right">{t('perf.livraisonsAssignees')}</th>
+                  <th className="p-4 text-right">{t('perf.colisLivres')}</th>
+                  <th className="p-4 text-right w-[160px]">{t('perf.tauxLivraison')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -303,7 +307,7 @@ export default function PerformancesPage() {
                         </span>
                         <div>
                           <p className="font-medium text-[#1B2632]">{livreur.nom}</p>
-                          <p className="text-xs text-[#1B2632]/60 mt-0.5">{livreur.zone || 'Zone non définie (Volant)'}</p>
+                          <p className="text-xs text-[#1B2632]/60 mt-0.5">{livreur.zone || t('perf.zoneNonDefinie')}</p>
                         </div>
                       </div>
                     </td>
@@ -322,7 +326,7 @@ export default function PerformancesPage() {
                 ))}
                 {statsLivreurs.length === 0 && (
                   <tr>
-                    <td colSpan="5" className="p-4 text-center text-[#1B2632]/60">Aucun livreur trouvé sur cette période.</td>
+                    <td colSpan="5" className="p-4 text-center text-[#1B2632]/60">{t('perf.aucunLivreur')}</td>
                   </tr>
                 )}
               </tbody>

@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
 import { useMessages } from '../../components/Messages'
 import { messageErreur } from '../../../lib/messageErreur.mjs'
+import { useLangue } from '../../context/LangueContext'
 
 // Les permissions rangées par module (23/11) : la base les classe déjà en
 // 9 modules ; « general » et « Général » sont le même.
@@ -22,6 +23,8 @@ export default function SuperAdminRoles() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue()
 
   const [roles, setRoles] = useState([])
   const [permissions, setPermissions] = useState([])
@@ -37,7 +40,7 @@ export default function SuperAdminRoles() {
   const [rolePerms, setRolePerms] = useState([]) 
   const [newRoleData, setNewRoleData] = useState({ nom: '', description: '' })
 
-  // État pour désactiver le bouton "Supprimer" du rôle en cours de suppression
+  // État pour désactiver le bouton t('rol.supprimer') du rôle en cours de suppression
   const [suppressionEnCours, setSuppressionEnCours] = useState(null) // id du rôle, ou null
   // Sur chaque carte (23/11) : combien de permissions, combien de comptes.
   const [nbPerms, setNbPerms] = useState({})
@@ -93,14 +96,14 @@ export default function SuperAdminRoles() {
       
       if (error) throw error
 
-      setMessage({ text: 'Nouveau rôle créé avec succès !', type: 'success' })
+      setMessage({ text: t('rol.cree'), type: 'success' })
       setNewRoleData({ nom: '', description: '' })
       await chargerDonnees()
       
       setTimeout(() => { setIsCreateModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
     } catch (error) {
       console.error("Erreur création rôle :", JSON.stringify(error, null, 2))
-      setMessage({ text: "Erreur lors de la création.", type: 'error' })
+      setMessage({ text: t('rol.erreurCreation'), type: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -147,9 +150,9 @@ export default function SuperAdminRoles() {
     })
     if (error) {
       console.error("Erreur mise à jour perms :", JSON.stringify(error, null, 2))
-      setMessage({ text: messageErreur(error, "Erreur lors de la mise à jour."), type: 'error' })
+      setMessage({ text: messageErreur(error, t('rol.erreurMaj')), type: 'error' })
     } else {
-      setMessage({ text: 'Permissions mises à jour !', type: 'success' })
+      setMessage({ text: t('rol.majOk'), type: 'success' })
       setNbPerms((n) => ({ ...n, [selectedRole.id]: rolePerms.length }))
       setTimeout(() => { setIsEditModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
     }
@@ -163,9 +166,9 @@ export default function SuperAdminRoles() {
   // comptes perdaient toutes leurs permissions sans un mot (ON DELETE SET NULL).
   const handleDeleteRole = async (role) => {
     const confirmation = await confirmer({
-      titre: 'Supprimer le rôle',
-      message: `Supprimer définitivement le rôle « ${libelleRole(role.nom)} » ?\n\nCette action est irréversible. Si des comptes ont encore ce rôle, la suppression sera refusée.`,
-      bouton: 'Supprimer', danger: true,
+      titre: t('rol.supprimerTitre'),
+      message: t('rol.supprimerMsg', { nom: libelleRole(role.nom) }),
+      bouton: t('rol.supprimer'), danger: true,
     })
     if (!confirmation) return
 
@@ -173,10 +176,10 @@ export default function SuperAdminRoles() {
     const { error } = await supabase.from('roles').delete().eq('id', role.id)
     if (error) {
       console.error("Erreur suppression rôle :", JSON.stringify(error, null, 2))
-      annoncer(messageErreur(error, "Erreur lors de la suppression du rôle."), 'erreur')
+      annoncer(messageErreur(error, t('rol.erreurSuppression')), 'erreur')
     } else {
       setRoles(roles.filter((r) => r.id !== role.id))
-      annoncer('Rôle supprimé.', 'succes')
+      annoncer(t('rol.supprime'), 'succes')
     }
     setSuppressionEnCours(null)
   }
@@ -186,7 +189,7 @@ export default function SuperAdminRoles() {
   const estSuperAdminRole = selectedRole?.nom === 'super_admin'
 
   if (authLoading || permsLoading || !hasPermission('menu_gestion_roles')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('rol.verif')}</div>
   }
 
   return (
@@ -194,20 +197,20 @@ export default function SuperAdminRoles() {
       {/* En-tête compact (23/11), comme Entreprises et Comptes. */}
       <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#C9C1B1]/50 pb-3">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Rôles</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('rol.titre')}</h1>
           <span className="text-sm font-semibold text-[#1B2632]/50">{roles.length}</span>
         </div>
         <button 
           onClick={() => { setIsCreateModalOpen(true); setMessage({ text: '', type: '' }) }} 
           className="bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-5 py-2.5 rounded-xl text-sm font-bold cursor-pointer transition-colors"
         >
-          + Nouveau rôle
+          {t('rol.nouveau')}
         </button>
       </div>
 
       {/* Liste des Rôles */}
       <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-3 sm:p-6">
-        {loading ? <div className="text-center py-10">Chargement...</div> : (
+        {loading ? <div className="text-center py-10">{t('rol.chargement')}</div> : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {roles.map((role) => (
               <div key={role.id} className="p-4 sm:p-5 border border-[#C9C1B1]/60 rounded-xl hover:shadow-md transition-shadow bg-white flex flex-col justify-between">
@@ -216,16 +219,16 @@ export default function SuperAdminRoles() {
                     <h3 className="text-lg font-bold text-[#1B2632] break-words">{libelleRole(role.nom)}</h3>
                     {role.is_system && (
                       <span className="shrink-0 text-[11px] font-semibold text-[#1B2632]/45 bg-[#EEE9DF] px-2 py-0.5 rounded-md"
-                        title="Le code de l'application lit ce rôle par son nom : il ne se supprime pas.">
-                        Rôle système
+                        title={t('rol.systemeAide')}>
+                        {t('rol.systeme')}
                       </span>
                     )}
                   </div>
                   {/* Ce que le rôle fait et qui le porte (23/11), au lieu de « Aucune description ». */}
                   <p className="text-sm text-[#1B2632]/65 mt-2">
-                    <b className="text-[#1B2632]">{nbPerms[role.id] ?? 0}</b> permission{(nbPerms[role.id] ?? 0) > 1 ? 's' : ''}
+                    <b className="text-[#1B2632]">{nbPerms[role.id] ?? 0}</b> {t('rol.permissions', { n: nbPerms[role.id] ?? 0 })}
                     <span className="text-[#1B2632]/30"> · </span>
-                    <b className="text-[#1B2632]">{nbComptes[role.id] ?? 0}</b> compte{(nbComptes[role.id] ?? 0) > 1 ? 's' : ''}
+                    <b className="text-[#1B2632]">{nbComptes[role.id] ?? 0}</b> {t('rol.comptes', { n: nbComptes[role.id] ?? 0 })}
                   </p>
                   {role.description && <p className="text-xs text-[#1B2632]/55 mt-1.5 line-clamp-2">{role.description}</p>}
                 </div>
@@ -234,17 +237,17 @@ export default function SuperAdminRoles() {
                     onClick={() => { handleOpenEdit(role); setRecherchePerm('') }} 
                     className="flex-1 bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors cursor-pointer"
                   >
-                    Gérer les permissions
+                    {t('rol.gerer')}
                   </button>
                   {role.is_system ? null : (
                   <button
                     onClick={() => handleDeleteRole(role)}
                     disabled={suppressionEnCours === role.id}
-                    title="Supprimer ce rôle"
+                    title={t('rol.supprimerAide')}
                     className="flex items-center gap-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 px-3 py-2 rounded-lg text-sm font-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
-                    {suppressionEnCours === role.id ? '…' : 'Supprimer'}
+                    {suppressionEnCours === role.id ? '…' : t('rol.supprimer')}
                   </button>
                   )}
                 </div>
@@ -259,7 +262,7 @@ export default function SuperAdminRoles() {
         <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-[#1B2632]">Ajouter un Rôle</h3>
+              <h3 className="text-xl font-bold text-[#1B2632]">{t('rol.ajouter')}</h3>
               <button onClick={() => setIsCreateModalOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl leading-none cursor-pointer">&times;</button>
             </div>
 
@@ -267,11 +270,11 @@ export default function SuperAdminRoles() {
               {message.text && <div className={`p-3 rounded-lg text-sm font-medium ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>{message.text}</div>}
 
               <div>
-                <label className="block text-sm font-semibold mb-1">Nom du rôle <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-semibold mb-1">{t('rol.nom')} <span className="text-red-500">*</span></label>
                 <input 
                   type="text" 
                   required 
-                  placeholder="ex: MANAGER" 
+                  placeholder={t('rol.exNom')} 
                   value={newRoleData.nom} 
                   onChange={(e) => setNewRoleData({ ...newRoleData, nom: e.target.value })} 
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1B2632] outline-none"
@@ -279,9 +282,9 @@ export default function SuperAdminRoles() {
               </div>
               
               <div>
-                <label className="block text-sm font-semibold mb-1">Description (Optionnel)</label>
+                <label className="block text-sm font-semibold mb-1">{t('rol.description')}</label>
                 <textarea 
-                  placeholder="Ce rôle permet de..." 
+                  placeholder={t('rol.exDescription')} 
                   value={newRoleData.description} 
                   onChange={(e) => setNewRoleData({ ...newRoleData, description: e.target.value })} 
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1B2632] outline-none min-h-[100px]"
@@ -289,9 +292,9 @@ export default function SuperAdminRoles() {
               </div>
 
               <div className="flex gap-3 pt-4 border-t border-gray-100">
-                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl transition-colors cursor-pointer">Annuler</button>
+                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl transition-colors cursor-pointer">{t('rol.annuler')}</button>
                 <button type="submit" disabled={submitting} className="flex-1 py-3 bg-[#1B2632] text-white font-semibold rounded-xl transition-colors cursor-pointer">
-                  {submitting ? 'Création...' : 'Créer le rôle'}
+                  {submitting ? t('rol.creation') : t('rol.creer')}
                 </button>
               </div>
             </form>
@@ -316,7 +319,7 @@ export default function SuperAdminRoles() {
 
               {estSuperAdminRole && (
                 <div className="mb-4 p-3 rounded-lg text-sm bg-[#EEE9DF] text-[#1B2632]">
-                  Le rôle super_admin détient toutes les permissions : la base l'impose. Une nouvelle permission lui est donnée automatiquement, aucune ne peut lui être retirée.
+                  {t('rol.superAdminAide')}
                 </div>
               )}
               {/* Rangées par module, avec une recherche (23/11) : avant, 61 cases
@@ -324,27 +327,27 @@ export default function SuperAdminRoles() {
               <div className="flex items-center gap-2 mb-3 bg-white px-3.5 py-2 rounded-xl border border-[#C9C1B1] focus-within:border-[#1B2632]">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/35 shrink-0"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
                 <input id="recherche-permission" type="text" value={recherchePerm} onChange={(e) => setRecherchePerm(e.target.value)}
-                  placeholder="Chercher une permission (livraison, export…)" className="w-full outline-none bg-transparent text-sm text-[#1B2632]" />
+                  placeholder={t('rol.chercher')} className="w-full outline-none bg-transparent text-sm text-[#1B2632]" />
                 {recherchePerm && <button type="button" onClick={() => setRecherchePerm('')} className="text-xs text-[#1B2632]/40 hover:text-[#A35139]">✕</button>}
               </div>
               <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-5 pb-4">
                 {(() => {
-                  const t = recherchePerm.trim().toLowerCase()
-                  const visibles = permissions.filter((p) => !t || `${p.nom} ${p.code} ${p.description || ''} ${p.module || ''}`.toLowerCase().includes(t))
+                  const rech = recherchePerm.trim().toLowerCase()
+                  const visibles = permissions.filter((p) => !rech || `${p.nom} ${p.code} ${p.description || ''} ${p.module || ''}`.toLowerCase().includes(rech))
                   const groupes = {}
                   for (const p of visibles) (groupes[nomModule(p.module)] ||= []).push(p)
                   const ordre = Object.keys(groupes).sort((a, b) => {
                     const ia = ORDRE_MODULES.indexOf(a), ib = ORDRE_MODULES.indexOf(b)
                     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b)
                   })
-                  if (ordre.length === 0) return <p className="text-sm text-[#1B2632]/50 py-6 text-center">Aucune permission ne correspond.</p>
+                  if (ordre.length === 0) return <p className="text-sm text-[#1B2632]/50 py-6 text-center">{t('rol.aucune')}</p>
                   return ordre.map((mod) => {
                     const liste = groupes[mod].sort((a, b) => String(a.nom).localeCompare(String(b.nom)))
                     const cochees = liste.filter((p) => estSuperAdminRole || rolePerms.includes(p.code)).length
                     return (
                       <section key={mod}>
                         <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 mb-2 flex items-center gap-2">
-                          {mod}
+                          {ORDRE_MODULES.includes(mod) ? t('rol.mod.' + mod.normalize('NFD').replace(/[^A-Za-z]/g, '')) : mod}
                           <span className="font-semibold normal-case tracking-normal text-[#1B2632]/40">{cochees} / {liste.length}</span>
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -375,9 +378,9 @@ export default function SuperAdminRoles() {
               </div>
 
               <div className="flex gap-3 pt-6 mt-2 border-t border-gray-100">
-                <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl transition-colors cursor-pointer">Annuler</button>
+                <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 font-semibold rounded-xl transition-colors cursor-pointer">{t('rol.annuler')}</button>
                 <button type="submit" disabled={submitting || estSuperAdminRole} className="flex-1 py-3 bg-[#1B2632] hover:bg-[#2C3E50] text-white font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                  {submitting ? 'Enregistrement...' : 'Enregistrer les permissions'}
+                  {submitting ? t('commun.enregistrement') : t('rol.enregistrer')}
                 </button>
               </div>
             </form>

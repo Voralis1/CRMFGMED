@@ -17,6 +17,9 @@ import { supabase } from '../../lib/supabaseClient'
 // Ce que les chiffres veulent dire, en une phrase chacun (mêmes chiffres que le détail).
 import { phrasesDelai, phraseAttenteCourte } from '../../lib/phrasesDelai.mjs'
 import Link from 'next/link'
+// Les textes suivent la langue choisie (25/11) : le traducteur du module —
+// la page parente (Dashboard, Performances) se redessine au changement.
+import { traduire as t } from '../../lib/langues/index.mjs'
 
 export const ROLES_DELAI = ['manager', 'admin', 'ceo', 'super_admin']
 
@@ -32,7 +35,7 @@ export function formatDuree(minutes) {
   if (m < 60) return `${m} min`
   if (m < 1440) return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`
   const j = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60)
-  return h ? `${j} j ${h} h` : `${j} j`
+  return h ? t('dpc.joursHeures', { j, h }) : t('dpc.jours', { j })
 }
 
 const TRANCHES = [
@@ -68,17 +71,17 @@ function Tranches({ resume }) {
   return (
     <div className="flex flex-col gap-2.5" data-tranches>
       <div className="flex h-2.5 rounded-full overflow-hidden bg-[#EEE9DF]">
-        {total > 0 && TRANCHES.map((t) => (
-          <div key={t.cle} style={{ width: `${(resume.tranches[t.cle] / total) * 100}%`, backgroundColor: t.couleur }} />
+        {total > 0 && TRANCHES.map((tranche) => (
+          <div key={tranche.cle} style={{ width: `${(resume.tranches[tranche.cle] / total) * 100}%`, backgroundColor: tranche.couleur }} />
         ))}
       </div>
       <div className="flex flex-col divide-y divide-[#C9C1B1]/30">
-        {TRANCHES.map((t) => {
-          const n = Number(resume?.tranches?.[t.cle] ?? 0)
+        {TRANCHES.map((tranche) => {
+          const n = Number(resume?.tranches?.[tranche.cle] ?? 0)
           return (
-            <div key={t.cle} className="flex items-center gap-2.5 py-1.5 text-sm">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t.couleur }} />
-              <span className="text-[#1B2632]/70 flex-1">{t.nom}</span>
+            <div key={tranche.cle} className="flex items-center gap-2.5 py-1.5 text-sm">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: tranche.couleur }} />
+              <span className="text-[#1B2632]/70 flex-1">{tranche.nom}</span>
               <span className="font-semibold text-[#1B2632] tabular-nums w-10 text-right">{n}</span>
               <span className="text-xs text-[#1B2632]/45 tabular-nums w-12 text-right">{total > 0 ? `${Math.round((100 * n) / total)} %` : '—'}</span>
             </div>
@@ -104,11 +107,11 @@ function BlocAttente({ resume }) {
   return (
     <div className="flex flex-col gap-4 p-5 rounded-xl border border-[#C9C1B1] bg-white" data-bloc-attente>
       <div>
-        <h3 className="text-sm font-bold text-[#1B2632]">En attente maintenant</h3>
-        <p className="text-xs text-[#1B2632]/55 mt-0.5">Leads jamais pris en charge, à l&apos;instant présent (la période ne change rien ici).</p>
+        <h3 className="text-sm font-bold text-[#1B2632]">{t('dpc.attenteMaintenant')}</h3>
+        <p className="text-xs text-[#1B2632]/55 mt-0.5">{t('dpc.attenteAide')}</p>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Chiffre valeur={n} nom={`lead${n > 1 ? 's' : ''} en attente`} alerte={n > 0} />
+        <Chiffre valeur={n} nom={t('dpc.leadsAttente', { n })} alerte={n > 0} />
         <Chiffre valeur={n ? formatDuree(resume.max_min) : '—'} nom="le plus ancien attend" />
         <Chiffre valeur={n ? formatDuree(resume.mediane_min) : '—'} nom="attente médiane" />
       </div>
@@ -122,11 +125,11 @@ function BlocPris({ resume, fermes }) {
   return (
     <div className="flex flex-col gap-4 p-5 rounded-xl border border-[#C9C1B1] bg-white" data-bloc-pris>
       <div>
-        <h3 className="text-sm font-bold text-[#1B2632]">Pris en charge sur la période</h3>
-        <p className="text-xs text-[#1B2632]/55 mt-0.5">Leads entrés dans la file pendant la période, et appelés depuis.</p>
+        <h3 className="text-sm font-bold text-[#1B2632]">{t('dpc.prisPeriode')}</h3>
+        <p className="text-xs text-[#1B2632]/55 mt-0.5">{t('dpc.prisAide')}</p>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Chiffre valeur={n} nom={`lead${n > 1 ? 's' : ''} pris en charge`} />
+        <Chiffre valeur={n} nom={t('dpc.leadsPris', { n })} />
         <Chiffre valeur={formatDuree(resume?.mediane_min)} nom="délai médian" />
         <Chiffre valeur={formatDuree(resume?.moyenne_min)} nom="délai moyen" />
       </div>
@@ -149,7 +152,8 @@ function Constat({ donnees }) {
   )
 }
 
-const EXPLICATION = "Du moment où le lead entre dans la file (ou y revient : remonté, renvoyé en attente) au début du premier appel enregistré. Un panneau ouvert puis refermé sans enregistrer ne laisse pas de trace ; une action en masse et une correction depuis Commandes ne comptent pas."
+// Le texte vient de lib/langues (dpc.explication, 25/11).
+const EXPLICATION = 'dpc.explication'
 
 // Performances : l'entreprise, puis chaque agent.
 export function SectionDelai({ tenantId, debut, fin, roleNom }) {
@@ -161,13 +165,13 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
   return (
     <section className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col" data-section-delai>
       <div className="p-6 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20 flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-[#1B2632]">Délai de première prise en charge enregistrée</h2>
+        <h2 className="text-lg font-bold text-[#1B2632]">{t('dpc.titre')}</h2>
         {donnees && !erreur && !chargement && <Constat donnees={donnees} />}
       </div>
       {erreur ? (
         <p className="p-6 text-sm text-[#A35139]">Délai indisponible : {erreur}</p>
       ) : chargement || !donnees ? (
-        <p className="p-6 text-sm text-[#1B2632]/60">Calcul en cours...</p>
+        <p className="p-6 text-sm text-[#1B2632]/60">{t('dpc.calcul')}</p>
       ) : (
         <>
           {/* Le tableau par agent, refait le 23/11 pour se lire comme celui des
@@ -178,18 +182,18 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
             <table className="w-full min-w-[720px] text-sm text-left border-collapse">
               <thead>
                 <tr className="bg-white border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
-                  <th className="p-4">Agent</th>
-                  <th className="p-4">En attente maintenant</th>
-                  <th className="p-4 text-right">Pris en charge</th>
-                  <th className="p-4 text-right">Délai médian</th>
-                  {details && <th className="p-4 text-right">Délai moyen</th>}
-                  <th className="p-4 w-[220px]">Rapidité</th>
+                  <th className="p-4">{t('dpc.agent')}</th>
+                  <th className="p-4">{t('dpc.attenteMaintenant')}</th>
+                  <th className="p-4 text-right">{t('dpc.prisEnCharge')}</th>
+                  <th className="p-4 text-right">{t('dpc.median')}</th>
+                  {details && <th className="p-4 text-right">{t('dpc.moyen')}</th>}
+                  <th className="p-4 w-[220px]">{t('dpc.rapidite')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#C9C1B1]/30">
                 {donnees.par_agent.map((a) => {
                   const tr = a.pris_en_charge.tranches || {}
-                  const total = TRANCHES.reduce((n, t) => n + Number(tr[t.cle] || 0), 0)
+                  const total = TRANCHES.reduce((n, tranche) => n + Number(tr[tranche.cle] || 0), 0)
                   return (
                     <tr key={a.cle} className={`hover:bg-[#EEE9DF]/20 transition ${a.cle === 'sans' ? 'bg-[#A35139]/[0.03]' : ''}`}>
                       <td className="p-4 font-medium text-[#1B2632]">{a.agent}</td>
@@ -202,7 +206,7 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
                             <span className="text-xs text-[#1B2632]/60 whitespace-nowrap">depuis {formatDuree(a.en_attente.max_min)}</span>
                           </span>
                         ) : (
-                          <span className="text-xs text-[#1B2632]/40">Personne n&apos;attend</span>
+                          <span className="text-xs text-[#1B2632]/40">{t('dpc.personne')}</span>
                         )}
                       </td>
                       <td className="p-4 text-right font-semibold text-[#1B2632] tabular-nums">{a.pris_en_charge.n}</td>
@@ -210,10 +214,10 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
                       {details && <td className="p-4 text-right text-[#1B2632]/75 tabular-nums whitespace-nowrap">{formatDuree(a.pris_en_charge.moyenne_min)}</td>}
                       <td className="p-4">
                         {total > 0 ? (
-                          <div title={TRANCHES.map((t) => `${t.nom} : ${tr[t.cle] || 0}`).join(' · ')}>
+                          <div title={TRANCHES.map((tranche) => `${tranche.nom} : ${tr[tranche.cle] || 0}`).join(' · ')}>
                             <div className="flex h-2.5 rounded-full overflow-hidden bg-[#EEE9DF]">
-                              {TRANCHES.map((t) => Number(tr[t.cle] || 0) > 0 && (
-                                <div key={t.cle} style={{ width: `${(100 * Number(tr[t.cle])) / total}%`, backgroundColor: t.couleur }} />
+                              {TRANCHES.map((tranche) => Number(tr[tranche.cle] || 0) > 0 && (
+                                <div key={tranche.cle} style={{ width: `${(100 * Number(tr[tranche.cle])) / total}%`, backgroundColor: tranche.couleur }} />
                               ))}
                             </div>
                             <p className="text-[11px] text-[#1B2632]/55 mt-1 tabular-nums">
@@ -233,15 +237,15 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
           <div className="px-5 py-3 border-t border-[#C9C1B1]/50 flex flex-wrap items-center justify-between gap-3">
             {/* La légende de la barre « Rapidité » (23/11). */}
             <span className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[#1B2632]/60 order-2">
-              {TRANCHES.map((t) => (
-                <span key={t.cle} className="inline-flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.couleur }} />{t.nom}
+              {TRANCHES.map((tranche) => (
+                <span key={tranche.cle} className="inline-flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: tranche.couleur }} />{tranche.nom}
                 </span>
               ))}
             </span>
             <button type="button" onClick={() => setDetails((d) => !d)} aria-expanded={details}
               className="text-xs font-bold text-[#1B2632]/70 hover:text-[#1B2632] cursor-pointer" data-details>
-              {details ? '▾ Détails' : '▸ Détails'}
+              {details ? t('dpc.detailsOuvert') : t('dpc.detailsFerme')}
             </button>
           </div>
           {details && (
@@ -254,9 +258,9 @@ export function SectionDelai({ tenantId, debut, fin, roleNom }) {
               elles allongeaient la page pour un lecteur qui les connaît. */}
           {details && (
           <div className="mx-6 mb-6 px-4 py-3 rounded-xl bg-[#F4F0E6] text-xs text-[#1B2632]/70 flex flex-col gap-1.5">
-            <p className="font-bold text-[#1B2632]/80">Comment c&apos;est compté</p>
-            <p>• « En attente » est compté pour l&apos;agent à qui le lead est affecté ; « Pris en charge » pour celui qui a fait l&apos;appel.</p>
-            <p>• {EXPLICATION}</p>
+            <p className="font-bold text-[#1B2632]/80">{t('dpc.commentTitre')}</p>
+            <p>{t('dpc.commentCompte')}</p>
+            <p>• {t(EXPLICATION)}</p>
           </div>
           )}
         </>

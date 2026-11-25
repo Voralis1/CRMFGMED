@@ -18,6 +18,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
+import { useLangue } from '../context/LangueContext'
 
 // Même règle que Supabase Auth (8 caractères depuis le 17/11) et que
 // Utilisateurs : refusé ici avant que le serveur le refuse.
@@ -26,6 +27,8 @@ const MIN_MOT_DE_PASSE = 8
 export default function ProfilPage() {
   const { user, tenantId, loading: authLoading } = useAuth()
   const { roleNom, loading: permsLoading } = usePermissions()
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue()
   const router = useRouter()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
@@ -73,26 +76,26 @@ export default function ProfilPage() {
   async function changerMotDePasse(e) {
     e.preventDefault()
     if (!user) return
-    if (nouveau.length < MIN_MOT_DE_PASSE) return annonce(`Le mot de passe doit contenir au moins ${MIN_MOT_DE_PASSE} caractères.`, 'erreur')
-    if (nouveau !== confirmation) return annonce('Les deux mots de passe ne sont pas identiques.', 'erreur')
+    if (nouveau.length < MIN_MOT_DE_PASSE) return annonce(t('prof.auMoins', { n: MIN_MOT_DE_PASSE }), 'erreur')
+    if (nouveau !== confirmation) return annonce(t('prof.differents'), 'erreur')
     setEnCours(true)
     const { error } = await supabase.auth.updateUser({ password: nouveau })
     setEnCours(false)
     if (error) {
       // Supabase refuse aussi un mot de passe trop faible ou identique à l'ancien.
       annonce(/weak|short|least/i.test(error.message)
-        ? `Mot de passe trop faible (${MIN_MOT_DE_PASSE} caractères minimum).`
+        ? t('prof.tropFaible', { n: MIN_MOT_DE_PASSE })
         : /same|different/i.test(error.message)
-          ? "Choisissez un mot de passe différent de l'actuel."
-          : 'Le mot de passe n’a pas pu être changé. Réessayez.', 'erreur')
+          ? t('prof.different')
+          : t('prof.echec'), 'erreur')
       return
     }
     setNouveau(''); setConfirmation('')
-    annonce('Mot de passe changé.', 'succes')
+    annonce(t('prof.change'), 'succes')
   }
 
   if (authLoading || permsLoading || !infos) {
-    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">Chargement du profil...</div>
+    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">{t('prof.chargement')}</div>
   }
 
   const tropCourt = nouveau.length > 0 && nouveau.length < MIN_MOT_DE_PASSE
@@ -100,7 +103,7 @@ export default function ProfilPage() {
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-[900px] mx-auto pt-4 sm:pt-2 px-4 sm:px-6 pb-10">
-      <h1 className="text-2xl font-bold text-[#1B2632]">Mon profil</h1>
+      <h1 className="text-2xl font-bold text-[#1B2632]">{t('prof.titre')}</h1>
 
       {message.texte && (
         <div className={`px-4 py-3 rounded-xl text-sm font-medium border ${
@@ -118,41 +121,41 @@ export default function ProfilPage() {
             {(infos.nom || infos.email || '?').charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-lg font-bold text-[#1B2632] truncate">{infos.nom || <span className="font-normal italic text-[#1B2632]/40">sans nom</span>}</p>
+            <p className="text-lg font-bold text-[#1B2632] truncate">{infos.nom || <span className="font-normal italic text-[#1B2632]/40">{t('prof.sansNom')}</span>}</p>
             <p className="text-sm text-[#1B2632]/60 truncate">{infos.email}</p>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-[#C9C1B1]/40 pt-4">
-          <Info label="Rôle" valeur={infos.role ? infos.role.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '—'} />
-          <Info label="Entreprise" valeur={infos.entreprise || '—'} />
-          <Info label="E-mail de connexion" valeur={infos.email || '—'} />
+          <Info label={t('prof.role')} valeur={infos.role ? infos.role.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '—'} />
+          <Info label={t('prof.entreprise')} valeur={infos.entreprise || '—'} />
+          <Info label={t('prof.emailConnexion')} valeur={infos.email || '—'} />
         </div>
         <p className="text-xs text-[#1B2632]/50">
-          Pour changer votre nom ou votre rôle, demandez à un administrateur (menu Utilisateurs).
+          {t('prof.changerNomAide')}
         </p>
       </section>
 
       {/* Le mot de passe — la seule chose que chacun change lui-même. */}
       <form onSubmit={changerMotDePasse} className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm p-6 flex flex-col gap-5">
         <div>
-          <h2 className="text-lg font-bold text-[#1B2632]">Mot de passe</h2>
-          <p className="text-sm text-[#1B2632]/60 mt-0.5">Choisissez un nouveau mot de passe d&apos;au moins {MIN_MOT_DE_PASSE} caractères.</p>
+          <h2 className="text-lg font-bold text-[#1B2632]">{t('prof.mdp')}</h2>
+          <p className="text-sm text-[#1B2632]/60 mt-0.5">{t('prof.choisirNouveau', { n: MIN_MOT_DE_PASSE })}</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <ChampMotDePasse id="nouveau-mdp" label="Nouveau mot de passe" valeur={nouveau} setValeur={setNouveau}
+          <ChampMotDePasse id="nouveau-mdp" label={t('prof.nouveauMdp')} valeur={nouveau} setValeur={setNouveau}
             voir={voirNouveau} setVoir={setVoirNouveau}
-            aide={`${MIN_MOT_DE_PASSE} caractères minimum${nouveau ? ` · ${nouveau.length} tapé${nouveau.length > 1 ? 's' : ''}` : ''}`}
+            aide={t('prof.min', { n: MIN_MOT_DE_PASSE }) + (nouveau ? t('prof.tapes', { n: nouveau.length }) : '')}
             erreur={tropCourt} />
-          <ChampMotDePasse id="confirmation-mdp" label="Confirmer le mot de passe" valeur={confirmation} setValeur={setConfirmation}
+          <ChampMotDePasse id="confirmation-mdp" label={t('prof.confirmerMdp')} valeur={confirmation} setValeur={setConfirmation}
             voir={voirConfirmation} setVoir={setVoirConfirmation}
-            aide={differents ? 'Les deux mots de passe ne sont pas identiques.' : confirmation && !differents ? 'Identiques.' : 'Tapez-le une seconde fois.'}
+            aide={differents ? t('prof.differents') : confirmation && !differents ? t('prof.identiques') : t('prof.secondeFois')}
             erreur={differents} />
         </div>
         <div className="flex justify-end">
           <button type="submit"
             disabled={enCours || nouveau.length < MIN_MOT_DE_PASSE || nouveau !== confirmation}
             className="px-6 py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
-            {enCours ? 'Modification…' : 'Changer le mot de passe'}
+            {enCours ? t('prof.modification') : t('prof.changerMdp')}
           </button>
         </div>
       </form>

@@ -1728,6 +1728,7 @@ function packDuTitre(titre) {
 
 // Le titre reçu de la boutique et ce qu'il dit du pack, face au pack proposé.
 function VerifPack({ titre, pack }) {
+  const { t } = useLangue()
   if (!titre) return <p className="text-[11px] text-[#8a5a1f]">{t('prod.pasCommandeSku')}</p>
   const n = packDuTitre(titre)
   return (

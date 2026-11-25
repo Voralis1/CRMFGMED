@@ -7,12 +7,15 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../context/PermissionsContext';
 import { useMessages } from '../../components/Messages';
 import { messageErreur } from '../../../lib/messageErreur.mjs';
+import { useLangue } from '../../context/LangueContext';
 
 export default function TenantsPage() {
   const { user, loading: authLoading } = useAuth();
   const { hasPermission, loading: permsLoading } = usePermissions();
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages();
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue();
   const router = useRouter();
 
   const [tenants, setTenants] = useState([]);
@@ -58,7 +61,7 @@ export default function TenantsPage() {
       setTenants(data || []);
     } catch (err) {
       console.error("Erreur lors du chargement des entreprises :", err.message || err);
-      setErrorMsg("Impossible de charger la liste des entreprises.");
+      setErrorMsg(t('ent.erreurListe'));
     } finally {
       setLoading(false);
     }
@@ -95,7 +98,7 @@ export default function TenantsPage() {
       setNewTenantPays('');
     } catch (err) {
       console.error("Erreur de création détaillée :", err.message || JSON.stringify(err));
-      annoncer(`Création impossible : ${messageErreur(err)}`, 'erreur');
+      annoncer(t('ent.creationImpossible', { erreur: messageErreur(err) }), 'erreur');
     }
   }
 
@@ -114,7 +117,7 @@ export default function TenantsPage() {
     if (!editTenant || !editNom.trim()) return;
     const delai = Number(editDelai);
     if (!Number.isInteger(delai) || delai < 5 || delai > 480) {
-      annoncer('Délai de réaffectation : un nombre entier de minutes, entre 5 et 480.', 'erreur');
+      annoncer(t('ent.delaiInvalide'), 'erreur');
       return;
     }
 
@@ -133,7 +136,7 @@ export default function TenantsPage() {
       setEditTenant(null);
     } catch (err) {
       console.error("Erreur de modification détaillée :", err.message || JSON.stringify(err));
-      annoncer(`Modification impossible : ${messageErreur(err)}`, 'erreur');
+      annoncer(t('ent.modificationImpossible', { erreur: messageErreur(err) }), 'erreur');
     } finally {
       setActionEnCours(null);
     }
@@ -146,8 +149,8 @@ export default function TenantsPage() {
     const nouveauStatut = tenant.statut === 'suspendu' ? 'actif' : 'suspendu';
     const confirmation = await confirmer(
       nouveauStatut === 'suspendu'
-        ? { titre: 'Suspendre l\u2019entreprise', message: `Suspendre « ${tenant.nom_entreprise} » ? Ses utilisateurs ne pourront plus se connecter tant qu'elle est suspendue.`, bouton: 'Suspendre', danger: true }
-        : { titre: 'Réactiver l\u2019entreprise', message: `Réactiver « ${tenant.nom_entreprise} » ?`, bouton: 'Réactiver' }
+        ? { titre: t('ent.suspendreTitre'), message: t('ent.suspendreMsg', { nom: tenant.nom_entreprise }), bouton: t('ent.suspendre'), danger: true }
+        : { titre: t('ent.reactiverTitre'), message: t('ent.reactiverMsg', { nom: tenant.nom_entreprise }), bouton: t('ent.reactiver') }
     );
     if (!confirmation) return;
 
@@ -164,7 +167,7 @@ export default function TenantsPage() {
       setTenants(tenants.map((t) => (t.id === data.id ? data : t)));
     } catch (err) {
       console.error("Erreur de suspension :", err.message || err);
-      annoncer(`Impossible de changer le statut : ${messageErreur(err)}`, 'erreur');
+      annoncer(t('ent.statutImpossible', { erreur: messageErreur(err) }), 'erreur');
     } finally {
       setActionEnCours(null);
     }
@@ -175,9 +178,9 @@ export default function TenantsPage() {
   // ------------------------------------------------------------
   async function handleDeleteTenant(tenant) {
     const confirmation = await confirmer({
-      titre: 'Supprimer l\u2019entreprise',
-      message: `Supprimer définitivement « ${tenant.nom_entreprise} » ?\n\nCette action est IRRÉVERSIBLE.`,
-      bouton: 'Supprimer', danger: true,
+      titre: t('ent.supprimerTitre'),
+      message: t('ent.supprimerMsg', { nom: tenant.nom_entreprise }),
+      bouton: t('ent.supprimer'), danger: true,
     });
     if (!confirmation) return;
 
@@ -192,7 +195,7 @@ export default function TenantsPage() {
         // 23503 (NO ACTION : commandes, agents, comptes) et 23001 (RESTRICT :
         // travail, argent, historique — fk_entreprises.sql, 12/11) : elle a travaillé.
         if (error.code === '23503' || error.code === '23001') {
-          annoncer(`Impossible de supprimer « ${tenant.nom_entreprise} » : elle a des commandes, des comptes ou un historique.\n\nPour la fermer, passez son statut à « Archivé » (Modifier) : plus personne n'y accède et ses données restent.`, 'erreur');
+          annoncer(t('ent.nePeutSupprimer', { nom: tenant.nom_entreprise }), 'erreur');
         } else {
           throw error;
         }
@@ -202,7 +205,7 @@ export default function TenantsPage() {
       setTenants(tenants.filter((t) => t.id !== tenant.id));
     } catch (err) {
       console.error("Erreur de suppression :", err.message || err);
-      annoncer(`Suppression impossible : ${messageErreur(err)}`, 'erreur');
+      annoncer(t('ent.suppressionImpossible', { erreur: messageErreur(err) }), 'erreur');
     } finally {
       setActionEnCours(null);
     }
@@ -218,23 +221,23 @@ export default function TenantsPage() {
   // Badge lisible (23/11) : un point de couleur, le texte foncé.
   const badgeStatut = (statut) => {
     const points = { actif: '#2E7D53', suspendu: '#FFB162', archive: '#C9C1B1' };
-    const labels = { actif: 'Actif', suspendu: 'Suspendue', archive: 'Archivée' };
+    const labels = { actif: t('ent.st.actif'), suspendu: t('ent.st.suspendu'), archive: t('ent.st.archive') };
     const couleur = points[statut] || points.actif;
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold text-[#1B2632] border whitespace-nowrap"
         style={{ backgroundColor: `${couleur}22`, borderColor: `${couleur}66` }}>
         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: couleur }} />
-        {labels[statut] || statut || 'Actif'}
+        {labels[statut] || statut || t('ent.st.actif')}
       </span>
     );
   };
 
   if (authLoading || permsLoading || !hasPermission('menu_tenants')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>;
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('ent.verif')}</div>;
   }
 
   if (loading) {
-    return <div className="p-8 text-center text-[#7a7365]">Chargement des entreprises...</div>;
+    return <div className="p-8 text-center text-[#7a7365]">{t('ent.chargement')}</div>;
   }
 
   return (
@@ -250,14 +253,14 @@ export default function TenantsPage() {
       {/* En-tête compact (23/11), comme les autres pages. */}
       <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#C9C1B1]/50 pb-3">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Entreprises</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('ent.titre')}</h1>
           <span className="text-sm font-semibold text-[#1B2632]/50">{tenants.length}</span>
         </div>
         <button
           onClick={() => setIsModalOpen(true)}
           className="bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm cursor-pointer"
         >
-          <span className="text-lg leading-none">+</span> Nouvelle entreprise
+          <span className="text-lg leading-none">+</span> {t('ent.nouvelle')}
         </button>
       </div>
 
@@ -267,17 +270,17 @@ export default function TenantsPage() {
           <table className="w-full min-w-[640px] text-left text-sm text-[#3a3529]">
             <thead className="bg-[#EEE9DF]/60 text-[#7a7365] text-xs uppercase font-semibold border-b border-[#C9C1B1]/50">
               <tr>
-                <th className="px-6 py-4">Nom de l'entreprise</th>
-                <th className="px-6 py-4">Date de création</th>
-                <th className="px-6 py-4">Statut</th>
-                <th className="px-6 py-4 text-right">Actions</th>
+                <th className="px-6 py-4">{t('ent.nom')}</th>
+                <th className="px-6 py-4">{t('ent.dateCreation')}</th>
+                <th className="px-6 py-4">{t('ent.statut')}</th>
+                <th className="px-6 py-4 text-right">{t('ent.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#EEE9DF]">
               {tenants.length === 0 ? (
                 <tr>
                   <td colSpan="4" className="px-6 py-8 text-center text-[#9a9384] italic">
-                    Aucune entreprise trouvée.
+                    {t('ent.aucune')}
                   </td>
                 </tr>
               ) : (
@@ -286,7 +289,7 @@ export default function TenantsPage() {
                   return (
                     <tr key={tenant.id} className="hover:bg-[#EEE9DF]/30 transition-colors">
                       <td className="px-6 py-4 font-bold text-[#1B2632]">
-                        {tenant.nom_entreprise || 'Nom manquant'}
+                        {tenant.nom_entreprise || t('ent.nomManquant')}
                       </td>
                       <td className="px-6 py-4">{formatDate(tenant.created_at)}</td>
                       <td className="px-6 py-4">{badgeStatut(tenant.statut)}</td>
@@ -299,7 +302,7 @@ export default function TenantsPage() {
                             disabled={enCours}
                             className="text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40 cursor-pointer"
                           >
-                            Modifier
+                            {t('ent.modifier')}
                           </button>
                           <button
                             onClick={() => toggleSuspension(tenant)}
@@ -309,16 +312,16 @@ export default function TenantsPage() {
                                 ? 'border-[#2E7D53]/50 text-[#2E7D53] hover:bg-[#2E7D53]/10'
                                 : 'border-[#FFB162] text-[#8a5a1f] hover:bg-[#FFB162]/15'}`}
                           >
-                            {tenant.statut === 'suspendu' ? 'Réactiver' : 'Suspendre'}
+                            {tenant.statut === 'suspendu' ? t('ent.reactiver') : t('ent.suspendre')}
                           </button>
                           <button
                             onClick={() => handleDeleteTenant(tenant)}
                             disabled={enCours}
-                            title="Supprimer l'entreprise"
+                            title={t('ent.supprimerBtnTitre')}
                             className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-lg border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 transition-colors disabled:opacity-40 cursor-pointer"
                           >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
-                            Supprimer
+                            {t('ent.supprimer')}
                           </button>
                         </div>
                       </td>
@@ -336,7 +339,7 @@ export default function TenantsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1B2632]/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b border-[#C9C1B1]/50 flex justify-between items-center bg-[#EEE9DF]/40">
-              <h3 className="font-bold text-[#1B2632] text-lg">Créer une nouvelle entreprise</h3>
+              <h3 className="font-bold text-[#1B2632] text-lg">{t('ent.creerTitre')}</h3>
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="text-[#9a9384] hover:text-[#1B2632] transition-colors cursor-pointer text-xl"
@@ -348,11 +351,11 @@ export default function TenantsPage() {
             <form onSubmit={handleCreateTenant} className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-[#1B2632] mb-1">
-                  Nom de l'entreprise ou partenaire *
+                  {t('ent.nomPartenaire')}
                 </label>
                 <input
                   type="text"
-                  placeholder="ex: FGMED Sénégal"
+                  placeholder={t('ent.exNom')}
                   value={newTenantNom}
                   onChange={(e) => setNewTenantNom(e.target.value)}
                   className="w-full border border-[#C9C1B1] px-4 py-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]/20 focus:border-[#1B2632]"
@@ -362,11 +365,11 @@ export default function TenantsPage() {
 
               <div>
                 <label className="block text-sm font-semibold text-[#1B2632] mb-1">
-                  Pays d'opération (optionnel pour l'instant)
+                  {t('ent.paysOperation')}
                 </label>
                 <input
                   type="text"
-                  placeholder="ex: Sénégal"
+                  placeholder={t('ent.exPays')}
                   value={newTenantPays}
                   onChange={(e) => setNewTenantPays(e.target.value)}
                   className="w-full border border-[#C9C1B1] px-4 py-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]/20 focus:border-[#1B2632]"
@@ -379,13 +382,13 @@ export default function TenantsPage() {
                   onClick={() => setIsModalOpen(false)}
                   className="flex-1 px-4 py-2.5 border border-[#C9C1B1] text-[#1B2632] rounded-lg text-sm font-medium hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
                 >
-                  Annuler
+                  {t('ent.annuler')}
                 </button>
                 <button
                   type="submit"
                   className="flex-1 px-4 py-2.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
                 >
-                  Créer l'entreprise
+                  {t('ent.creer')}
                 </button>
               </div>
             </form>
@@ -398,7 +401,7 @@ export default function TenantsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#1B2632]/40 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b border-[#C9C1B1]/50 flex justify-between items-center bg-[#EEE9DF]/40">
-              <h3 className="font-bold text-[#1B2632] text-lg">Modifier l'entreprise</h3>
+              <h3 className="font-bold text-[#1B2632] text-lg">{t('ent.modifierTitre')}</h3>
               <button
                 onClick={() => setEditTenant(null)}
                 className="text-[#9a9384] hover:text-[#1B2632] transition-colors cursor-pointer text-xl"
@@ -415,12 +418,12 @@ export default function TenantsPage() {
                 <button type="button"
                   onClick={() => { navigator.clipboard?.writeText(editTenant.id).catch(() => {}) }}
                   className="ml-auto shrink-0 px-2 py-1 rounded-md border border-[#C9C1B1] text-[#1B2632] hover:bg-[#EEE9DF] cursor-pointer">
-                  Copier
+                  {t('ent.copier')}
                 </button>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-[#1B2632] mb-1">
-                  Nom de l'entreprise *
+                  {t('ent.nomObl')}
                 </label>
                 <input
                   type="text"
@@ -432,20 +435,20 @@ export default function TenantsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-[#1B2632] mb-1">Statut</label>
+                <label className="block text-sm font-semibold text-[#1B2632] mb-1">{t('ent.statut')}</label>
                 <select
                   value={editStatut}
                   onChange={(e) => setEditStatut(e.target.value)}
                   className="w-full border border-[#C9C1B1] px-4 py-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]/20 focus:border-[#1B2632]"
                 >
-                  <option value="actif">Actif</option>
-                  <option value="suspendu">Suspendu</option>
-                  <option value="archive">Archivé</option>
+                  <option value="actif">{t('ent.optActif')}</option>
+                  <option value="suspendu">{t('ent.optSuspendu')}</option>
+                  <option value="archive">{t('ent.optArchive')}</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-[#1B2632] mb-1">Délai de réaffectation (minutes)</label>
+                <label className="block text-sm font-semibold text-[#1B2632] mb-1">{t('ent.delai')}</label>
                 <input
                   type="number" min="5" max="480" step="1"
                   value={editDelai}
@@ -453,8 +456,7 @@ export default function TenantsPage() {
                   className="w-full border border-[#C9C1B1] px-4 py-2.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]/20 focus:border-[#1B2632]"
                 />
                 <p className="text-xs text-[#1B2632]/55 mt-1">
-                  Un lead « En attente » que son agent n&apos;a pas ouvert après ce temps de travail (lun–ven 8h–18h, sam 8h–12h,
-                  heure du pays) passe à un autre agent du pays. 60 par défaut ; 5 pour tester.
+                  {t('ent.delaiAide')}
                 </p>
               </div>
 
@@ -464,13 +466,13 @@ export default function TenantsPage() {
                   onClick={() => setEditTenant(null)}
                   className="flex-1 px-4 py-2.5 border border-[#C9C1B1] text-[#1B2632] rounded-lg text-sm font-medium hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
                 >
-                  Annuler
+                  {t('ent.annuler')}
                 </button>
                 <button
                   type="submit"
                   className="flex-1 px-4 py-2.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
                 >
-                  Enregistrer
+                  {t('ent.enregistrer')}
                 </button>
               </div>
             </form>

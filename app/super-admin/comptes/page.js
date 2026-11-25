@@ -7,6 +7,8 @@ import { useAuth } from '../../context/AuthContext'
 import { usePermissions } from '../../context/PermissionsContext'
 import { useMessages } from '../../components/Messages'
 import { messageErreur } from '../../../lib/messageErreur.mjs'
+import { useLangue } from '../../context/LangueContext'
+import { traduire } from '../../../lib/langues/index.mjs'
 
 // Même minimum que Supabase Auth, Utilisateurs et Profil (23/11).
 const MIN_MOT_DE_PASSE = 8
@@ -16,7 +18,7 @@ const libelleRole = (nom) => String(nom || '').replace(/_/g, ' ').replace(/^./, 
 
 function Oeil({ voir, onClick }) {
   return (
-    <button type="button" onClick={onClick} title={voir ? 'Masquer' : 'Afficher'}
+    <button type="button" onClick={onClick} title={traduire(voir ? 'cpt.masquer' : 'cpt.afficher')}
       className="absolute right-3 top-1/2 -translate-y-1/2 text-[#1B2632]/45 hover:text-[#1B2632] cursor-pointer">
       {voir ? (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
@@ -32,7 +34,7 @@ function AideMotDePasse({ valeur, vide }) {
   const court = n > 0 && n < MIN_MOT_DE_PASSE
   return (
     <p className={`text-[11px] mt-1 ${court ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/45'}`}>
-      {n === 0 && vide ? vide : `${MIN_MOT_DE_PASSE} caractères minimum${n ? ` · ${n} tapé${n > 1 ? 's' : ''}` : ''}`}
+      {n === 0 && vide ? vide : traduire('cpt.min', { n: MIN_MOT_DE_PASSE }) + (n ? traduire('cpt.tapes', { n }) : '')}
     </p>
   )
 }
@@ -40,6 +42,8 @@ function AideMotDePasse({ valeur, vide }) {
 export default function SuperAdminComptes() {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue()
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
@@ -182,12 +186,12 @@ export default function SuperAdminComptes() {
       const { data, error } = await supabase.functions.invoke('creer-utilisateur', { body: formData })
 
       if (error) {
-        const messageReel = await extraireMessageErreurFonction(error, "Erreur de création.")
+        const messageReel = await extraireMessageErreurFonction(error, t('cpt.erreurCreation'))
         throw new Error(messageReel)
       }
       if (data?.error) throw new Error(data.error)
   
-      setMessage({ text: 'Compte créé avec succès !', type: 'success' })
+      setMessage({ text: t('cpt.cree'), type: 'success' })
       setFormData({ email: '', mot_de_passe: '', nom: '', tenant_id: '', role_id: '', pays_id: '', zone: '' })
       await chargerDonnees()
 
@@ -195,7 +199,7 @@ export default function SuperAdminComptes() {
     } catch (error) {
       // Ce console.error affiche maintenant le VRAI message, plus la version tronquée
       console.error("Détail réel de l'erreur de création :", error.message)
-      setMessage({ text: texteErreur(error, "Erreur de création."), type: 'error' })
+      setMessage({ text: texteErreur(error, t('cpt.erreurCreation')), type: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -205,7 +209,7 @@ export default function SuperAdminComptes() {
     e.preventDefault()
     // Même règle que Supabase Auth (8 depuis le 17/11) : refusé ici, avant le serveur.
     if (selectedUser.nouveau_mdp && selectedUser.nouveau_mdp.length < MIN_MOT_DE_PASSE) {
-      setMessage({ text: `Le nouveau mot de passe doit contenir au moins ${MIN_MOT_DE_PASSE} caractères.`, type: 'error' })
+      setMessage({ text: t('cpt.nouveauMin', { n: MIN_MOT_DE_PASSE }), type: 'error' })
       return
     }
     setSubmitting(true)
@@ -240,15 +244,15 @@ export default function SuperAdminComptes() {
       })
 
       const updateData = await response.json()
-      if (!response.ok) throw new Error(updateData.error || updateData.message || "Erreur lors de la mise à jour.")
+      if (!response.ok) throw new Error(updateData.error || updateData.message || t('cpt.erreurMaj'))
   
-      setMessage({ text: 'Compte mis à jour avec succès !', type: 'success' })
+      setMessage({ text: t('cpt.majOk'), type: 'success' })
       await chargerDonnees()
   
       setTimeout(() => { setIsEditModalOpen(false); setMessage({ text: '', type: '' }) }, 1500)
     } catch (error) {
       console.error("Détails de l'erreur :", error.message)
-      setMessage({ text: texteErreur(error, "Erreur lors de la mise à jour."), type: 'error' })
+      setMessage({ text: texteErreur(error, t('cpt.erreurMaj')), type: 'error' })
     } finally {
       setSubmitting(false)
     }
@@ -257,9 +261,9 @@ export default function SuperAdminComptes() {
   const handleDeleteUser = async (userId) => {
     const compte = comptes.find((c) => c.user_id === userId)
     if (!(await confirmer({
-      titre: 'Supprimer le compte',
-      message: `Supprimer définitivement le compte ${compte?.nom || compte?.email || ''} ? Il ne pourra plus se connecter. Cette action est irréversible.`,
-      bouton: 'Supprimer', danger: true,
+      titre: t('cpt.supprimerCompte'),
+      message: t('cpt.supprimerMsg', { nom: compte?.nom || compte?.email || '' }),
+      bouton: t('cpt.supprimer'), danger: true,
     }))) {
       return
     }
@@ -282,13 +286,13 @@ export default function SuperAdminComptes() {
       )
 
       const result = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(result.error || result.message || "Erreur lors de la suppression.")
+      if (!response.ok) throw new Error(result.error || result.message || t('cpt.erreurSuppression'))
 
-      annoncer('Compte supprimé.', 'succes')
+      annoncer(t('cpt.supprime'), 'succes')
       await chargerDonnees()
     } catch (error) {
       console.error("Erreur suppression :", error.message)
-      annoncer(texteErreur(error, "Erreur lors de la suppression."), 'erreur')
+      annoncer(texteErreur(error, t('cpt.erreurSuppression')), 'erreur')
     } finally {
       setSubmitting(false)
     }
@@ -300,10 +304,10 @@ export default function SuperAdminComptes() {
     (!texteRecherche || `${c.nom || ''} ${c.email || ''}`.toLowerCase().includes(texteRecherche))
     && (!filtreEntreprise || (filtreEntreprise === 'global' ? !c.tenant_id : c.tenant_id === filtreEntreprise))
     && (!filtreRole || c.role_id === filtreRole))
-  const getTenantName = (id) => tenants.find(t => t.id === id)?.nom || tenants.find(t => t.id === id)?.nom_entreprise || 'Global'
+  const getTenantName = (id) => tenants.find(tn => tn.id === id)?.nom || tenants.find(tn => tn.id === id)?.nom_entreprise || t('cpt.global')
   
   if (authLoading || permsLoading || !hasPermission('menu_comptes_acces')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('cpt.verif')}</div>
   }
   
   return (
@@ -311,11 +315,11 @@ export default function SuperAdminComptes() {
       {/* En-tête compact (23/11), comme Entreprises. */}
       <div className="flex flex-wrap gap-3 justify-between items-center border-b border-[#C9C1B1]/50 pb-3">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Comptes &amp; Accès</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('cpt.titre')}</h1>
           <span className="text-sm font-semibold text-[#1B2632]/50">{comptes.length}</span>
         </div>
         <button onClick={() => setIsModalOpen(true)} className="bg-[#1B2632] hover:bg-[#2C3B4D] text-white px-5 py-2.5 rounded-xl text-sm font-bold cursor-pointer transition-colors">
-          + Nouveau compte
+          {t('cpt.nouveau')}
         </button>
       </div>
 
@@ -324,18 +328,18 @@ export default function SuperAdminComptes() {
         <div className="flex items-center gap-2 bg-white px-3.5 py-2.5 rounded-xl border border-[#C9C1B1] w-full sm:w-[300px] focus-within:border-[#1B2632]">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-[#1B2632]/35 shrink-0"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
           <input id="recherche-compte" type="text" value={recherche} onChange={(e) => setRecherche(e.target.value)}
-            placeholder="Nom ou e-mail…" className="w-full outline-none bg-transparent text-sm text-[#1B2632]" />
+            placeholder={t('cpt.recherche')} className="w-full outline-none bg-transparent text-sm text-[#1B2632]" />
           {recherche && <button type="button" onClick={() => setRecherche('')} className="text-xs text-[#1B2632]/40 hover:text-[#A35139]">✕</button>}
         </div>
         <select id="filtre-entreprise" value={filtreEntreprise} onChange={(e) => setFiltreEntreprise(e.target.value)}
           className="px-3 py-2.5 rounded-xl border border-[#C9C1B1] bg-white text-sm text-[#1B2632] outline-none cursor-pointer">
-          <option value="">Toutes les entreprises</option>
-          {tenants.map((t) => <option key={t.id} value={t.id}>{t.nom || t.nom_entreprise}</option>)}
-          <option value="global">Global (sans entreprise)</option>
+          <option value="">{t('cpt.toutesEntreprises')}</option>
+          {tenants.map((tn) => <option key={tn.id} value={tn.id}>{tn.nom || tn.nom_entreprise}</option>)}
+          <option value="global">{t('cpt.globalSans')}</option>
         </select>
         <select id="filtre-role" value={filtreRole} onChange={(e) => setFiltreRole(e.target.value)}
           className="px-3 py-2.5 rounded-xl border border-[#C9C1B1] bg-white text-sm text-[#1B2632] outline-none cursor-pointer">
-          <option value="">Tous les rôles</option>
+          <option value="">{t('cpt.tousRoles')}</option>
           {roles.map((r) => <option key={r.id} value={r.id}>{libelleRole(r.nom)}</option>)}
         </select>
         {(recherche || filtreEntreprise || filtreRole) && (
@@ -344,38 +348,38 @@ export default function SuperAdminComptes() {
       </div>
   
       <div className="bg-white rounded-2xl shadow-sm border border-[#C9C1B1]/40 p-3 sm:p-6">
-        {loading ? <div className="text-center py-10">Chargement...</div> : (
+        {loading ? <div className="text-center py-10">{t('cpt.chargement')}</div> : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-bold text-gray-400 uppercase">
-                  <th className="py-3 px-4">Utilisateur / Nom & Email</th>
-                  <th className="py-3 px-4">Rôle</th>
-                  <th className="py-3 px-4">Entreprise</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                  <th className="py-3 px-4">{t('cpt.utilisateur')}</th>
+                  <th className="py-3 px-4">{t('cpt.role')}</th>
+                  <th className="py-3 px-4">{t('cpt.entreprise')}</th>
+                  <th className="py-3 px-4 text-right">{t('cpt.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 text-sm">
                 {comptesAffiches.length === 0 && (
-                  <tr><td colSpan="4" className="py-8 text-center text-sm text-[#1B2632]/50">Aucun compte ne correspond.</td></tr>
+                  <tr><td colSpan="4" className="py-8 text-center text-sm text-[#1B2632]/50">{t('cpt.aucun')}</td></tr>
                 )}
                 {comptesAffiches.map((c, index) => (
                   <tr key={c.id || c.user_id || index} className="hover:bg-gray-50/50">
                     <td className="py-4 px-4">
-                      <div className="font-bold text-[#1B2632]">{c.nom || 'Sans nom'}</div>
-                      <div className="font-medium text-xs text-gray-600 mt-0.5">{c.email || 'Email non renseigné'}</div>
+                      <div className="font-bold text-[#1B2632]">{c.nom || t('cpt.sansNom')}</div>
+                      <div className="font-medium text-xs text-gray-600 mt-0.5">{c.email || t('cpt.sansEmail')}</div>
                     </td>
                     <td className="py-4 px-4"><span className="px-2.5 py-1 bg-[#EEE9DF] text-[#1B2632] font-semibold rounded-lg text-xs whitespace-nowrap">{libelleRole(getRoleName(c.role_id))}</span></td>
                     <td className="py-4 px-4 font-medium text-[#1B2632]">{getTenantName(c.tenant_id)}</td>
                     <td className="py-4 px-4">
                       <div className="flex justify-end gap-2 whitespace-nowrap">
                       <button onClick={() => handleOpenEdit(c)} className="text-xs font-bold px-3.5 py-1.5 rounded-lg bg-[#1B2632] text-white hover:bg-[#2C3B4D] cursor-pointer transition-colors">
-                        Modifier
+                        {t('cpt.modifier')}
                       </button>
-                      <button onClick={() => handleDeleteUser(c.user_id)} title="Supprimer le compte"
+                      <button onClick={() => handleDeleteUser(c.user_id)} title={t('cpt.supprimerCompte')}
                         className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-lg border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 cursor-pointer transition-colors">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
-                        Supprimer
+                        {t('cpt.supprimer')}
                       </button>
                       </div>
                     </td>
@@ -390,7 +394,7 @@ export default function SuperAdminComptes() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-[#1B2632]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl border border-[#C9C1B1]/40">
-            <h3 className="text-xl font-bold mb-4 text-[#1B2632]">Ajouter un compte</h3>
+            <h3 className="text-xl font-bold mb-4 text-[#1B2632]">{t('cpt.ajouter')}</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               {message.text && (
                 <div className={`p-3 rounded-lg text-sm font-medium ${message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
@@ -398,23 +402,23 @@ export default function SuperAdminComptes() {
                 </div>
               )}
 
-              <input type="text" name="nom" required placeholder="Nom / Prénom" value={formData.nom} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
-              <input type="email" name="email" required placeholder="Email" value={formData.email} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
+              <input type="text" name="nom" required placeholder={t('cpt.nomPrenom')} value={formData.nom} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
+              <input type="email" name="email" required placeholder={t('cpt.email')} value={formData.email} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
               <div>
                 <div className="relative">
                   <input type={voirMdp ? 'text' : 'password'} name="mot_de_passe" required minLength={MIN_MOT_DE_PASSE} autoComplete="new-password"
-                    placeholder="Mot de passe" value={formData.mot_de_passe} onChange={handleChange}
+                    placeholder={t('cpt.mdp')} value={formData.mot_de_passe} onChange={handleChange}
                     className="w-full px-4 py-2.5 pr-11 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]" />
                   <Oeil voir={voirMdp} onClick={() => setVoirMdp((v) => !v)} />
                 </div>
                 <AideMotDePasse valeur={formData.mot_de_passe} />
               </div>
               <select name="tenant_id" required value={formData.tenant_id} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
-                <option value="">Sélectionner une entreprise</option>
-                {tenants.map(t => <option key={t.id} value={t.id}>{t.nom || t.nom_entreprise}</option>)}
+                <option value="">{t('cpt.selectEntreprise')}</option>
+                {tenants.map(tn => <option key={tn.id} value={tn.id}>{tn.nom || tn.nom_entreprise}</option>)}
               </select>
               <select name="role_id" required value={formData.role_id} onChange={handleChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
-                <option value="">Sélectionner un rôle</option>
+                <option value="">{t('cpt.selectRole')}</option>
                 {roles.map(r => <option key={r.id} value={r.id}>{libelleRole(r.nom)}</option>)}
               </select>
 
@@ -427,7 +431,7 @@ export default function SuperAdminComptes() {
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]"
                 >
                   <option value="">
-                    {formData.tenant_id ? 'Sélectionner un pays' : "Choisir d'abord l'entreprise"}
+                    {formData.tenant_id ? t('cpt.selectPays') : t('cpt.entrepriseDabord')}
                   </option>
                   {paysTenant.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
                 </select>
@@ -442,7 +446,7 @@ export default function SuperAdminComptes() {
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]"
                 >
                   <option value="">
-                    {formData.pays_id ? 'Sélectionner une zone' : "Choisir d'abord le pays"}
+                    {formData.pays_id ? t('cpt.selectZone') : t('cpt.paysDabord')}
                   </option>
                   {zonesTenant
                     .filter(z => !formData.pays_id || z.pays_id === formData.pays_id)
@@ -451,9 +455,9 @@ export default function SuperAdminComptes() {
               )}
 
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-semibold text-[#1B2632] cursor-pointer transition-colors">Annuler</button>
+                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-semibold text-[#1B2632] cursor-pointer transition-colors">{t('cpt.annuler')}</button>
                 <button type="submit" disabled={submitting} className="flex-1 py-2.5 bg-[#1B2632] hover:bg-[#2C3E50] text-white rounded-xl text-sm font-semibold cursor-pointer transition-colors">
-                  {submitting ? 'Création...' : 'Créer'}
+                  {submitting ? t('cpt.creation') : t('cpt.creer')}
                 </button>
               </div>
             </form>
@@ -466,7 +470,7 @@ export default function SuperAdminComptes() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-[#C9C1B1]/40">
 
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-[#1B2632]">Modifier le profil</h3>
+              <h3 className="text-xl font-bold text-[#1B2632]">{t('cpt.modifierTitre')}</h3>
               <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-[#1B2632] text-xl font-bold cursor-pointer">×</button>
             </div>
   
@@ -477,7 +481,7 @@ export default function SuperAdminComptes() {
                 <code className="font-mono text-[#1B2632]/70 truncate">{selectedUser.user_id}</code>
                 <button type="button" onClick={() => { navigator.clipboard?.writeText(selectedUser.user_id).catch(() => {}) }}
                   className="ml-auto shrink-0 px-2 py-1 rounded-md border border-[#C9C1B1] text-[#1B2632] hover:bg-[#EEE9DF] cursor-pointer">
-                  Copier
+                  {t('cpt.copier')}
                 </button>
               </div>
               {message.text && (
@@ -487,7 +491,7 @@ export default function SuperAdminComptes() {
               )}
   
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nom / Prénom</label>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('cpt.nomPrenom')}</label>
                 <input 
                   type="text" 
                   name="nom" 
@@ -498,7 +502,7 @@ export default function SuperAdminComptes() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Email</label>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('cpt.email')}</label>
                 <input 
                   type="email" 
                   name="email" 
@@ -510,41 +514,41 @@ export default function SuperAdminComptes() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Nouveau mot de passe (optionnel)</label>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('cpt.nouveauMdp')}</label>
                 <div className="relative">
                   <input
                     type={voirMdpEdit ? 'text' : 'password'}
                     name="nouveau_mdp"
                     autoComplete="new-password"
-                    placeholder="Laisser vide pour ne pas changer"
+                    placeholder={t('cpt.laisserVide')}
                     value={selectedUser.nouveau_mdp || ''}
                     onChange={handleEditChange}
                     className="w-full px-4 py-2.5 pr-11 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]"
                   />
                   <Oeil voir={voirMdpEdit} onClick={() => setVoirMdpEdit((v) => !v)} />
                 </div>
-                <AideMotDePasse valeur={selectedUser.nouveau_mdp} vide="Vide = le mot de passe ne change pas." />
+                <AideMotDePasse valeur={selectedUser.nouveau_mdp} vide={t('cpt.videAide')} />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Rôle Principal</label>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('cpt.rolePrincipal')}</label>
                 <select name="role_id" value={selectedUser.role_id} onChange={handleEditChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
                   {roles.map(r => <option key={r.id} value={r.id}>{libelleRole(r.nom)}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Entreprise</label>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('cpt.entreprise')}</label>
                 <select name="tenant_id" value={selectedUser.tenant_id || ''} onChange={handleEditChange} className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#1B2632]">
-                  <option value="">Global / Aucun</option>
-                  {tenants.map(t => <option key={t.id} value={t.id}>{t.nom || t.nom_entreprise}</option>)}
+                  <option value="">{t('cpt.globalAucun')}</option>
+                  {tenants.map(tn => <option key={tn.id} value={tn.id}>{tn.nom || tn.nom_entreprise}</option>)}
                 </select>
               </div>
 
               <div className="pt-4 flex gap-3 border-t border-gray-100 mt-6">
-                <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-[#1B2632] text-sm font-semibold rounded-xl cursor-pointer transition-colors">Annuler</button>
+                <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-[#1B2632] text-sm font-semibold rounded-xl cursor-pointer transition-colors">{t('cpt.annuler')}</button>
                 <button type="submit" disabled={submitting} className="flex-1 py-3 bg-[#1B2632] hover:bg-[#2C3E50] text-white text-sm font-semibold rounded-xl cursor-pointer transition-colors">
-                  {submitting ? 'Enregistrement...' : 'Enregistrer'}
+                  {submitting ? t('commun.enregistrement') : t('commun.enregistrer')}
                 </button>
               </div>
             </form>
