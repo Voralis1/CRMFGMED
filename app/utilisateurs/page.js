@@ -466,7 +466,7 @@ export default function UtilisateursPage() {
       {ongletActif === 'equipe' && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-3 sm:p-6">
           <h2 className="text-xl font-bold text-[#1B2632] mb-4 pb-3 border-b border-[#C9C1B1]/40">
-            Sellers, managers, CEO et admins
+            {t('util.equipeTitre')}
           </h2>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[480px] text-left text-sm">

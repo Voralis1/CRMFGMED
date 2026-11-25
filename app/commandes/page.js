@@ -123,7 +123,7 @@ export default function GestionCommandesPage() {
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
   // Les textes suivent la langue choisie (25/11).
-  const { t, locale } = useLangue()
+  const { t, locale, langue } = useLangue()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
 
@@ -2129,6 +2129,21 @@ export default function GestionCommandesPage() {
                               </tbody>
                             </table>
                           </div>
+                          {/* Version anglaise entière (25/11) : texte mêlé de code. */}
+                          {langue === 'en' ? (
+                          <p className="px-4 py-2.5 text-[11px] text-[#1B2632]/55 border-t border-[#C9C1B1]/50">
+                            Capitals and accents do not count (<code className="font-mono">Telephone</code> equals
+                            <code className="font-mono"> Téléphone</code>). Headers from the old template, in English, are still
+                            accepted (<code className="font-mono">Order ID</code>, <code className="font-mono">Phone number</code>,
+                            <code className="font-mono"> City</code>, <code className="font-mono">Quantities</code>…), and Portuguese ones too (<code className="font-mono">cidade</code>,
+                            <code className="font-mono"> telefone</code>, <code className="font-mono">quantidade</code>,
+                            <code className="font-mono"> valor</code>…). No country column: every row takes the country
+                            {estSeller ? ' chosen' : ' of the warehouse chosen'} at the top. The file&apos;s <b>seller</b> column
+                            is ignored: {estSeller
+                              ? 'the orders are assigned to you since you are the one importing'
+                              : 'the orders will go to no seller, since you are importing as a manager'}.
+                          </p>
+                          ) : (
                           <p className="px-4 py-2.5 text-[11px] text-[#1B2632]/55 border-t border-[#C9C1B1]/50">
                             Majuscules et accents ne comptent pas (<code className="font-mono">Telephone</code> vaut
                             <code className="font-mono"> Téléphone</code>). Les en-têtes de l&apos;ancien modèle, en anglais, restent
@@ -2141,6 +2156,7 @@ export default function GestionCommandesPage() {
                               ? 'les commandes vous sont attribuées puisque c\u2019est vous qui importez'
                               : 'les commandes n\u2019iront à aucun vendeur, puisque vous importez en tant que responsable'}.
                           </p>
+                          )}
                         </div>
                       </div>
                     )}

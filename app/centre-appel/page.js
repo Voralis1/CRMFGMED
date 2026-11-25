@@ -769,7 +769,7 @@ export default function CentreAppelAgent() {
       } else if (detection) {
         paysFinal = { nom: detection.nom, iso: detection.iso }
       } else {
-        paysFinal = { nom: 'Non spécifié' }
+        paysFinal = { nom: t('ca.paysNonSpecifie') }
       }
 
       return { ...cmdSansJointure, pays: paysFinal }
@@ -1660,7 +1660,7 @@ export default function CentreAppelAgent() {
                     className="w-full border-b border-[#C9C1B1] py-2 text-sm font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                   />
                   <p className="mt-1 text-[11px] text-[#1B2632]/50">
-                    Si la quantité change, saisissez le total de l&apos;offre.
+                    {t('ca.quantiteAide')}
                   </p>
                 </div>
               </div>

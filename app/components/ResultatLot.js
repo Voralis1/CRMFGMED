@@ -57,7 +57,7 @@ export default function ResultatLot({ resultat, onFermer }) {
   // Les refus rangés par raison, dans l'ordre où ils arrivent.
   const parMotif = new Map()
   for (const r of refus) {
-    const m = r.motif || 'Refusé.'
+    const m = r.motif || t('lot.refuseDefaut')
     if (!parMotif.has(m)) parMotif.set(m, [])
     parMotif.get(m).push(r)
   }

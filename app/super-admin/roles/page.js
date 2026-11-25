@@ -25,6 +25,11 @@ export default function SuperAdminRoles() {
   const { annoncer, confirmer } = useMessages()
   // Les textes suivent la langue choisie (25/11).
   const { t } = useLangue()
+  // Nom et description d'une permission (25/11) : en anglais par son code
+  // (lib/langues/en.mjs, perm.<code>) ; en français, le texte de la base.
+  const parCle = (cle, repli) => { const v = t(cle); return v === cle ? repli : v }
+  const nomPerm = (p) => parCle('perm.' + p.code, p.nom)
+  const descPerm = (p) => parCle('permd.' + p.code, p.description || '')
 
   const [roles, setRoles] = useState([])
   const [permissions, setPermissions] = useState([])
@@ -333,7 +338,7 @@ export default function SuperAdminRoles() {
               <div className="flex-1 overflow-y-auto pr-2 flex flex-col gap-5 pb-4">
                 {(() => {
                   const rech = recherchePerm.trim().toLowerCase()
-                  const visibles = permissions.filter((p) => !rech || `${p.nom} ${p.code} ${p.description || ''} ${p.module || ''}`.toLowerCase().includes(rech))
+                  const visibles = permissions.filter((p) => !rech || `${p.nom} ${nomPerm(p)} ${p.code} ${p.description || ''} ${descPerm(p)} ${p.module || ''}`.toLowerCase().includes(rech))
                   const groupes = {}
                   for (const p of visibles) (groupes[nomModule(p.module)] ||= []).push(p)
                   const ordre = Object.keys(groupes).sort((a, b) => {
@@ -342,7 +347,7 @@ export default function SuperAdminRoles() {
                   })
                   if (ordre.length === 0) return <p className="text-sm text-[#1B2632]/50 py-6 text-center">{t('rol.aucune')}</p>
                   return ordre.map((mod) => {
-                    const liste = groupes[mod].sort((a, b) => String(a.nom).localeCompare(String(b.nom)))
+                    const liste = groupes[mod].sort((a, b) => String(nomPerm(a)).localeCompare(String(nomPerm(b))))
                     const cochees = liste.filter((p) => estSuperAdminRole || rolePerms.includes(p.code)).length
                     return (
                       <section key={mod}>
@@ -363,8 +368,8 @@ export default function SuperAdminRoles() {
                                   className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer"
                                 />
                                 <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-[#1B2632]">{perm.nom}</div>
-                                  {perm.description && <div className="text-xs text-[#1B2632]/55 mt-0.5">{perm.description}</div>}
+                                  <div className="text-sm font-semibold text-[#1B2632]">{nomPerm(perm)}</div>
+                                  {descPerm(perm) && <div className="text-xs text-[#1B2632]/55 mt-0.5">{descPerm(perm)}</div>}
                                   <div className="text-[10px] font-mono text-[#1B2632]/30 mt-0.5">{perm.code}</div>
                                 </div>
                               </label>

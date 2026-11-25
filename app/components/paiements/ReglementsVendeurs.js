@@ -492,7 +492,7 @@ export default function ReglementsVendeurs() {
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
             </svg>
             <input
-              type="text" placeholder="Référence, vendeur..."
+              type="text" placeholder={t('rel.rechercheAide')}
               value={recherche} onChange={(e) => setRecherche(e.target.value)}
               className="outline-none bg-transparent text-sm text-[#1B2632] font-medium w-full placeholder:text-[#1B2632]/30"
             />
@@ -523,7 +523,7 @@ export default function ReglementsVendeurs() {
               )}
               <button onClick={ouvrirCreation}
                 className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors shadow-sm">
-                <span className="text-lg leading-none">+</span> Établir un relevé
+                <span className="text-lg leading-none">+</span> {t('rel.etablirUn')}
                 {enAttenteDeReglement > 0 && (
                   <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[#FFB162] text-[#1B2632] text-xs font-bold flex items-center justify-center">
                     {enAttenteDeReglement}
@@ -533,7 +533,7 @@ export default function ReglementsVendeurs() {
             </div>
           ) : enAttenteDeReglement > 0 && (
             <span className="sm:ml-auto text-xs font-semibold text-[#8a5a1f]">
-              {enAttenteDeReglement} commande{enAttenteDeReglement > 1 ? 's' : ''} livrée{enAttenteDeReglement > 1 ? 's' : ''} pas encore réglée{enAttenteDeReglement > 1 ? 's' : ''}
+              {t('rel.livreesNonReglees', { n: enAttenteDeReglement })}
             </span>
           )}
         </div>
@@ -597,12 +597,12 @@ export default function ReglementsVendeurs() {
                       {r.date_paiement ? (
                         <>
                           <span className="text-[#1B2632]/80">{jourHeure(r.date_paiement)}</span>
-                          <span className="block text-[11px] text-[#1B2632]/40">payé</span>
+                          <span className="block text-[11px] text-[#1B2632]/40">{t('rel.payeMin')}</span>
                         </>
                       ) : (
                         <>
                           <span className="text-[#1B2632]/60">{jourHeure(r.created_at)}</span>
-                          <span className="block text-[11px] text-[#1B2632]/40">établi, pas encore payé</span>
+                          <span className="block text-[11px] text-[#1B2632]/40">{t('rel.etabliNonPaye')}</span>
                         </>
                       )}
                     </td>

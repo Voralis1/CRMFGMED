@@ -658,7 +658,7 @@ export default function ExpeditionsPage() {
             </svg>
             <input
               type="text"
-              placeholder="Référence, transporteur, pays..."
+              placeholder={t('exp.rechercheAide')}
               value={recherche}
               onChange={(e) => setRecherche(e.target.value)}
               className="outline-none bg-transparent text-sm text-[#1B2632] font-medium w-full placeholder:text-[#1B2632]/30"
@@ -841,7 +841,7 @@ export default function ExpeditionsPage() {
             </p>
           )}
           <p className="text-[11px] text-[#1B2632]/50 mt-3">
-            Ces chiffres portent sur les {analyse.total} expédition{analyse.total > 1 ? 's' : ''} affichée{analyse.total > 1 ? 's' : ''}.
+            {t('exp.analyseAide', { n: analyse.total })}
           </p>
         </div>
       )}

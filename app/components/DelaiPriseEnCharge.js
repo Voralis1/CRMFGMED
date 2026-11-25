@@ -135,7 +135,7 @@ function BlocPris({ resume, fermes }) {
       </div>
       <Tranches resume={resume} />
       {fermes > 0 && (
-        <p className="text-xs text-[#1B2632]/55">{fermes} lead{fermes > 1 ? 's' : ''} fermé{fermes > 1 ? 's' : ''} sans appel enregistré (statut corrigé à la main) : pas comptés.</p>
+        <p className="text-xs text-[#1B2632]/55">{t('dpc.fermes', { n: fermes })}</p>
       )}
     </div>
   )

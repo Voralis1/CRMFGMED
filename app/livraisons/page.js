@@ -1205,7 +1205,7 @@ export default function LivraisonsPage() {
                       </>
                     ) : (
                       <p className="text-sm text-[#1B2632]/55">
-                        Lecture seule : vous n&apos;avez pas le droit de modifier une livraison.
+                        {t('liv.lectureSeule')}
                       </p>
                     )}
                   </div>
