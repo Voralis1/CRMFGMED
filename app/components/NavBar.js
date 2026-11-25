@@ -4,29 +4,31 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte
+import { useLangue } from '../context/LangueContext'
+import ChoixLangue from './ChoixLangue'
 
 // 🚀 On remplace "roles: [...]" par "permission: 'code'"
 const TOUS_LES_LIENS = [
-  { href: '/dashboard', label: 'Dashboard', permission: 'menu_dashboard' },
-  { href: '/performances', label: 'Performances', permission: 'menu_performances' },
-  { href: '/commandes', label: 'Commandes' , permission: 'menu_commandes' }, 
-  { href: '/centre-appel', label: 'Centre d\'appel', permission: 'menu_centre_appel' },
-  { href: '/assignation-livreur', label: 'Assignation livreur', permission: 'menu_assignation_livreur' },
-  { href: '/livraisons', label: 'Livraisons', permission: 'menu_livraisons' },
-  { href: '/paiements', label: 'Paiements', permission: 'menu_paiements' },
-  { href: '/produits', label: 'Produits', permission: 'menu_produits' },
-  { href: '/expeditions', label: 'Expéditions', permission: 'menu_expeditions' },
-  { href: '/sources-import', label: "Sources d'import", permission: 'menu_sources_import' },
-  { href: '/utilisateurs', label: 'Utilisateurs', permission: 'menu_utilisateurs' },
-  { href: '/parametres', label: 'Paramètres', permission: 'menu_parametres' },
-  { href: '/profile', label: 'Profil' }, 
+  { href: '/dashboard', label: 'nav.dashboard', permission: 'menu_dashboard' },
+  { href: '/performances', label: 'nav.performances', permission: 'menu_performances' },
+  { href: '/commandes', label: 'nav.commandes', permission: 'menu_commandes' }, 
+  { href: '/centre-appel', label: 'nav.centreAppel', permission: 'menu_centre_appel' },
+  { href: '/assignation-livreur', label: 'nav.assignation', permission: 'menu_assignation_livreur' },
+  { href: '/livraisons', label: 'nav.livraisons', permission: 'menu_livraisons' },
+  { href: '/paiements', label: 'nav.paiements', permission: 'menu_paiements' },
+  { href: '/produits', label: 'nav.produits', permission: 'menu_produits' },
+  { href: '/expeditions', label: 'nav.expeditions', permission: 'menu_expeditions' },
+  { href: '/sources-import', label: 'nav.sources', permission: 'menu_sources_import' },
+  { href: '/utilisateurs', label: 'nav.utilisateurs', permission: 'menu_utilisateurs' },
+  { href: '/parametres', label: 'nav.parametres', permission: 'menu_parametres' },
+  { href: '/profile', label: 'nav.profil' }, 
   // Pas de permission = accessible à tous ceux connectés
 ]
 
 const LIENS_SUPER_ADMIN = [
-  { href: '/super-admin/tenants', label: 'Entreprises (Tenants)', permission: 'menu_tenants' },
-  { href: '/super-admin/comptes', label: 'Comptes & Accès', permission: 'menu_comptes_acces' },
-  { href: '/super-admin/roles', label: 'Gestion des Rôles', permission: 'menu_gestion_roles' },
+  { href: '/super-admin/tenants', label: 'nav.entreprises', permission: 'menu_tenants' },
+  { href: '/super-admin/comptes', label: 'nav.comptes', permission: 'menu_comptes_acces' },
+  { href: '/super-admin/roles', label: 'nav.roles', permission: 'menu_gestion_roles' },
 ]
 
 export default function NavBar({ isOpen, toggleMenu }) {
@@ -35,6 +37,8 @@ export default function NavBar({ isOpen, toggleMenu }) {
   
   // 🚀 On récupère notre fonction magique
   const { hasPermission, loading } = usePermissions()
+  // label = une clé de texte (25/11) : le menu suit la langue choisie.
+  const { t } = useLangue()
 
   async function handleLogout() {
     await supabase.auth.signOut()
@@ -82,7 +86,7 @@ export default function NavBar({ isOpen, toggleMenu }) {
               <button 
                 onClick={toggleMenu}
                 className="p-2 rounded-xl text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-                title="Masquer le menu"
+                title={t('nav.masquerMenu')}
               >
                 <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
@@ -105,12 +109,12 @@ export default function NavBar({ isOpen, toggleMenu }) {
           <div className="flex-1 overflow-y-auto py-6 px-4 flex flex-col gap-2 custom-scrollbar">
             
             <p className="px-4 text-xs font-semibold text-[#C9C1B1]/50 uppercase tracking-wider mb-2">
-              Menu Principal
+              {t('nav.menuPrincipal')}
             </p>
             
             {/* 🚀 Si les permissions sont en cours de chargement, on évite les sauts d'affichage */}
             {loading ? (
-              <div className="px-4 text-sm text-gray-500">Chargement des accès...</div>
+              <div className="px-4 text-sm text-gray-500">{t('nav.chargementAcces')}</div>
             ) : (
               liensVisibles.map((lien) => {
                 const isActive = pathname === lien.href
@@ -124,7 +128,7 @@ export default function NavBar({ isOpen, toggleMenu }) {
                         : 'text-[#EEE9DF]/70 hover:bg-white/5 hover:text-white'
                     }`}
                   >
-                    {lien.label}
+                    {t(lien.label)}
                   </Link>
                 )
               })
@@ -146,7 +150,7 @@ export default function NavBar({ isOpen, toggleMenu }) {
                           : 'text-[#EEE9DF]/70 hover:bg-white/5 hover:text-white'
                       }`}
                     >
-                      {lien.label}
+                      {t(lien.label)}
                     </Link>
                   )
                 })}
@@ -155,13 +159,14 @@ export default function NavBar({ isOpen, toggleMenu }) {
 
           </div>
 
-          {/* Déconnexion */}
-          <div className="p-4 border-t border-white/10 shrink-0">
+          {/* Déconnexion (+ la langue sur téléphone, 25/11) */}
+          <div className="p-4 border-t border-white/10 shrink-0 flex flex-col gap-3">
+            <ChoixLangue className="sm:hidden self-start" />
             <button 
               onClick={handleLogout} 
               className="w-full flex items-center justify-start px-4 py-3 text-sm font-medium text-[#A35139] hover:bg-[#A35139]/10 rounded-xl transition-colors cursor-pointer"
             >
-              Se déconnecter
+              {t('nav.deconnecter')}
             </button>
           </div>
 

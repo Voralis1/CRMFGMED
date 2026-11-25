@@ -7,6 +7,8 @@ import { supabase } from '../../lib/supabaseClient'
 import { usePermissions } from '../context/PermissionsContext' // 🚀 Import du contexte global
 import { useAuth } from '../context/AuthContext'
 import { useEntrepot } from '../context/EntrepotContext'
+import { useLangue } from '../context/LangueContext'
+import ChoixLangue from './ChoixLangue'
 import { drapeau } from '../../lib/paysMonde'
 import { pageAutorisee, redirectionPour, regleDePage } from '../../lib/droitsPages.mjs'
 
@@ -27,6 +29,7 @@ export default function AppLayout({ children }) {
   // 🚀 On récupère le VRAI nom du rôle depuis notre système de permissions !
   const { roleNom, hasPermission, loading: permsLoading } = usePermissions()
   const router = useRouter()
+  const { t } = useLangue()
 
   // La page n'est MONTÉE que si la personne a le droit de l'ouvrir (30/10,
   // lib/droitsPages.mjs) : vérifier d'abord, charger ensuite. Tant que les
@@ -120,14 +123,14 @@ export default function AppLayout({ children }) {
     return (
       <main className="min-h-[100dvh] w-full bg-[#EEE9DF] flex items-center justify-center p-4">
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm max-w-md w-full p-8 text-center flex flex-col gap-4">
-          <h1 className="text-2xl font-bold text-[#A35139]">Entreprise suspendue</h1>
+          <h1 className="text-2xl font-bold text-[#A35139]">{t('cadre.suspendueTitre')}</h1>
           <p className="text-sm text-[#1B2632]/70">
-            L&apos;accès au CRM est fermé pour votre entreprise. Contactez FGMED pour le rouvrir.
+            {t('cadre.suspendueTexte')}
           </p>
           <button
             onClick={async () => { await supabase.auth.signOut(); router.replace('/') }}
             className="self-center px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D]">
-            Se déconnecter
+            {t('nav.deconnecter')}
           </button>
         </div>
       </main>
@@ -142,7 +145,7 @@ export default function AppLayout({ children }) {
         <button
           onClick={toggleSidebar}
           className="hidden md:flex absolute top-5 left-6 z-30 p-3 bg-white text-[#1B2632] rounded-2xl hover:bg-[#EEE9DF] transition-all border border-[#C9C1B1]/40 shadow-md cursor-pointer items-center justify-center"
-          title="Ouvrir le menu"
+          title={t('nav.ouvrirMenu')}
         >
           <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
@@ -170,7 +173,7 @@ export default function AppLayout({ children }) {
           <button
             onClick={toggleSidebar}
             className="md:hidden p-2.5 bg-white text-[#1B2632] rounded-xl border border-[#C9C1B1]/40 shadow-sm cursor-pointer flex items-center justify-center shrink-0"
-            title="Ouvrir le menu"
+            title={t('nav.ouvrirMenu')}
           >
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
@@ -182,12 +185,12 @@ export default function AppLayout({ children }) {
           {estSuperAdmin && entreprises.length > 0 ? (
             <div className="flex items-center gap-2 bg-white px-2.5 sm:px-3 py-2 rounded-2xl border border-[#C9C1B1]/40 shadow-sm min-w-0">
               <span className="hidden sm:inline text-[10px] font-bold uppercase tracking-wider text-[#A35139] shrink-0">
-                Entreprise
+                {t('cadre.entreprise')}
               </span>
               <select
                 value={tenantId || ''}
                 onChange={(e) => setTenantChoisi(e.target.value)}
-                title="Choisir l'entreprise que vous regardez"
+                title={t('cadre.choisirEntreprise')}
                 className="max-w-[150px] sm:max-w-none min-w-0 bg-transparent text-sm font-bold text-[#1B2632] outline-none cursor-pointer truncate"
               >
                 {entreprises.map((t) => (
@@ -206,7 +209,7 @@ export default function AppLayout({ children }) {
             // Téléphone (19/11) : l'icône seule (foncée quand un entrepôt est
             // choisi) ; le menu natif s'ouvre en touchant l'icône — le select
             // transparent est posé par-dessus. Ordinateur : inchangé.
-            <div title="Filtrer tous les écrans sur un entrepôt"
+            <div title={t('cadre.filtrerEntrepot')}
               className={`relative flex items-center gap-2 px-2.5 sm:px-3 py-2.5 sm:py-2 rounded-2xl border shadow-sm min-w-0 shrink-0 sm:shrink ${entrepotId ? 'bg-[#1B2632] border-[#1B2632] text-white' : 'bg-white border-[#C9C1B1]/40'}`}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${entrepotId ? 'text-[#FFB162]' : 'text-[#A35139]'}`}>
                 <path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-6h6v6"/><path d="M3 21h18"/>
@@ -214,10 +217,10 @@ export default function AppLayout({ children }) {
               <select
                 value={entrepotId || ''}
                 onChange={(e) => setEntrepotId(e.target.value)}
-                title="Filtrer tous les écrans sur un entrepôt"
+                title={t('cadre.filtrerEntrepot')}
                 className={`absolute inset-0 w-full opacity-0 sm:static sm:w-auto sm:opacity-100 sm:max-w-[220px] bg-transparent text-sm font-bold outline-none cursor-pointer truncate ${entrepotId ? 'text-white' : 'text-[#1B2632]'}`}
               >
-                <option value="" className="text-[#1B2632]">Tous les entrepôts</option>
+                <option value="" className="text-[#1B2632]">{t('cadre.tousEntrepots')}</option>
                 {entrepots.map((e) => (
                   <option key={e.id} value={e.id} className="text-[#1B2632]">
                     {drapeau(e.pays_code) ? `${drapeau(e.pays_code)} ` : ''}{e.nom}{e.pays_nom && e.pays_nom !== e.nom ? ` (${e.pays_nom})` : ''}
@@ -226,6 +229,10 @@ export default function AppLayout({ children }) {
               </select>
             </div>
           )}
+
+          {/* La langue (25/11) : FR | EN, tout le CRM suit. Sur téléphone, dans
+              le menu (la barre du haut est déjà pleine). */}
+          <ChoixLangue className="hidden sm:flex" />
 
           <div className="flex items-center gap-3 bg-white px-1.5 sm:px-4 py-1.5 sm:py-2 rounded-2xl border border-[#C9C1B1]/40 shadow-sm min-w-0 shrink-0"
             title={`${utilisateur.nom || ''} · ${roleNom || ''}`}>
@@ -236,7 +243,7 @@ export default function AppLayout({ children }) {
                 pas et poussaient l'entreprise et l'entrepôt hors de l'écran. */}
             <div className="hidden sm:flex flex-col justify-center min-w-0">
               <span className="text-sm font-bold text-[#1B2632] capitalize leading-tight truncate max-w-[120px] sm:max-w-none">
-                {utilisateur.nom || 'Chargement...'}
+                {utilisateur.nom || t('cadre.chargement')}
               </span>
               {/* 🚀 Affichage dynamique et fiable du rôle ici */}
               <span className="text-[10px] font-bold text-[#1B2632]/50 uppercase tracking-wider mt-0.5">
@@ -252,7 +259,7 @@ export default function AppLayout({ children }) {
         <main className="flex-1 overflow-y-auto overflow-x-hidden px-0 sm:px-6 pb-6">
           {pageOuverte
             ? children
-            : <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès…</div>}
+            : <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('cadre.verificationAcces')}</div>}
         </main>
       </div>
 

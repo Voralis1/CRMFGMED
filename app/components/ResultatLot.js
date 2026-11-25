@@ -14,11 +14,14 @@
 // se répétait sur chaque ligne. Maintenant : une couleur selon l'issue (tout
 // fait / en partie / rien), une phrase juste, et les refus RANGÉS PAR RAISON —
 // la raison une fois, puis les commandes qu'elle concerne.
-const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? 's' : ''}`
+// Les textes suivent la langue choisie (25/11) : le hook, pour changer à
+// l'instant du clic FR / EN, même bandeau ouvert.
+import { useLangue } from '../context/LangueContext'
 
 function Fermer({ onFermer }) {
+  const { t } = useLangue()
   return (
-    <button onClick={onFermer} aria-label="Fermer" title="Fermer"
+    <button onClick={onFermer} aria-label={t('msg.fermer')} title={t('msg.fermer')}
       className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-[#1B2632]/40 hover:text-[#1B2632] hover:bg-[#1B2632]/5 cursor-pointer">
       ✕
     </button>
@@ -26,6 +29,7 @@ function Fermer({ onFermer }) {
 }
 
 export default function ResultatLot({ resultat, onFermer }) {
+  const { t } = useLangue()
   if (!resultat) return null
 
   if (resultat.erreur) {
@@ -33,7 +37,7 @@ export default function ResultatLot({ resultat, onFermer }) {
       <div role="alert" className="rounded-2xl border border-[#A35139]/40 bg-[#F8ECE8] px-4 py-3 text-sm text-[#1B2632] flex items-start gap-3">
         <span className="shrink-0 mt-0.5 w-5 h-5 rounded-full bg-[#A35139] text-white text-xs font-bold flex items-center justify-center">!</span>
         <div className="flex-1">
-          <p className="font-bold">{resultat.action} : rien n&apos;a été appliqué.</p>
+          <p className="font-bold">{t('lot.rienApplique', { action: resultat.action })}</p>
           <p className="text-[#1B2632]/75 mt-0.5">{resultat.erreur}</p>
         </div>
         <Fermer onFermer={onFermer} />
@@ -66,16 +70,16 @@ export default function ResultatLot({ resultat, onFermer }) {
         <div className="flex-1 min-w-0">
           <p className="font-bold">
             {issue === 'rien'
-              ? `${resultat.action} : aucune commande traitée, ${refus.length} refusée${refus.length > 1 ? 's' : ''}`
-              : <>{resultat.action} : {pluriel(appliques, 'commande')} traitée{appliques > 1 ? 's' : ''}
-                  {inchanges > 0 && <span className="font-semibold text-[#1B2632]/60"> · {inchanges} déjà ainsi</span>}
-                  {refus.length > 0 && <span style={{ color: style.bord }}> · {refus.length} refusée{refus.length > 1 ? 's' : ''}</span>}</>}
+              ? t('lot.aucuneTraitee', { action: resultat.action, n: refus.length })
+              : <>{t('lot.traitees', { action: resultat.action, n: appliques })}
+                  {inchanges > 0 && <span className="font-semibold text-[#1B2632]/60"> · {t('lot.dejaAinsi', { n: inchanges })}</span>}
+                  {refus.length > 0 && <span style={{ color: style.bord }}> · {t('lot.refusees', { n: refus.length })}</span>}</>}
           </p>
           {refus.length > 0 && (
             <p className="text-xs text-[#1B2632]/60 mt-0.5">
               {refus.length === 1
-                ? `${issue === 'rien' ? 'Elle n’a pas été modifiée' : 'La refusée n’a pas bougé'} ; elle reste cochée.`
-                : `${issue === 'rien' ? 'Aucune n’a été modifiée' : 'Les refusées n’ont pas bougé'} ; elles restent cochées.`}
+                ? t(issue === 'rien' ? 'lot.uneNonModifiee' : 'lot.uneNonBougee')
+                : t(issue === 'rien' ? 'lot.aucuneModifiee' : 'lot.nonBougees')}
             </p>
           )}
         </div>

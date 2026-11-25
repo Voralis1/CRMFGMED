@@ -4,9 +4,11 @@ import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext' 
+import { useLangue } from '../context/LangueContext'
 
 export default function SuperAdminLayout({ children }) {
   const { user, role, loading: authLoading } = useAuth() 
+  const { t } = useLangue()
   const router = useRouter()
   const pathname = usePathname()
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
@@ -52,7 +54,7 @@ export default function SuperAdminLayout({ children }) {
   }, [user, role, authLoading, router])
 
   if (authLoading || verifying) {
-    return <div className="p-20 text-center text-sm font-medium text-[#1B2632]">Vérification des accès Super Admin...</div>
+    return <div className="p-20 text-center text-sm font-medium text-[#1B2632]">{t('cadre.verificationSuperAdmin')}</div>
   }
 
   if (!isSuperAdmin) return null

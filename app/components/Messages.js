@@ -16,6 +16,8 @@
 // fenêtre ; rend le texte saisi (non vide), ou false si annulé.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { traduire } from '../../lib/langues/index.mjs'
+import { useLangue } from '../context/LangueContext'
 
 const MessagesContext = createContext(null)
 
@@ -27,6 +29,7 @@ const STYLE = {
 }
 
 export function MessagesProvider({ children }) {
+  const { t } = useLangue()
   const [annonces, setAnnonces] = useState([])
   const [demande, setDemande] = useState(null) // { message, titre, bouton, danger, resoudre }
   const compteur = useRef(0)
@@ -49,7 +52,7 @@ export function MessagesProvider({ children }) {
   const confirmer = useCallback((options) => new Promise((resoudre) => {
     const o = typeof options === 'string' ? { message: options } : (options || {})
     enCours.current?.resoudre(false) // une demande déjà ouverte = annulée
-    const d = { titre: o.titre || 'Confirmer', message: o.message || '', bouton: o.bouton || 'Confirmer', danger: !!o.danger, saisie: o.saisie || null, id: ++compteur.current, resoudre }
+    const d = { titre: o.titre || traduire('msg.confirmer'), message: o.message || '', bouton: o.bouton || traduire('msg.confirmer'), danger: !!o.danger, saisie: o.saisie || null, id: ++compteur.current, resoudre }
     enCours.current = d
     setDemande(d)
   }), [])
@@ -77,7 +80,7 @@ export function MessagesProvider({ children }) {
               style={{ background: s.fond, borderColor: `${s.bord}66` }}>
               <span className="shrink-0 w-5 h-5 rounded-full text-white text-xs font-bold flex items-center justify-center mt-0.5" style={{ background: s.bord }}>{s.icone}</span>
               <p className="flex-1 whitespace-pre-line leading-snug">{a.texte}</p>
-              <button type="button" onClick={() => fermer(a.id)} aria-label="Fermer" className="shrink-0 text-[#1B2632]/40 hover:text-[#1B2632] cursor-pointer">✕</button>
+              <button type="button" onClick={() => fermer(a.id)} aria-label={t('msg.fermer')} className="shrink-0 text-[#1B2632]/40 hover:text-[#1B2632] cursor-pointer">✕</button>
             </div>
           )
         })}
@@ -89,6 +92,7 @@ export function MessagesProvider({ children }) {
 }
 
 function FenetreConfirmation({ demande, repondre }) {
+  const { t } = useLangue()
   const annuler = useRef(null)
   const valider = useRef(null)
   const champ = useRef(null)
@@ -115,7 +119,7 @@ function FenetreConfirmation({ demande, repondre }) {
         <p className="mt-2 text-sm text-[#1B2632]/75 whitespace-pre-line leading-relaxed">{demande.message}</p>
         {demande.saisie && (
           <div className="mt-4">
-            <label htmlFor="confirmation-saisie" className="block text-xs font-bold uppercase tracking-wide text-[#1B2632]/60 mb-1.5">{demande.saisie.label || 'Raison'} *</label>
+            <label htmlFor="confirmation-saisie" className="block text-xs font-bold uppercase tracking-wide text-[#1B2632]/60 mb-1.5">{demande.saisie.label || t('msg.raison')} *</label>
             <input id="confirmation-saisie" ref={champ} type="text" value={texte} onChange={(e) => setTexte(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); envoyer() } }}
               placeholder={demande.saisie.placeholder || ''}
@@ -125,7 +129,7 @@ function FenetreConfirmation({ demande, repondre }) {
         <div className="mt-6 flex gap-3 justify-end">
           <button ref={annuler} type="button" onClick={() => repondre(false)}
             className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#EEE9DF] text-[#1B2632] hover:bg-[#E3DDD0] cursor-pointer">
-            Annuler
+            {t('msg.annuler')}
           </button>
           <button ref={valider} type="button" onClick={envoyer} disabled={saisieVide}
             className={`px-5 py-2.5 rounded-xl text-sm font-bold text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${demande.danger ? 'bg-[#A35139] hover:bg-[#8E4631]' : 'bg-[#1B2632] hover:bg-[#2C3B4D]'}`}>

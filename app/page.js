@@ -3,19 +3,22 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../lib/supabaseClient'
+import { useLangue } from './context/LangueContext'
+import ChoixLangue from './components/ChoixLangue'
 
 // Erreurs de connexion en français clair (24/11). Supabase renvoie un texte
 // anglais technique ; on le reconnaît, sinon un message générique — jamais
 // le texte brut.
+// Rend une CLÉ de texte (25/11) : la phrase suit la langue choisie.
 function messageConnexion(error) {
   const m = String(error?.message || '')
-  if (/invalid login credentials|invalid.*(email|password)/i.test(m)) return 'E-mail ou mot de passe incorrect.'
-  if (/email not confirmed/i.test(m)) return "Ce compte n'est pas encore activé. Contactez l'administrateur."
-  if (/too many|rate limit/i.test(m) || error?.status === 429) return 'Trop de tentatives. Attendez quelques minutes puis réessayez.'
+  if (/invalid login credentials|invalid.*(email|password)/i.test(m)) return 'login.erreurIdentifiants'
+  if (/email not confirmed/i.test(m)) return 'login.erreurNonActive'
+  if (/too many|rate limit/i.test(m) || error?.status === 429) return 'login.erreurTropEssais'
   if (/failed to fetch|network|load failed/i.test(m) || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
-    return 'Pas de connexion internet. Vérifiez votre réseau puis réessayez.'
+    return 'login.erreurReseau'
   }
-  return 'Connexion impossible pour le moment. Réessayez dans un instant.'
+  return 'login.erreurAutre'
 }
 
 export default function LoginPage() {
@@ -28,6 +31,7 @@ export default function LoginPage() {
   const [erreur, setErreur] = useState('')
   const [voirMdp, setVoirMdp] = useState(false)
   const router = useRouter()
+  const { t } = useLangue()
 
   function redirectByRole(role) {
     if (role === 'super_admin' || role === 'SUPER_ADMIN') {
@@ -93,7 +97,7 @@ export default function LoginPage() {
     // d'envoyer la personne sur un tableau de bord vide.
     if (roleError && /suspendue/i.test(roleError.message || '')) {
       await supabase.auth.signOut()
-      setErreur("Votre entreprise est suspendue. Contactez l'administrateur.")
+      setErreur('login.erreurSuspendue')
       setChargement(false)
       return
     }
@@ -105,13 +109,15 @@ export default function LoginPage() {
   if (checkingSession) {
     return (
       <div className="min-h-screen bg-[#EEE9DF] flex items-center justify-center">
-        <p className="text-sm text-[#1B2632]/60">Chargement...</p>
+        <p className="text-sm text-[#1B2632]/60">{t('cadre.chargement')}</p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-[#EEE9DF] flex flex-col items-center justify-center p-6 font-sans text-[#1B2632]">
+    <div className="min-h-screen bg-[#EEE9DF] flex flex-col items-center justify-center p-6 font-sans text-[#1B2632] relative">
+      {/* La langue, dès la connexion (25/11). */}
+      <ChoixLangue className="absolute top-4 right-4" />
 
       {/* Logo et Marque */}
       <div className="mb-8 flex flex-col items-center">
@@ -133,19 +139,19 @@ export default function LoginPage() {
       <div className="w-full max-w-md bg-white border border-[#C9C1B1] rounded-3xl shadow-sm p-8 md:p-10">
 
         <div className="mb-8">
-          <h2 className="text-2xl font-bold text-[#1B2632] mb-1">Connexion</h2>
-          <p className="text-sm text-[#1B2632]/60">Accédez à votre espace de travail</p>
+          <h2 className="text-2xl font-bold text-[#1B2632] mb-1">{t('login.titre')}</h2>
+          <p className="text-sm text-[#1B2632]/60">{t('login.sousTitre')}</p>
         </div>
 
         <form onSubmit={handleLogin} className="flex flex-col gap-5">
           {erreur && (
             <div role="alert" className="px-4 py-3 rounded-xl text-sm font-medium border bg-[#A35139]/10 border-[#A35139]/30 text-[#A35139]">
-              {erreur}
+              {t(erreur)}
             </div>
           )}
           <div>
             <label htmlFor="email" className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">
-              Email
+              {t('login.email')}
             </label>
             <input
               id="email"
@@ -163,7 +169,7 @@ export default function LoginPage() {
 
           <div>
             <label htmlFor="mot-de-passe" className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2">
-              Mot de passe
+              {t('login.motDePasse')}
             </label>
             <div className="relative">
               <input
@@ -177,8 +183,8 @@ export default function LoginPage() {
                 className="w-full border border-[#C9C1B1] rounded-xl pl-4 pr-11 py-3 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] transition"
                 required
               />
-              <button type="button" onClick={() => setVoirMdp((v) => !v)} title={voirMdp ? 'Masquer' : 'Afficher'}
-                aria-label={voirMdp ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+              <button type="button" onClick={() => setVoirMdp((v) => !v)} title={t(voirMdp ? 'login.masquer' : 'login.afficher')}
+                aria-label={t(voirMdp ? 'login.masquer' : 'login.afficher')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-[#1B2632]/45 hover:text-[#1B2632] cursor-pointer">
                 {voirMdp ? (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
@@ -194,7 +200,7 @@ export default function LoginPage() {
             disabled={chargement}
             className="w-full mt-2 py-3.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-xl text-sm font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
           >
-            {chargement ? 'Connexion en cours...' : 'Se connecter'}
+            {chargement ? t('login.enCours') : t('login.bouton')}
           </button>
         </form>
 
@@ -202,7 +208,7 @@ export default function LoginPage() {
 
       {/* Pied de page */}
       <footer className="mt-8 text-xs text-[#1B2632]/40 font-medium">
-        Centre Logistique & Opérationnel FGMED
+        {t('login.pied')}
       </footer>
 
     </div>
