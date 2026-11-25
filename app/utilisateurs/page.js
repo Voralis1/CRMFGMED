@@ -7,12 +7,15 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext' 
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
+import { useLangue } from '../context/LangueContext'
 
 export default function UtilisateursPage() {
   const { user, tenantId, loading: authLoading } = useAuth() 
   const { hasPermission, loading: permsLoading } = usePermissions() 
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue()
   const router = useRouter()
 
   // 🚀 EXTRACTION SÉCURISÉE DU TENANT ID
@@ -106,12 +109,12 @@ export default function UtilisateursPage() {
     // peut prendre. Un seller, un manager, un CEO ou un admin n'en ont pas.
     const roleAvecPays = roleUtilisateur === 'agent' || roleUtilisateur === 'livreur'
     if (roleAvecPays && !paysFiche) {
-      afficherMessage('Le pays est obligatoire pour un agent et pour un livreur.', 'erreur')
+      afficherMessage(t('util.paysObligatoireRole'), 'erreur')
       return
     }
 
     if (roleUtilisateur === 'livreur' && !zoneLivreur) {
-      afficherMessage('La zone est obligatoire pour un livreur.', 'erreur')
+      afficherMessage(t('util.zoneObligatoire'), 'erreur')
       return
     }
 
@@ -125,7 +128,7 @@ export default function UtilisateursPage() {
       .single();
 
     if (roleError || !roleData) {
-      afficherMessage(`Erreur : Le rôle "${roleUtilisateur}" n'existe pas en base de données.`, 'erreur')
+      afficherMessage(t('util.roleInexistant', { role: roleUtilisateur }), 'erreur')
       setEnvoiEnCours(false)
       return;
     }
@@ -158,11 +161,11 @@ export default function UtilisateursPage() {
     setEnvoiEnCours(false)
 
     if (resultat.error) {
-      afficherMessage('Erreur : ' + resultat.error, 'erreur')
+      afficherMessage(t('util.erreur', { erreur: messageErreur(resultat.error) }), 'erreur')
       return
     }
 
-    afficherMessage('Utilisateur créé avec succès !', 'succes')
+    afficherMessage(t('util.cree'), 'succes')
     setEmail('')
     setMotDePasse('')
     setNom('')
@@ -181,7 +184,7 @@ export default function UtilisateursPage() {
   async function basculerStatutAgent(id, statutActuel) {
     const { error } = await supabase.from('agents').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
-      annoncer(`Changement de statut impossible : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('util.statutImpossible', { erreur: messageErreur(error) }), 'erreur')
     } else {
       await chargerDonnees()
     }
@@ -190,7 +193,7 @@ export default function UtilisateursPage() {
   async function basculerStatutLivreur(id, statutActuel) {
     const { error } = await supabase.from('livreurs').update({ actif: !statutActuel }).eq('id', id).eq('tenant_id', tenantKey)
     if (error) {
-      annoncer(`Changement de statut impossible : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('util.statutImpossible', { erreur: messageErreur(error) }), 'erreur')
     } else {
       await chargerDonnees()
     }
@@ -202,10 +205,10 @@ export default function UtilisateursPage() {
   // history of orders, deliveries and payments stays intact.
   async function supprimerCompte(userId, nom, type) {
     if (!userId) {
-      annoncer("Ce profil n'est lié à aucun compte.", 'erreur')
+      annoncer(t('util.profilSansCompte'), 'erreur')
       return
     }
-    if (!(await confirmer({ titre: 'Supprimer le compte', message: `Supprimer le compte de ${nom} ? Il ne pourra plus se connecter.\n\nSon historique (commandes, livraisons, paiements) est conservé.`, bouton: 'Supprimer', danger: true }))) return
+    if (!(await confirmer({ titre: t('util.supprimerCompte'), message: t('util.supprimerMsg', { nom }), bouton: t('util.supprimer'), danger: true }))) return
 
     const { data: { session } } = await supabase.auth.getSession()
     const reponse = await fetch(
@@ -222,9 +225,9 @@ export default function UtilisateursPage() {
     const resultat = await reponse.json().catch(() => ({}))
 
     if (!reponse.ok || resultat.error) {
-      annoncer(`Suppression impossible : ${messageErreur(resultat.error, 'erreur inconnue.')}`, 'erreur')
+      annoncer(t('util.suppressionImpossible', { erreur: messageErreur(resultat.error) }), 'erreur')
     } else {
-      afficherMessage(type === 'livreur' ? 'Livreur supprimé.' : 'Agent supprimé.', 'succes')
+      afficherMessage(type === 'livreur' ? t('util.livreurSupprime') : t('util.agentSupprime'), 'succes')
       await chargerDonnees()
     }
   }
@@ -245,12 +248,12 @@ export default function UtilisateursPage() {
     const table = typeEdition === 'agent' ? 'agents' : 'livreurs'
 
     if (!editPays) {
-      annoncer('Le pays est obligatoire.', 'erreur')
+      annoncer(t('util.paysObligatoire'), 'erreur')
       return
     }
 
     if (typeEdition === 'livreur' && !editZone) {
-      annoncer('La zone est obligatoire pour un livreur.', 'erreur')
+      annoncer(t('util.zoneObligatoire'), 'erreur')
       return
     }
 
@@ -274,18 +277,18 @@ export default function UtilisateursPage() {
       .select()
 
     if (error) {
-      annoncer(`Enregistrement impossible : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('util.enregistrementImpossible', { erreur: messageErreur(error) }), 'erreur')
     } else if (!data || data.length === 0) {
-      annoncer("Aucune modification n'a été enregistrée.", 'info')
+      annoncer(t('util.rienEnregistre'), 'info')
     } else {
-      afficherMessage('Modifications enregistrées avec succès !', 'succes')
+      afficherMessage(t('util.modifsEnregistrees'), 'succes')
       setModalOuverte(false)
       await chargerDonnees()
     }
   }
 
   if (authLoading || permsLoading || !hasPermission('menu_utilisateurs')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('util.verif')}</div>
   }
 
   return (
@@ -294,7 +297,7 @@ export default function UtilisateursPage() {
       {/* En-tête */}
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
         {/* En-tête compact (20/11). */}
-        <h1 className="text-2xl font-bold text-[#1B2632]">Utilisateurs</h1>
+        <h1 className="text-2xl font-bold text-[#1B2632]">{t('util.titre')}</h1>
 
         {/* Système d'onglets */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
@@ -304,7 +307,7 @@ export default function UtilisateursPage() {
               ongletActif === 'agents' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
             }`}
           >
-            Agents ({agents.length})
+            {t('util.ongletAgents', { n: agents.length })}
           </button>
           <button
             onClick={() => setOngletActif('livreurs')}
@@ -312,7 +315,7 @@ export default function UtilisateursPage() {
               ongletActif === 'livreurs' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
             }`}
           >
-            Livreurs ({livreurs.length})
+            {t('util.ongletLivreurs', { n: livreurs.length })}
           </button>
           <button
             onClick={() => setOngletActif('equipe')}
@@ -320,14 +323,14 @@ export default function UtilisateursPage() {
               ongletActif === 'equipe' ? 'bg-[#1B2632] text-white shadow-md' : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
             }`}
           >
-            Équipe ({equipe.length})
+            {t('util.ongletEquipe', { n: equipe.length })}
           </button>
           {/* « Créer » sur la ligne des onglets, poussé à droite (20/11) : même
               niveau, mais un bouton plein foncé — c'est une action, pas une liste. */}
           {peutGerer && (
             <button onClick={() => setOngletActif('creation')}
               className="sm:ml-auto px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm cursor-pointer transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D]">
-              + Créer un utilisateur
+              {t('util.creerBouton')}
             </button>
           )}
         </div>
@@ -344,19 +347,19 @@ export default function UtilisateursPage() {
       {ongletActif === 'agents' && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-3 sm:p-6">
           <h2 className="text-xl font-bold text-[#1B2632] mb-4 pb-3 border-b border-[#C9C1B1]/40">
-            Liste des Agents du Centre d'Appel
+            {t('util.listeAgents')}
           </h2>
           {agents.length === 0 ? (
-            <p className="text-sm text-[#1B2632]/60 py-8 text-center">Aucun agent enregistré.</p>
+            <p className="text-sm text-[#1B2632]/60 py-8 text-center">{t('util.aucunAgent')}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                    <th className="px-4 py-3">Nom</th>
-                    <th className="px-4 py-3">Pays traité</th>
-                    <th className="px-4 py-3">Statut</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
+                    <th className="px-4 py-3">{t('util.nom')}</th>
+                    <th className="px-4 py-3">{t('util.paysTraite')}</th>
+                    <th className="px-4 py-3">{t('util.statut')}</th>
+                    <th className="px-4 py-3 text-right">{t('util.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -369,22 +372,22 @@ export default function UtilisateursPage() {
                             {listePays.find(p => p.id === a.pays_id)?.nom || '—'}
                           </span>
                         ) : (
-                          <span className="font-semibold text-xs bg-[#A35139]/10 text-[#A35139] px-2.5 py-1 rounded-md">Non défini</span>
+                          <span className="font-semibold text-xs bg-[#A35139]/10 text-[#A35139] px-2.5 py-1 rounded-md">{t('util.nonDefini')}</span>
                         )}
                       </td>
                       <td className="px-4 py-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-semibold ${a.actif ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                          {a.actif ? 'Actif' : 'Inactif'}
+                          {a.actif ? t('util.actif') : t('util.inactif')}
                         </span>
                       </td>
                       <td className="px-4 py-4"><div className="flex justify-end gap-2 whitespace-nowrap">
                         {peutGerer ? (<>
-                        <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3.5 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                        <button onClick={() => ouvrirModalEdition('agent', a)} className="px-3.5 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold cursor-pointer transition-colors">{t('util.modifier')}</button>
                         <button onClick={() => basculerStatutAgent(a.id, a.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
-                          {a.actif ? 'Désactiver' : 'Activer'}
+                          {a.actif ? t('util.desactiver') : t('util.activer')}
                         </button>
-                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} title="Supprimer le compte" className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 rounded-lg text-xs font-bold cursor-pointer transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>Supprimer</button>
-                        </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
+                        <button onClick={() => supprimerCompte(a.user_id, a.nom, 'agent')} title={t('util.supprimerCompte')} className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 rounded-lg text-xs font-bold cursor-pointer transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>{t('util.supprimer')}</button>
+                        </>) : <span className="text-xs text-[#1B2632]/40">{t('util.lectureSeule')}</span>}
                       </div></td>
                     </tr>
                   ))}
@@ -399,21 +402,21 @@ export default function UtilisateursPage() {
       {ongletActif === 'livreurs' && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-3 sm:p-6">
           <h2 className="text-xl font-bold text-[#1B2632] mb-4 pb-3 border-b border-[#C9C1B1]/40">
-            Liste des Livreurs & Zones d'Activité
+            {t('util.listeLivreurs')}
           </h2>
           {livreurs.length === 0 ? (
-            <p className="text-sm text-[#1B2632]/60 py-8 text-center">Aucun livreur enregistré.</p>
+            <p className="text-sm text-[#1B2632]/60 py-8 text-center">{t('util.aucunLivreur')}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                    <th className="px-4 py-3">Nom</th>
-                    <th className="px-4 py-3">Téléphone</th>
-                    <th className="px-4 py-3">Pays</th>
-                    <th className="px-4 py-3">Zone assignée</th>
-                    <th className="px-4 py-3">Statut</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
+                    <th className="px-4 py-3">{t('util.nom')}</th>
+                    <th className="px-4 py-3">{t('util.telephone')}</th>
+                    <th className="px-4 py-3">{t('util.pays')}</th>
+                    <th className="px-4 py-3">{t('util.zoneAssignee')}</th>
+                    <th className="px-4 py-3">{t('util.statut')}</th>
+                    <th className="px-4 py-3 text-right">{t('util.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -427,27 +430,27 @@ export default function UtilisateursPage() {
                             {listePays.find(p => p.id === l.pays_id)?.nom || '—'}
                           </span>
                         ) : (
-                          <span className="font-semibold text-xs bg-[#A35139]/10 text-[#A35139] px-2.5 py-1 rounded-md">Non défini</span>
+                          <span className="font-semibold text-xs bg-[#A35139]/10 text-[#A35139] px-2.5 py-1 rounded-md">{t('util.nonDefini')}</span>
                         )}
                       </td>
                       <td className="px-4 py-4">
                         <span className="font-semibold text-xs bg-[#EEE9DF] px-2.5 py-1 rounded-md">
-                          {l.zone ? l.zone.trim() : <span className="text-red-600 font-semibold">Non défini</span>}
+                          {l.zone ? l.zone.trim() : <span className="text-red-600 font-semibold">{t('util.nonDefini')}</span>}
                         </span>
                       </td>
                       <td className="px-4 py-4">
                         <span className={`px-3 py-1 rounded-full text-xs font-semibold ${l.actif ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
-                          {l.actif ? 'Actif' : 'Inactif'}
+                          {l.actif ? t('util.actif') : t('util.inactif')}
                         </span>
                       </td>
                       <td className="px-4 py-4"><div className="flex justify-end gap-2 whitespace-nowrap">
                         {peutGerer ? (<>
-                        <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3.5 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold cursor-pointer transition-colors">Modifier</button>
+                        <button onClick={() => ouvrirModalEdition('livreur', l)} className="px-3.5 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold cursor-pointer transition-colors">{t('util.modifier')}</button>
                         <button onClick={() => basculerStatutLivreur(l.id, l.actif)} className="px-3 py-1.5 border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] cursor-pointer hover:bg-gray-50 transition-colors">
-                          {l.actif ? 'Désactiver' : 'Activer'}
+                          {l.actif ? t('util.desactiver') : t('util.activer')}
                         </button>
-                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} title="Supprimer le compte" className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 rounded-lg text-xs font-bold cursor-pointer transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>Supprimer</button>
-                        </>) : <span className="text-xs text-[#1B2632]/40">Lecture seule</span>}
+                        <button onClick={() => supprimerCompte(l.user_id, l.nom, 'livreur')} title={t('util.supprimerCompte')} className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#A35139]/40 text-[#A35139] hover:bg-[#A35139]/10 rounded-lg text-xs font-bold cursor-pointer transition-colors"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>{t('util.supprimer')}</button>
+                        </>) : <span className="text-xs text-[#1B2632]/40">{t('util.lectureSeule')}</span>}
                       </div></td>
                     </tr>
                   ))}
@@ -469,17 +472,17 @@ export default function UtilisateursPage() {
             <table className="w-full min-w-[480px] text-left text-sm">
               <thead className="text-xs uppercase tracking-wider text-[#1B2632]/60 border-b border-[#C9C1B1]/40">
                 <tr>
-                  <th className="px-4 py-3">Nom</th>
-                  <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Rôle</th>
+                  <th className="px-4 py-3">{t('util.nom')}</th>
+                  <th className="px-4 py-3">{t('util.email')}</th>
+                  <th className="px-4 py-3">{t('util.role')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#C9C1B1]/30">
                 {equipe.length === 0 ? (
-                  <tr><td colSpan="3" className="px-4 py-8 text-center text-[#1B2632]/50">Personne pour l'instant.</td></tr>
+                  <tr><td colSpan="3" className="px-4 py-8 text-center text-[#1B2632]/50">{t('util.personne')}</td></tr>
                 ) : equipe.map((u) => (
                   <tr key={u.user_id} className="hover:bg-[#EEE9DF]/20">
-                    <td className="px-4 py-3 font-semibold text-[#1B2632]">{u.nom || <span className="font-normal italic text-[#1B2632]/40">sans nom</span>}</td>
+                    <td className="px-4 py-3 font-semibold text-[#1B2632]">{u.nom || <span className="font-normal italic text-[#1B2632]/40">{t('util.sansNom')}</span>}</td>
                     <td className="px-4 py-3 font-mono text-xs text-[#1B2632]/70">{u.email || '—'}</td>
                     <td className="px-4 py-3">
                       <span className="text-[11px] font-bold uppercase tracking-wide bg-[#EEE9DF] text-[#1B2632] px-2.5 py-1 rounded-full">
@@ -497,17 +500,17 @@ export default function UtilisateursPage() {
       {peutGerer && ongletActif === 'creation' && (
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-8">
           <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-            <h2 className="text-xl font-bold text-[#1B2632]">Créer un nouvel utilisateur</h2>
-            <p className="text-sm text-[#1B2632]/60 mt-1">Ajoutez un membre de l&apos;équipe.</p>
+            <h2 className="text-xl font-bold text-[#1B2632]">{t('util.creerTitre')}</h2>
+            <p className="text-sm text-[#1B2632]/60 mt-1">{t('util.creerAide')}</p>
           </div>
 
           <form onSubmit={creerUtilisateur} className="flex flex-col gap-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Email</label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.email')}</label>
                 <input
                   type="email"
-                  placeholder="nom@exemple.com"
+                  placeholder={t('util.exEmail')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162]"
@@ -515,7 +518,7 @@ export default function UtilisateursPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Mot de passe</label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.mdp')}</label>
                 {/* 8 caractères au moins (20/11) : la règle de Supabase Auth depuis le
                     17/11. À 6, le serveur refusait après coup. L'œil évite une faute
                     de frappe sur un mot de passe qu'on ne voit pas. */}
@@ -531,7 +534,7 @@ export default function UtilisateursPage() {
                     autoComplete="new-password"
                   />
                   <button type="button" onClick={() => setVoirMotDePasse((v) => !v)}
-                    title={voirMotDePasse ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                    title={voirMotDePasse ? t('util.masquerMdp') : t('util.afficherMdp')}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[#1B2632]/50 hover:text-[#1B2632] cursor-pointer">
                     {voirMotDePasse ? (
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
@@ -541,14 +544,14 @@ export default function UtilisateursPage() {
                   </button>
                 </div>
                 <p className={`text-[11px] mt-1.5 ${motDePasse && motDePasse.length < 8 ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/45'}`}>
-                  8 caractères minimum{motDePasse ? ` · ${motDePasse.length} tapé${motDePasse.length > 1 ? 's' : ''}` : ''}
+                  {t('util.mdpMin')}{motDePasse ? t('util.tapes', { n: motDePasse.length }) : ''}
                 </p>
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Nom complet</label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.nomComplet')}</label>
                 <input
                   type="text"
-                  placeholder="Nom et Prénom"
+                  placeholder={t('util.nomPrenom')}
                   value={nom}
                   onChange={(e) => setNom(e.target.value)}
                   className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162]"
@@ -556,7 +559,7 @@ export default function UtilisateursPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Téléphone (Optionnel)</label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.telOptionnel')}</label>
                 <input
                   type="text"
                   placeholder="+242..."
@@ -566,53 +569,53 @@ export default function UtilisateursPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Rôle</label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.role')}</label>
                 <select
                   value={roleUtilisateur}
                   onChange={(e) => setRoleUtilisateur(e.target.value)}
                   className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                 >
-                  <option value="agent">Agent — centre d'appel</option>
-                  <option value="livreur">Livreur</option>
-                  <option value="seller">Seller — apporte les leads</option>
-                  <option value="manager">Manager</option>
-                  <option value="ceo">CEO — lecture seule</option>
-                  <option value="admin">Admin</option>
+                  <option value="agent">{t('util.roleAgent')}</option>
+                  <option value="livreur">{t('util.livreur')}</option>
+                  <option value="seller">{t('util.roleSeller')}</option>
+                  <option value="manager">{t('util.manager')}</option>
+                  <option value="ceo">{t('util.roleCeo')}</option>
+                  <option value="admin">{t('util.admin')}</option>
                 </select>
               </div>
 
               {(roleUtilisateur === 'agent' || roleUtilisateur === 'livreur') && (
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Pays <span className="text-[#A35139]">*</span></label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.pays')} <span className="text-[#A35139]">*</span></label>
                 <select
                   value={paysFiche}
                   onChange={(e) => { setPaysFiche(e.target.value); setZoneLivreur('') }}
                   required
                   className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                 >
-                  <option value="">-- Choisir un pays --</option>
+                  <option value="">{t('util.choisirPays')}</option>
                   {listePays.map((p) => (
                     <option key={p.id} value={p.id}>{p.nom}</option>
                   ))}
                 </select>
                 <p className="text-[11px] text-[#1B2632]/60 mt-1.5">
                   {roleUtilisateur === 'agent'
-                    ? 'L’agent ne recevra que les leads de ce pays.'
-                    : 'Le livreur ne pourra livrer que dans ce pays.'}
+                    ? t('util.agentPaysAide')
+                    : t('util.livreurPaysAide')}
                 </p>
               </div>
               )}
 
               {roleUtilisateur === 'livreur' && (
                 <div>
-                  <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">Zone d'activité *</label>
+                  <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-2">{t('util.zoneObl')}</label>
                   <select
                     required
                     value={zoneLivreur}
                     onChange={(e) => setZoneLivreur(e.target.value)}
                     className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-3 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                   >
-                    <option value="">-- Choisir une zone --</option>
+                    <option value="">{t('util.choisirZone')}</option>
                     {listeZones.filter((z) => !paysFiche || z.pays_id === paysFiche).map((z) => (
                       <option key={z.id} value={z.nom_zone}>{z.nom_zone}</option>
                     ))}
@@ -627,7 +630,7 @@ export default function UtilisateursPage() {
                 disabled={envoiEnCours}
                 className="px-6 py-3 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-xl text-sm font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
               >
-                {envoiEnCours ? 'Création en cours...' : 'Créer l\'utilisateur'}
+                {envoiEnCours ? t('util.creation') : t('util.creer')}
               </button>
             </div>
           </form>
@@ -640,7 +643,7 @@ export default function UtilisateursPage() {
           <div className="bg-white rounded-2xl shadow-2xl border border-[#C9C1B1] w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="flex justify-between items-center px-6 py-4 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/30">
               <h3 className="text-lg font-bold text-[#1B2632]">
-                Modifier {typeEdition === 'agent' ? "l'agent" : 'le livreur'}
+                {typeEdition === 'agent' ? t('util.modifierAgent') : t('util.modifierLivreur')}
               </h3>
               <button onClick={() => setModalOuverte(false)} className="text-[#1B2632]/50 hover:text-[#1B2632] font-bold text-lg cursor-pointer">
                 ✕
@@ -649,7 +652,7 @@ export default function UtilisateursPage() {
 
             <form onSubmit={enregistrerModification} className="p-6 flex flex-col gap-4">
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">Nom complet</label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">{t('util.nomComplet')}</label>
                 <input
                   type="text"
                   value={editNom}
@@ -660,14 +663,14 @@ export default function UtilisateursPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">Pays <span className="text-[#A35139]">*</span></label>
+                <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">{t('util.pays')} <span className="text-[#A35139]">*</span></label>
                 <select
                   value={editPays}
                   onChange={(e) => { setEditPays(e.target.value); setEditZone('') }}
                   required
                   className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-2.5 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                 >
-                  <option value="">-- Choisir un pays --</option>
+                  <option value="">{t('util.choisirPays')}</option>
                   {listePays.map((p) => (
                     <option key={p.id} value={p.id}>{p.nom}</option>
                   ))}
@@ -676,7 +679,7 @@ export default function UtilisateursPage() {
 
               {typeEdition === 'livreur' && (
                 <div>
-                  <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">Téléphone</label>
+                  <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">{t('util.telephone')}</label>
                   <input
                     type="text"
                     value={editTelephone}
@@ -688,14 +691,14 @@ export default function UtilisateursPage() {
 
               {typeEdition === 'livreur' && (
                 <div>
-                  <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">Zone d'activité *</label>
+                  <label className="block text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide mb-1">{t('util.zoneObl')}</label>
                   <select
                     required
                     value={editZone}
                     onChange={(e) => setEditZone(e.target.value)}
                     className="w-full bg-[#EEE9DF]/30 border border-[#C9C1B1]/60 rounded-xl px-4 py-2.5 text-sm font-medium text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
                   >
-                    <option value="">-- Choisir une zone --</option>
+                    <option value="">{t('util.choisirZone')}</option>
                     {listeZones.filter((z) => !editPays || z.pays_id === editPays).map((z) => (
                       <option key={z.id} value={z.nom_zone}>{z.nom_zone}</option>
                     ))}
@@ -709,13 +712,13 @@ export default function UtilisateursPage() {
                   onClick={() => setModalOuverte(false)}
                   className="px-5 py-2.5 border border-[#C9C1B1] rounded-xl text-xs font-bold text-[#1B2632] hover:bg-gray-100 cursor-pointer"
                 >
-                  Annuler
+                  {t('util.annuler')}
                 </button>
                 <button
                   type="submit"
                   className="px-5 py-2.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-xl text-xs font-bold cursor-pointer shadow-md"
                 >
-                  Enregistrer les modifications
+                  {t('util.enregistrerModifs')}
                 </button>
               </div>
             </form>

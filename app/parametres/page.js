@@ -8,6 +8,7 @@ import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../context/PermissionsContext";
 import { useMessages } from "../components/Messages";
 import { messageErreur } from "../../lib/messageErreur.mjs";
+import { useLangue } from "../context/LangueContext";
 import { retirerImage } from "../../lib/imageProduit";
 import DelaiReaffectation from "../components/DelaiReaffectation";
 import { PAYS_MONDE } from "../../lib/paysMonde";
@@ -33,6 +34,8 @@ export default function ParametresAdmin() {
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
   // Messages du CRM (24/11) au lieu du bandeau de la page et des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages();
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue();
 
   // Qui configure l'entreprise : pays, zones, statuts, entrepôts, stock. Rien
   // de tout cela n'appartient à un vendeur externe — ce sont les réglages de
@@ -192,19 +195,19 @@ export default function ParametresAdmin() {
   // 23505 = violation d'unicité. C'est l'index ci-dessus qui parle : le pays
   // existe déjà sous une autre graphie. Le dire, au lieu d'« Erreur ».
   function messagePays(error, action) {
-    if (error.code === "23505") return "Ce pays existe déjà (la casse et les espaces ne comptent pas).";
-    return `Erreur lors de ${action} : ${messageErreur(error)}`;
+    if (error.code === "23505") return t('par.paysExiste');
+    return t(action === "la modification" ? "par.erreurModif" : "par.erreurAjout", { erreur: messageErreur(error) });
   }
 
   async function ajouterPays(e) {
     e.preventDefault();
     if (!tenantId) return;
-    if (!nouveauPays.nom || !nouveauPays.code || !nouveauPays.devise) return afficherMessage("Tous les champs du pays sont obligatoires.", "erreur");
+    if (!nouveauPays.nom || !nouveauPays.code || !nouveauPays.devise) return afficherMessage(t('par.paysChamps'), "erreur");
     // 13/11 (fuseaux_pays.sql) : le fuseau vient de la liste officielle ; un pays
     // à plusieurs fuseaux demande un choix. La base refuse pareil.
     const fuseauxPossibles = fuseauxDuPays(nouveauPays.code);
-    if (fuseauxPossibles.length === 0) return afficherMessage(`Code pays « ${nouveauPays.code} » inconnu : choisissez le pays dans la liste.`, "erreur");
-    if (!nouveauPays.fuseau || !fuseauxPossibles.includes(nouveauPays.fuseau)) return afficherMessage("Choisissez le fuseau horaire du pays.", "erreur");
+    if (fuseauxPossibles.length === 0) return afficherMessage(t("par.codeInconnu", { code: nouveauPays.code }), "erreur");
+    if (!nouveauPays.fuseau || !fuseauxPossibles.includes(nouveauPays.fuseau)) return afficherMessage(t('par.choisirFuseau'), "erreur");
 
     const champs = {
       nom: nomPaysPropre(nouveauPays.nom),
@@ -216,11 +219,11 @@ export default function ParametresAdmin() {
     if (isEditingPays) {
       const { error } = await supabase.from("pays").update(champs).eq("id", nouveauPays.id).eq("tenant_id", tenantId);
       if (error) afficherMessage(messagePays(error, "la modification"), "erreur");
-      else { afficherMessage("Pays modifié.", "succes"); annulerEditionPays(); chargerDonnees(); }
+      else { afficherMessage(t('par.paysModifie'), "succes"); annulerEditionPays(); chargerDonnees(); }
     } else {
       const { error } = await supabase.from("pays").insert([{ ...champs, tenant_id: tenantId }]);
       if (error) afficherMessage(messagePays(error, "l'ajout"), "erreur");
-      else { afficherMessage("Pays ajouté.", "succes"); setNouveauPays({ id: null, nom: "", code: "", devise: "", fuseau: "" }); chargerDonnees(); }
+      else { afficherMessage(t('par.paysAjoute'), "succes"); setNouveauPays({ id: null, nom: "", code: "", devise: "", fuseau: "" }); chargerDonnees(); }
     }
   }
 
@@ -249,14 +252,14 @@ export default function ParametresAdmin() {
   async function supprimerPays(id, nom) {
     if (!tenantId) return;
     if (!(await confirmer({
-      titre: "Supprimer le pays",
-      message: `Supprimer « ${nom} » ?\n\nSes zones, ses statuts et son entrepôt (s'il est vide) seront supprimés avec lui.`,
-      bouton: "Supprimer", danger: true,
+      titre: t('par.supprimerPays'),
+      message: t('par.supprimerPaysMsg', { nom }),
+      bouton: t('par.supprimer'), danger: true,
     }))) return;
 
     const { data, error } = await supabase.rpc("supprimer_pays", { p_pays: id });
     if (error) return afficherMessage(messageErreur(error), "erreur");
-    afficherMessage(data || `« ${nom} » supprimé.`, "succes");
+    afficherMessage(data || t("par.paysSupprime", { nom }), "succes");
     chargerDonnees();
   }
 
@@ -266,16 +269,16 @@ export default function ParametresAdmin() {
   async function ajouterZone(e) {
     e.preventDefault();
     if (!tenantId) return;
-    if (!nouvelleZone.nom_zone || !nouvelleZone.pays_id) return afficherMessage("Le pays et le nom de la zone sont obligatoires.", "erreur");
+    if (!nouvelleZone.nom_zone || !nouvelleZone.pays_id) return afficherMessage(t('par.zoneChamps'), "erreur");
 
     if (isEditingZone) {
       const { error } = await supabase.from("zones").update({ nom_zone: nouvelleZone.nom_zone.trim(), pays_id: nouvelleZone.pays_id }).eq("id", nouvelleZone.id).eq("tenant_id", tenantId);
-      if (error) afficherMessage("Erreur lors de la modification.", "erreur");
-      else { afficherMessage("Zone modifiée.", "succes"); annulerEditionZone(); chargerDonnees(); }
+      if (error) afficherMessage(t('par.erreurModifCourt'), "erreur");
+      else { afficherMessage(t('par.zoneModifiee'), "succes"); annulerEditionZone(); chargerDonnees(); }
     } else {
       const { error } = await supabase.from("zones").insert([{ nom_zone: nouvelleZone.nom_zone.trim(), pays_id: nouvelleZone.pays_id, tenant_id: tenantId }]);
-      if (error) afficherMessage("Erreur lors de l'ajout.", "erreur");
-      else { afficherMessage("Zone ajoutée.", "succes"); setNouvelleZone({ id: null, nom_zone: "", pays_id: "" }); chargerDonnees(); }
+      if (error) afficherMessage(t('par.erreurAjoutCourt'), "erreur");
+      else { afficherMessage(t('par.zoneAjoutee'), "succes"); setNouvelleZone({ id: null, nom_zone: "", pays_id: "" }); chargerDonnees(); }
     }
   }
 
@@ -283,11 +286,11 @@ export default function ParametresAdmin() {
   function annulerEditionZone() { setNouvelleZone({ id: null, nom_zone: "", pays_id: "" }); setIsEditingZone(false); }
   // 24/11 : fenêtre du CRM, et le résultat est lu (avant, un refus passait pour un succès muet).
   async function supprimerZone(id) {
-    if (!tenantId || !(await confirmer({ titre: "Supprimer la zone", message: "Supprimer cette zone ?", bouton: "Supprimer", danger: true }))) return;
+    if (!tenantId || !(await confirmer({ titre: t('par.supprimerZone'), message: t('par.supprimerZoneMsg'), bouton: t('par.supprimer'), danger: true }))) return;
     const { data, error } = await supabase.from("zones").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
-    if (error) afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
-    else if (!data || data.length === 0) afficherMessage("Suppression refusée.", "erreur");
-    else afficherMessage("Zone supprimée.", "succes");
+    if (error) afficherMessage(t('par.suppressionRefusee', { erreur: messageErreur(error) }), "erreur");
+    else if (!data || data.length === 0) afficherMessage(t('par.suppressionRefuseeCourt'), "erreur");
+    else afficherMessage(t('par.zoneSupprimee'), "succes");
     chargerDonnees();
   }
 
@@ -297,28 +300,28 @@ export default function ParametresAdmin() {
   async function ajouterStatut(e) {
     e.preventDefault();
     if (!tenantId) return;
-    if (!nouveauStatut.nom || !nouveauStatut.pays_id) return afficherMessage("Nom et pays obligatoires.", "erreur");
+    if (!nouveauStatut.nom || !nouveauStatut.pays_id) return afficherMessage(t('par.statutChamps'), "erreur");
 
     if (isEditingStatut) {
       const { error } = await supabase.from("statuts").update({ nom: nouveauStatut.nom.trim(), couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation, ferme_le_lead: nouveauStatut.ferme_le_lead }).eq("id", nouveauStatut.id).eq("tenant_id", tenantId);
-      if (error) afficherMessage("Erreur lors de la modification.", "erreur");
-      else { afficherMessage("Statut modifié.", "succes"); annulerEditionStatut(); chargerDonnees(); }
+      if (error) afficherMessage(t('par.erreurModifCourt'), "erreur");
+      else { afficherMessage(t('par.statutModifie'), "succes"); annulerEditionStatut(); chargerDonnees(); }
     } else {
       const codeGenere = nouveauStatut.nom.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s_]/g, "").replace(/\s+/g, "_");
       const { error } = await supabase.from("statuts").insert([{ nom: nouveauStatut.nom.trim(), code: codeGenere, couleur: nouveauStatut.couleur, pays_id: nouveauStatut.pays_id, tenant_id: tenantId, necessite_rappel: nouveauStatut.necessite_rappel, declenche_assignation: nouveauStatut.declenche_assignation, ferme_le_lead: nouveauStatut.ferme_le_lead }]);
-      if (error) afficherMessage("Erreur : " + messageErreur(error), "erreur");
-      else { afficherMessage("Statut ajouté.", "succes"); setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); chargerDonnees(); }
+      if (error) afficherMessage(t('par.erreur', { erreur: messageErreur(error) }), "erreur");
+      else { afficherMessage(t('par.statutAjoute'), "succes"); setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); chargerDonnees(); }
     }
   }
 
   function preparerModificationStatut(statut) { setNouveauStatut({ id: statut.id, nom: statut.nom || "", couleur: statut.couleur || "#2C3B4D", pays_id: statut.pays_id || "", necessite_rappel: statut.necessite_rappel || false, declenche_assignation: statut.declenche_assignation || false, ferme_le_lead: statut.ferme_le_lead || false }); setIsEditingStatut(true); }
   function annulerEditionStatut() { setNouveauStatut({ id: null, nom: "", couleur: "#2C3B4D", pays_id: "", necessite_rappel: false, declenche_assignation: false, ferme_le_lead: false }); setIsEditingStatut(false); }
   async function supprimerStatut(id) {
-    if (!tenantId || !(await confirmer({ titre: "Supprimer le statut", message: "Supprimer ce statut ?", bouton: "Supprimer", danger: true }))) return;
+    if (!tenantId || !(await confirmer({ titre: t('par.supprimerStatut'), message: t('par.supprimerStatutMsg'), bouton: t('par.supprimer'), danger: true }))) return;
     const { data, error } = await supabase.from("statuts").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
-    if (error) afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
-    else if (!data || data.length === 0) afficherMessage("Suppression refusée.", "erreur");
-    else afficherMessage("Statut supprimé.", "succes");
+    if (error) afficherMessage(t('par.suppressionRefusee', { erreur: messageErreur(error) }), "erreur");
+    else if (!data || data.length === 0) afficherMessage(t('par.suppressionRefuseeCourt'), "erreur");
+    else afficherMessage(t('par.statutSupprime'), "succes");
     chargerDonnees();
   }
 
@@ -330,17 +333,17 @@ export default function ParametresAdmin() {
   // supprimer un fichier, et une fois le produit parti plus personne n'a le
   // droit de toucher au sien. Sans ça, ce bouton serait la source d'orphelins.
   async function supprimerProduit(pr) {
-    if (!tenantId || !(await confirmer({ titre: "Supprimer le produit", message: "Supprimer ce produit ?\n\nSes mouvements de stock et ses lignes d'expédition restent, avec son nom. Ses lignes de stock disparaissent.", bouton: "Supprimer", danger: true }))) return;
+    if (!tenantId || !(await confirmer({ titre: t('par.supprimerProduit'), message: t('par.supprimerProduitMsg'), bouton: t('par.supprimer'), danger: true }))) return;
     if (pr.image_chemin) {
       const err = await retirerImage(pr.image_chemin);
-      if (err) return afficherMessage("Suppression annulée : l'image n'a pas pu être retirée (" + err + ").", "erreur");
+      if (err) return afficherMessage(t('par.supprAnnulee', { erreur: err }), "erreur");
     }
     const { error } = await supabase.from("produits").delete().eq("id", pr.id).eq("tenant_id", tenantId);
     if (error) {
       // Le fichier est déjà parti : le produit ne doit plus le désigner.
       if (pr.image_chemin) await supabase.from("produits").update({ image_chemin: null }).eq("id", pr.id).eq("tenant_id", tenantId);
-      afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
-    } else afficherMessage("Produit supprimé.", "succes");
+      afficherMessage(t('par.suppressionRefusee', { erreur: messageErreur(error) }), "erreur");
+    } else afficherMessage(t('par.produitSupprimeMsg'), "succes");
     chargerDonnees();
   }
 
@@ -356,7 +359,7 @@ export default function ParametresAdmin() {
     // vendeur qui n'en choisit qu'un (le pays) laissait la question « lequel a
     // reçu ? » sans réponse — à l'import comme à la réception d'une
     // expédition. Un pays, un dépôt : la question ne se pose plus.
-    if (!nouvelEntrepot.pays_id) return afficherMessage("Choisissez le pays de l'entrepôt.", "erreur");
+    if (!nouvelEntrepot.pays_id) return afficherMessage(t('par.choisirPaysEntrepot'), "erreur");
 
     const pays = listePays.find((p) => p.id === nouvelEntrepot.pays_id);
     const { error } = await supabase.from("entrepots").insert([{
@@ -370,12 +373,12 @@ export default function ParametresAdmin() {
       // 23505 = l'index unique (tenant_id, pays_id). C'est lui qui parle.
       afficherMessage(
         error.code === "23505"
-          ? `Il y a déjà un entrepôt pour ${pays?.nom || "ce pays"}.`
-          : "Erreur lors de l'ajout de l'entrepôt : " + messageErreur(error),
+          ? t("par.dejaEntrepot", { pays: pays?.nom || t("par.cePays") })
+          : t('par.erreurEntrepot', { erreur: messageErreur(error) }),
         "erreur",
       );
     } else {
-      afficherMessage("Entrepôt ajouté avec succès.", "succes");
+      afficherMessage(t('par.entrepotAjoute'), "succes");
       setNouvelEntrepot({ ville: "", pays_id: "" });
       chargerDonnees();
     }
@@ -396,19 +399,19 @@ export default function ParametresAdmin() {
     // Un entrepôt avec un historique de mouvements ne se supprime pas (11/11, T22 :
     // supprimer effaçait tout son historique — la base refuse aussi, stock_portes.sql).
     if (nbMouvements) {
-      return afficherMessage(`L'entrepôt « ${entrepot.nom} » a ${nbMouvements} mouvement(s) de stock (son historique) : il ne se supprime pas.`, "erreur");
+      return afficherMessage(t("par.entrepotHistorique", { nom: entrepot.nom, n: nbMouvements }), "erreur");
     }
 
     const emporte = [];
-    if (nbStocks) emporte.push(`${nbStocks} ligne(s) de stock`);
-    if (nbMouvements) emporte.push(`${nbMouvements} mouvement(s)`);
+    if (nbStocks) emporte.push(t("par.lignesStock", { n: nbStocks }));
+    if (nbMouvements) emporte.push(t("par.mouvements", { n: nbMouvements }));
 
-    if (!(await confirmer({ titre: "Supprimer l'entrepôt", bouton: "Supprimer", danger: true, message:
-      `Supprimer l'entrepôt « ${entrepot.nom} » ?\n\n` +
+    if (!(await confirmer({ titre: t('par.supprimerEntrepot'), bouton: t('par.supprimer'), danger: true, message:
+      t("par.supprimerEntrepotMsg", { nom: entrepot.nom }) + "\n\n" +
       (emporte.length
-        ? `Seront supprimés avec lui : ${emporte.join(" et ")}. Les quantités qu'il contenait ne seront plus comptées nulle part.\n\n`
+        ? t("par.emporte", { liste: emporte.join(t("par.et")) }) + "\n\n"
         : "") +
-      "Les commandes et expéditions déjà enregistrées sont conservées ; elles perdront seulement le lien vers lui."
+      t('par.conservees')
     }))) return;
 
     // Dans cet ordre : les mouvements, puis les stocks, puis l'entrepôt.
@@ -416,17 +419,17 @@ export default function ParametresAdmin() {
     if (nbMouvements) {
       const { error } = await supabase.from("mouvements_stock").delete()
         .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId);
-      if (error) return afficherMessage("Suppression des mouvements refusée : " + messageErreur(error), "erreur");
+      if (error) return afficherMessage(t('par.suppMouvRefusee', { erreur: messageErreur(error) }), "erreur");
     }
     if (nbStocks) {
       const { error } = await supabase.from("stocks").delete()
         .eq("entrepot_id", entrepot.id).eq("tenant_id", tenantId);
-      if (error) return afficherMessage("Suppression du stock refusée : " + messageErreur(error), "erreur");
+      if (error) return afficherMessage(t('par.suppStockRefusee', { erreur: messageErreur(error) }), "erreur");
     }
     const { error } = await supabase.from("entrepots").delete()
       .eq("id", entrepot.id).eq("tenant_id", tenantId);
-    if (error) afficherMessage("Suppression refusée : " + messageErreur(error), "erreur");
-    else { afficherMessage("Entrepôt supprimé.", "succes"); chargerDonnees(); }
+    if (error) afficherMessage(t('par.suppressionRefusee', { erreur: messageErreur(error) }), "erreur");
+    else { afficherMessage(t('par.entrepotSupprime'), "succes"); chargerDonnees(); }
   }
 
   // Corriger le pays d'un entrepôt existant, directement dans la liste.
@@ -444,17 +447,17 @@ export default function ParametresAdmin() {
     if (error) {
       afficherMessage(
         error.code === "23505"
-          ? `Il y a déjà un entrepôt pour ${pays?.nom || "ce pays"}.`
-          : "Erreur : " + messageErreur(error),
+          ? t("par.dejaEntrepot", { pays: pays?.nom || t("par.cePays") })
+          : t('par.erreur', { erreur: messageErreur(error) }),
         "erreur",
       );
-    } else { afficherMessage("Pays de l'entrepôt enregistré.", "succes"); chargerDonnees(); }
+    } else { afficherMessage(t('par.paysEntrepotEnregistre'), "succes"); chargerDonnees(); }
   }
 
   async function ajouterMouvement(e) {
     e.preventDefault();
     if (!tenantId) return;
-    if (!nouveauMouvement.produit_id || !nouveauMouvement.entrepot_id) return afficherMessage("Produit et entrepôt obligatoires.", "erreur");
+    if (!nouveauMouvement.produit_id || !nouveauMouvement.entrepot_id) return afficherMessage(t('par.mouvChamps'), "erreur");
 
     const { error } = await supabase.from("mouvements_stock").insert([{
       ...nouveauMouvement,
@@ -462,9 +465,9 @@ export default function ParametresAdmin() {
       tenant_id: tenantId
     }]);
 
-    if (error) afficherMessage("Erreur : " + messageErreur(error), "erreur");
+    if (error) afficherMessage(t('par.erreur', { erreur: messageErreur(error) }), "erreur");
     else {
-      afficherMessage("Mouvement enregistré ! L'inventaire a été mis à jour.", "succes");
+      afficherMessage(t('par.mouvEnregistre'), "succes");
       setNouveauMouvement({ produit_id: "", entrepot_id: "", type_mouvement: "entree", quantite: 1, notes: "" });
       chargerDonnees();
     }
@@ -481,43 +484,43 @@ export default function ParametresAdmin() {
   async function ajouterTarif(e) {
     e.preventDefault();
     if (!tenantId || !peutModifierFrais) return;
-    const t = nouveauTarif;
-    if (!t.pays_id) return afficherMessage("Choisissez un pays.", "erreur");
-    const montants = [t.frais_commande, t.frais_livraison, t.frais_upsell_unite].map((x) => Number(x || 0));
-    if (montants.some((x) => !Number.isFinite(x) || x < 0)) return afficherMessage("Montants invalides.", "erreur");
+    const tarif = nouveauTarif;
+    if (!tarif.pays_id) return afficherMessage(t('par.choisirPays'), "erreur");
+    const montants = [tarif.frais_commande, tarif.frais_livraison, tarif.frais_upsell_unite].map((x) => Number(x || 0));
+    if (montants.some((x) => !Number.isFinite(x) || x < 0)) return afficherMessage(t('par.montantsInvalides'), "erreur");
     // Frais de transfert (retenues_releve.sql, 09/11) : un %, 0 = aucun.
-    const pct = Number(t.frais_transfert_pct || 0);
-    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return afficherMessage("Frais de transfert : un pourcentage entre 0 et 100.", "erreur");
+    const pct = Number(tarif.frais_transfert_pct || 0);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return afficherMessage(t('par.transfertInvalide'), "erreur");
     const ligne = {
-      tenant_id: tenantId, pays_id: t.pays_id, vendeur_id: t.vendeur_id || null,
+      tenant_id: tenantId, pays_id: tarif.pays_id, vendeur_id: tarif.vendeur_id || null,
       frais_commande: montants[0], frais_livraison: montants[1], frais_upsell_unite: montants[2],
       frais_transfert_pct: pct,
     };
-    if (t.valide_depuis) ligne.valide_depuis = t.valide_depuis;
+    if (tarif.valide_depuis) ligne.valide_depuis = tarif.valide_depuis;
     const { error } = await supabase.from("tarifs_vendeurs").insert([ligne]);
     if (error) {
-      afficherMessage(error.code === "23505" ? "Une ligne existe déjà pour ce pays, ce vendeur et cette date." : "Erreur : " + messageErreur(error), "erreur");
+      afficherMessage(error.code === "23505" ? t('par.ligneExiste') : t('par.erreur', { erreur: messageErreur(error) }), "erreur");
       return;
     }
-    afficherMessage("Frais enregistrés.", "succes");
+    afficherMessage(t('par.fraisEnregistres'), "succes");
     setNouveauTarif(TARIF_VIDE);
     chargerDonnees();
   }
 
   async function supprimerTarif(id) {
     if (!tenantId || !peutModifierFrais) return;
-    if (!(await confirmer({ titre: "Supprimer les frais", message: "Supprimer cette ligne de frais ? Les relevés déjà établis ne changent pas.", bouton: "Supprimer", danger: true }))) return;
+    if (!(await confirmer({ titre: t('par.supprimerFrais'), message: t('par.supprimerFraisMsg'), bouton: t('par.supprimer'), danger: true }))) return;
     const { data, error } = await supabase.from("tarifs_vendeurs").delete().eq("id", id).eq("tenant_id", tenantId).select("id");
-    if (error) return afficherMessage("Erreur : " + messageErreur(error), "erreur");
-    if (!data || data.length === 0) return afficherMessage("Suppression refusée.", "erreur");
-    afficherMessage("Ligne supprimée.", "succes");
+    if (error) return afficherMessage(t('par.erreur', { erreur: messageErreur(error) }), "erreur");
+    if (!data || data.length === 0) return afficherMessage(t('par.suppressionRefuseeCourt'), "erreur");
+    afficherMessage(t('par.ligneSupprimee'), "succes");
     chargerDonnees();
   }
 
   const nomVendeurTarif = (id) => {
-    if (!id) return "Tous les vendeurs";
+    if (!id) return t('par.tousVendeurs');
     const v = listeVendeurs.find((x) => x.user_id === id);
-    return v ? (v.nom || v.email) : "Vendeur supprimé";
+    return v ? (v.nom || v.email) : t('par.vendeurSupprime');
   };
 
   // --- ICÔNES DES ONGLETS ---
@@ -586,7 +589,7 @@ export default function ParametresAdmin() {
 
   // --- ÉCRAN DE CHARGEMENT ---
   if (authLoading || permsLoading || !hasPermission("menu_parametres")) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>;
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('par.verif')}</div>;
   }
 
   // Page vide pour qui ne configure pas. Vide pour de vrai : aucun onglet, et
@@ -596,14 +599,13 @@ export default function ParametresAdmin() {
     return (
       <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pb-10 pt-4 sm:pt-16 px-4 sm:px-6">
         <header className="border-b border-[#C9C1B1]/50 pb-4">
-          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">Administration</p>
-          <h1 className="text-3xl font-bold text-[#1B2632]">Paramètres</h1>
+          <p className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest mb-1">{t('par.administration')}</p>
+          <h1 className="text-3xl font-bold text-[#1B2632]">{t('par.titre')}</h1>
         </header>
         <div className="bg-white border border-[#C9C1B1] rounded-2xl px-8 py-16 text-center">
-          <p className="text-sm font-semibold text-[#1B2632]">Rien à régler ici pour le moment.</p>
+          <p className="text-sm font-semibold text-[#1B2632]">{t('par.rienARegler')}</p>
           <p className="text-sm text-[#1B2632]/60 mt-2 max-w-md mx-auto">
-            Les pays, zones, statuts et entrepôts sont les réglages de l&apos;entreprise.
-            Ils sont tenus par le manager et l&apos;administrateur.
+            {t("par.reglagesAide")}
           </p>
         </div>
       </div>
@@ -617,21 +619,21 @@ export default function ParametresAdmin() {
       <header className="flex flex-col gap-4 border-b border-[#C9C1B1]/50 pb-4">
         {/* En-tête compact (20/11) ; onglets courts qui tiennent sur une ligne.
             « Catalogue Produits » retiré : tout se fait dans le menu Produits. */}
-        <h1 className="text-2xl font-bold text-[#1B2632]">Paramètres</h1>
+        <h1 className="text-2xl font-bold text-[#1B2632]">{t('par.titre')}</h1>
 
         <div className="flex flex-wrap gap-2">
-          <TabButton id="pays" label="Pays & devises" />
-          <TabButton id="zones" label="Zones" />
-          <TabButton id="statuts" label="Statuts" />
-          {peutGererEntrepots && <TabButton id="entrepots" label="Entrepôts" />}
-          <TabButton id="stocks" label="Mouvements de stock" />
-          <TabButton id="frais" label="Frais vendeurs" />
+          <TabButton id="pays" label={t("par.onglet.pays")} />
+          <TabButton id="zones" label={t("par.onglet.zones")} />
+          <TabButton id="statuts" label={t("par.onglet.statuts")} />
+          {peutGererEntrepots && <TabButton id="entrepots" label={t("par.onglet.entrepots")} />}
+          <TabButton id="stocks" label={t("par.onglet.stocks")} />
+          <TabButton id="frais" label={t("par.onglet.frais")} />
         </div>
       </header>
 
       {!peutModifier && (
         <div className="px-5 py-3 rounded-xl bg-[#FFB162]/10 border border-[#FFB162]/40 text-sm text-[#8a5a1f] font-medium">
-          Lecture seule : vous voyez la configuration de l&apos;entreprise, vous ne la modifiez pas.
+          {t('par.lectureSeule')}
         </div>
       )}
 
@@ -651,53 +653,53 @@ export default function ParametresAdmin() {
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">
-                  {isEditingPays ? "Modifier le pays" : "Gestion des pays d'opération"}
+                  {isEditingPays ? t('par.modifierPays') : t('par.gestionPays')}
                 </h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Configurez les pays et leurs devises respectives.</p>
+                <p className="text-sm text-[#1B2632]/60 mt-1">{t('par.paysAide')}</p>
               </div>
 
               <form onSubmit={ajouterPays} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 {/* 13/11 : le pays se CHOISIT dans la liste (nom et code ISO justes) ;
                     le fuseau horaire en découle (base officielle, lib/fuseauxPays.mjs). */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.pays')}</label>
                   <select value={PAYS_MONDE.some((m) => m.code === nouveauPays.code) ? nouveauPays.code : ""} onChange={(e) => choisirPaysMonde(e.target.value)} className="fg-input cursor-pointer" required>
                     <option value="">{nouveauPays.nom && !PAYS_MONDE.some((m) => m.code === nouveauPays.code) ? `${nouveauPays.nom} (hors liste) — choisir…` : "Choisir un pays…"}</option>
                     {PAYS_MONDE.map((m) => (<option key={m.code} value={m.code}>{m.nom}</option>))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Code ISO</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.codeIso')}</label>
                   <input type="text" value={nouveauPays.code} readOnly className="fg-input bg-[#EEE9DF]/40" placeholder="auto" />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Fuseau horaire</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.fuseau')}</label>
                   {(() => {
                     const f = fuseauxDuPays(nouveauPays.code);
-                    if (!nouveauPays.code) return <input type="text" readOnly className="fg-input bg-[#EEE9DF]/40" placeholder="choisissez le pays" />;
-                    if (f.length === 0) return <p className="text-xs text-[#A35139] py-2">Code inconnu : choisissez le pays dans la liste.</p>;
+                    if (!nouveauPays.code) return <input type="text" readOnly className="fg-input bg-[#EEE9DF]/40" placeholder={t('par.choisissezPays')} />;
+                    if (f.length === 0) return <p className="text-xs text-[#A35139] py-2">{t('par.codeInconnuCourt')}</p>;
                     if (f.length === 1) return (
                       <input type="text" readOnly className="fg-input bg-[#EEE9DF]/40" value={`${nomFuseau(f[0])} · ${decalageUTC(f[0])} · ${heureLocale(f[0])}`} />
                     );
                     return (
                       <select value={nouveauPays.fuseau} onChange={(e) => setNouveauPays({ ...nouveauPays, fuseau: e.target.value })} className="fg-input cursor-pointer" required>
-                        <option value="">Plusieurs fuseaux : choisir…</option>
+                        <option value="">{t('par.plusieursFuseaux')}</option>
                         {f.map((z) => (<option key={z} value={z}>{nomFuseau(z)} · {decalageUTC(z)} · {heureLocale(z)}</option>))}
                       </select>
                     );
                   })()}
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Devise</label>
-                  <input type="text" placeholder="ex: AOA" maxLength={3} value={nouveauPays.devise} onChange={(e) => setNouveauPays({...nouveauPays, devise: e.target.value})} className="fg-input" required />
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.devise')}</label>
+                  <input type="text" placeholder={t('par.exDevise')} maxLength={3} value={nouveauPays.devise} onChange={(e) => setNouveauPays({...nouveauPays, devise: e.target.value})} className="fg-input" required />
                 </div>
                 <div className="flex gap-2">
                   <button type="submit" className="fg-btn-primary w-full">
-                    {isEditingPays ? "Mettre à jour" : "Ajouter le pays"}
+                    {isEditingPays ? t('par.mettreAJour') : t('par.ajouterPays')}
                   </button>
                   {isEditingPays && (
                     <button type="button" onClick={annulerEditionPays} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
-                      Annuler
+                      {t('par.annuler')}
                     </button>
                   )}
                 </div>
@@ -707,18 +709,18 @@ export default function ParametresAdmin() {
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
-                      <th>Pays</th>
-                      <th>Code ISO</th>
-                      <th>Devise</th>
-                      <th>Fuseau horaire</th>
-                      <th className="text-right">Actions</th>
+                      <th>{t('par.pays')}</th>
+                      <th>{t('par.codeIso')}</th>
+                      <th>{t('par.devise')}</th>
+                      <th>{t('par.fuseau')}</th>
+                      <th className="text-right">{t('par.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chargement ? (
-                      <tr><td colSpan="5" className="text-center py-6">Chargement...</td></tr>
+                      <tr><td colSpan="5" className="text-center py-6">{t('par.chargement')}</td></tr>
                     ) : listePays.length === 0 ? (
-                      <tr><td colSpan="5" className="text-center py-6 text-gray-400">Aucun pays configuré.</td></tr>
+                      <tr><td colSpan="5" className="text-center py-6 text-gray-400">{t('par.aucunPays')}</td></tr>
                     ) : (
                       listePays.map((p) => (
                         <tr key={p.id} className="hover:bg-[#EEE9DF]/20">
@@ -729,13 +731,13 @@ export default function ParametresAdmin() {
                             {p.fuseau ? (
                               <span title={p.fuseau}>{nomFuseau(p.fuseau)} · {decalageUTC(p.fuseau)} · <span className="font-semibold">{heureLocale(p.fuseau)}</span></span>
                             ) : <span className="text-[#A35139]">—</span>}
-                            {p.fuseau === "UTC" && !fuseauxDuPays(p.code).length && <span className="block text-[#A35139]">code inconnu : vérifiez le pays</span>}
+                            {p.fuseau === "UTC" && !fuseauxDuPays(p.code).length && <span className="block text-[#A35139]">{t('par.codeInconnuMin')}</span>}
                           </td>
                           <td className="text-right flex items-center justify-end gap-2">
                             <button onClick={() => preparerModificationPays(p)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
-                              Modifier
+                              {t('par.modifier')}
                             </button>
-                            <button onClick={() => supprimerPays(p.id, p.nom)} className="fg-btn-danger">Supprimer</button>
+                            <button onClick={() => supprimerPays(p.id, p.nom)} className="fg-btn-danger">{t('par.supprimer')}</button>
                           </td>
                         </tr>
                       ))
@@ -753,30 +755,30 @@ export default function ParametresAdmin() {
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">
-                  {isEditingZone ? "Modifier la zone de livraison" : "Zones de livraison"}
+                  {isEditingZone ? t('par.modifierZone') : t('par.zonesLivraison')}
                 </h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Chaque zone appartient à un pays. Le livreur d&apos;une zone reçoit les commandes de cette ville.</p>
+                <p className="text-sm text-[#1B2632]/60 mt-1">{t('par.zonesAide')}</p>
               </div>
 
               <form onSubmit={ajouterZone} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.paysRattache')}</label>
                   <select value={nouvelleZone.pays_id} onChange={(e) => setNouvelleZone({...nouvelleZone, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
-                    <option value="">Sélectionner un pays</option>
+                    <option value="">{t('par.selectPays')}</option>
                     {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom de la zone</label>
-                  <input type="text" placeholder="ex: Province Sud" value={nouvelleZone.nom_zone} onChange={(e) => setNouvelleZone({...nouvelleZone, nom_zone: e.target.value})} className="fg-input" required />
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.nomZone')}</label>
+                  <input type="text" placeholder={t('par.exZone')} value={nouvelleZone.nom_zone} onChange={(e) => setNouvelleZone({...nouvelleZone, nom_zone: e.target.value})} className="fg-input" required />
                 </div>
                 <div className="flex gap-2">
                   <button type="submit" className="fg-btn-primary w-full">
-                    {isEditingZone ? "Mettre à jour" : "Ajouter la zone"}
+                    {isEditingZone ? t('par.mettreAJour') : t('par.ajouterZone')}
                   </button>
                   {isEditingZone && (
                     <button type="button" onClick={annulerEditionZone} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
-                      Annuler
+                      {t('par.annuler')}
                     </button>
                   )}
                 </div>
@@ -786,16 +788,16 @@ export default function ParametresAdmin() {
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
-                      <th>Zone</th>
-                      <th>Pays</th>
-                      <th className="text-right">Actions</th>
+                      <th>{t('par.zone')}</th>
+                      <th>{t('par.pays')}</th>
+                      <th className="text-right">{t('par.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chargement ? (
-                      <tr><td colSpan="3" className="text-center py-6">Chargement...</td></tr>
+                      <tr><td colSpan="3" className="text-center py-6">{t('par.chargement')}</td></tr>
                     ) : listeZones.length === 0 ? (
-                      <tr><td colSpan="3" className="text-center py-6 text-gray-400">Aucune zone configurée.</td></tr>
+                      <tr><td colSpan="3" className="text-center py-6 text-gray-400">{t('par.aucuneZone')}</td></tr>
                     ) : (
                       listeZones.map((z) => (
                         <tr key={z.id} className="hover:bg-[#EEE9DF]/20">
@@ -803,9 +805,9 @@ export default function ParametresAdmin() {
                           <td>{z.pays?.nom ? <span className="fg-badge">{z.pays.nom}</span> : <span className="text-xs text-[#1B2632]/50">—</span>}</td>
                           <td className="text-right flex items-center justify-end gap-2">
                             <button onClick={() => preparerModificationZone(z)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">
-                              Modifier
+                              {t('par.modifier')}
                             </button>
-                            <button onClick={() => supprimerZone(z.id)} className="fg-btn-danger">Supprimer</button>
+                            <button onClick={() => supprimerZone(z.id)} className="fg-btn-danger">{t('par.supprimer')}</button>
                           </td>
                         </tr>
                       ))
@@ -824,35 +826,35 @@ export default function ParametresAdmin() {
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
                 <h2 className="text-xl font-bold text-[#1B2632]">
-                  {isEditingStatut ? "Modifier le statut d'appel" : "Statuts d'appels configurables"}
+                  {isEditingStatut ? t('par.modifierStatut') : t('par.statutsAppels')}
                 </h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Gérez les différents états de qualification des appels rattachés à chaque pays.</p>
+                <p className="text-sm text-[#1B2632]/60 mt-1">{t('par.statutsAide')}</p>
               </div>
 
               <form onSubmit={ajouterStatut} className="flex flex-col gap-4 mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays rattaché</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.paysRattache')}</label>
                     <select value={nouveauStatut.pays_id} onChange={(e) => setNouveauStatut({...nouveauStatut, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
-                      <option value="">Sélectionner un pays</option>
+                      <option value="">{t('par.selectPays')}</option>
                       {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                     </select>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nom du statut</label>
-                    <input type="text" placeholder="ex: Confirmé" value={nouveauStatut.nom} onChange={(e) => setNouveauStatut({...nouveauStatut, nom: e.target.value})} className="fg-input" required />
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.nomStatut')}</label>
+                    <input type="text" placeholder={t('par.exStatut')} value={nouveauStatut.nom} onChange={(e) => setNouveauStatut({...nouveauStatut, nom: e.target.value})} className="fg-input" required />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Couleur du badge</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.couleurBadge')}</label>
                     <input type="color" value={nouveauStatut.couleur} onChange={(e) => setNouveauStatut({...nouveauStatut, couleur: e.target.value})} className="w-full h-[42px] border border-[#C9C1B1] rounded-xl cursor-pointer bg-white p-1" />
                   </div>
                   <div className="flex gap-2">
                     <button type="submit" className="fg-btn-primary w-full">
-                      {isEditingStatut ? "Mettre à jour" : "Ajouter le statut"}
+                      {isEditingStatut ? t('par.mettreAJour') : t('par.ajouterStatut')}
                     </button>
                     {isEditingStatut && (
                       <button type="button" onClick={annulerEditionStatut} className="px-4 py-2 border border-[#C9C1B1] rounded-xl text-xs font-bold bg-white text-[#1B2632] hover:bg-gray-100 cursor-pointer">
-                        Annuler
+                        {t('par.annuler')}
                       </button>
                     )}
                   </div>
@@ -862,25 +864,23 @@ export default function ParametresAdmin() {
                   <label className="flex items-start gap-2.5 cursor-pointer max-w-sm">
                     <input type="checkbox" checked={nouveauStatut.necessite_rappel} onChange={(e) => setNouveauStatut({...nouveauStatut, necessite_rappel: e.target.checked})} className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer" />
                     <span>
-                      <span className="block text-sm font-bold text-[#1B2632]">Nécessite une date de rappel</span>
-                      <span className="block text-xs text-[#1B2632]/60">Affiche le champ date/heure dans le Centre d'appel.</span>
+                      <span className="block text-sm font-bold text-[#1B2632]">{t('par.necessiteRappel')}</span>
+                      <span className="block text-xs text-[#1B2632]/60">{t('par.necessiteRappelAide')}</span>
                     </span>
                   </label>
                   <label className="flex items-start gap-2.5 cursor-pointer max-w-sm">
                     <input type="checkbox" checked={nouveauStatut.declenche_assignation} onChange={(e) => setNouveauStatut({...nouveauStatut, declenche_assignation: e.target.checked})} className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer" />
                     <span>
-                      <span className="block text-sm font-bold text-[#1B2632]">Déclenche l'assignation livreur</span>
-                      <span className="block text-xs text-[#1B2632]/60">La commande ira en assignation logistique.</span>
+                      <span className="block text-sm font-bold text-[#1B2632]">{t('par.declencheAssign')}</span>
+                      <span className="block text-xs text-[#1B2632]/60">{t('par.declencheAssignAide')}</span>
                     </span>
                   </label>
                   <label className="flex items-start gap-2.5 cursor-pointer max-w-sm">
                     <input type="checkbox" checked={nouveauStatut.ferme_le_lead} onChange={(e) => setNouveauStatut({...nouveauStatut, ferme_le_lead: e.target.checked})} className="mt-0.5 w-4 h-4 accent-[#1B2632] cursor-pointer" />
                     <span>
-                      <span className="block text-sm font-bold text-[#1B2632]">Termine le travail de l&apos;agent</span>
+                      <span className="block text-sm font-bold text-[#1B2632]">{t('par.termine')}</span>
                       <span className="block text-xs text-[#1B2632]/60">
-                        Confirmé, annulé, refusé. Décoché (« ne répond pas », « hors ligne »,
-                        « à rappeler »), le lead RESTE dans « À traiter » chez son agent jusqu&apos;à
-                        ce qu&apos;il conclue.
+                        {t("par.termineAide")}
                       </span>
                     </span>
                   </label>
@@ -891,20 +891,20 @@ export default function ParametresAdmin() {
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
-                      <th>Statut</th>
-                      <th>Code</th>
-                      <th>Pays</th>
-                      <th>Badge</th>
-                      <th className="text-center">Rappel</th>
-                      <th className="text-center">Assignation</th>
-                      <th className="text-right">Actions</th>
+                      <th>{t('par.statut')}</th>
+                      <th>{t('par.code')}</th>
+                      <th>{t('par.pays')}</th>
+                      <th>{t('par.badge')}</th>
+                      <th className="text-center">{t('par.rappel')}</th>
+                      <th className="text-center">{t('par.assignation')}</th>
+                      <th className="text-right">{t('par.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {chargement ? (
-                      <tr><td colSpan="7" className="text-center py-6">Chargement...</td></tr>
+                      <tr><td colSpan="7" className="text-center py-6">{t('par.chargement')}</td></tr>
                     ) : listeStatuts.length === 0 ? (
-                      <tr><td colSpan="7" className="text-center py-6 text-gray-400">Aucun statut configuré.</td></tr>
+                      <tr><td colSpan="7" className="text-center py-6 text-gray-400">{t('par.aucunStatut')}</td></tr>
                     ) : (
                       listeStatuts.map((s) => (
                         <tr key={s.id} className="hover:bg-[#EEE9DF]/20">
@@ -917,7 +917,7 @@ export default function ParametresAdmin() {
                             )}
                           </td>
                           <td><span className="font-mono text-xs text-[#1B2632]/50">{s.code}</span></td>
-                          <td>{s.pays?.nom ? <span className="fg-badge">{s.pays.nom}</span> : <span className="text-xs text-[#1B2632]/50">Tous les pays</span>}</td>
+                          <td>{s.pays?.nom ? <span className="fg-badge">{s.pays.nom}</span> : <span className="text-xs text-[#1B2632]/50">{t('par.tousPays')}</span>}</td>
                           {/* Badge lisible (20/11) : couleur au point et au fond, texte foncé. */}
                           <td>
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] whitespace-nowrap"
@@ -929,8 +929,8 @@ export default function ParametresAdmin() {
                           <td className="text-center">{s.necessite_rappel ? <span className="text-[#FFB162] font-bold">●</span> : "—"}</td>
                           <td className="text-center">{s.declenche_assignation ? <span className="text-[#2C3B4D] font-bold">●</span> : "—"}</td>
                           <td className="text-right flex items-center justify-end gap-2">
-                            <button onClick={() => preparerModificationStatut(s)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">Modifier</button>
-                            <button onClick={() => supprimerStatut(s.id)} className="fg-btn-danger">Supprimer</button>
+                            <button onClick={() => preparerModificationStatut(s)} className="px-3 py-1 bg-white border border-[#C9C1B1] rounded-lg text-xs font-bold text-[#1B2632] hover:bg-gray-50 cursor-pointer">{t('par.modifier')}</button>
+                            <button onClick={() => supprimerStatut(s.id)} className="fg-btn-danger">{t('par.supprimer')}</button>
                           </td>
                         </tr>
                       ))
@@ -947,11 +947,9 @@ export default function ParametresAdmin() {
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Gestion des Entrepôts</h2>
+                <h2 className="text-xl font-bold text-[#1B2632]">{t('par.gestionEntrepots')}</h2>
                 <p className="text-sm text-[#1B2632]/60 mt-1">
-                  Un entrepôt <b>est</b> un pays : un seul par pays. C&apos;est lui qui décide quel
-                  agent reçoit les leads à l&apos;import, et c&apos;est là qu&apos;entre la
-                  marchandise quand une expédition est réceptionnée.
+                  {t("par.entrepotAide")}
                 </p>
               </div>
 
@@ -959,24 +957,23 @@ export default function ParametresAdmin() {
               <>
               <form onSubmit={ajouterEntrepot} className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.pays')}</label>
                   {/* Les pays qui ont déjà un dépôt ne sont pas proposés : la base
                       les refuserait, autant ne pas les offrir. */}
                   <select value={nouvelEntrepot.pays_id} onChange={(e) => setNouvelEntrepot({...nouvelEntrepot, pays_id: e.target.value})} className="fg-input cursor-pointer" required>
-                    <option value="">Choisir...</option>
+                    <option value="">{t('par.choisir')}</option>
                     {listePays
                       .filter((p) => !listeEntrepots.some((en) => en.pays_id === p.id))
                       .map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                   </select>
                 </div>
                 <div>
-                  <button type="submit" className="fg-btn-primary w-full">Ajouter l&apos;entrepôt</button>
+                  <button type="submit" className="fg-btn-primary w-full">{t('par.ajouterEntrepot')}</button>
                 </div>
               </form>
               {listePays.length > 0 && listePays.every((p) => listeEntrepots.some((en) => en.pays_id === p.id)) && (
                 <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">
-                  Tous vos pays ont déjà leur entrepôt. Ajoutez un pays dans l&apos;onglet
-                  « Pays &amp; Devises » pour en créer un autre.
+                  {t("par.tousPaysEntrepot")}
                 </p>
               )}
               </>
@@ -985,10 +982,10 @@ export default function ParametresAdmin() {
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
-                    <tr><th>Entrepôt</th><th>Pays</th><th className="text-center">Statut</th>{peutGererEntrepots && <th className="text-right">Actions</th>}</tr>
+                    <tr><th>{t('par.entrepot')}</th><th>{t('par.pays')}</th><th className="text-center">{t('par.statut')}</th>{peutGererEntrepots && <th className="text-right">{t('par.actions')}</th>}</tr>
                   </thead>
                   <tbody>
-                    {listeEntrepots.length === 0 && <tr><td colSpan={peutGererEntrepots ? 4 : 3} className="text-center py-6 text-gray-400">Aucun entrepôt.</td></tr>}
+                    {listeEntrepots.length === 0 && <tr><td colSpan={peutGererEntrepots ? 4 : 3} className="text-center py-6 text-gray-400">{t('par.aucunEntrepot')}</td></tr>}
                     {listeEntrepots.map((e) => (
                       <tr key={e.id} className="hover:bg-[#EEE9DF]/20">
                         <td className="font-bold text-[#1B2632]">{e.nom}</td>
@@ -996,19 +993,19 @@ export default function ParametresAdmin() {
                           {peutGererEntrepots ? (
                             <select value={e.pays_id || ""} onChange={(ev) => changerPaysEntrepot(e.id, ev.target.value)}
                               className={`fg-input cursor-pointer !py-1.5 !text-sm ${e.pays_id ? '' : 'border-[#A35139] text-[#A35139]'}`}>
-                              <option value="">Non renseigné</option>
+                              <option value="">{t('par.nonRenseigne')}</option>
                               {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                             </select>
                           ) : (
                             <span className="text-gray-600">{listePays.find((p) => p.id === e.pays_id)?.nom || '-'}</span>
                           )}
                         </td>
-                        <td className="text-center"><span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] bg-[#2E7D53]/15 border-[#2E7D53]/40"><span className="w-2 h-2 rounded-full bg-[#2E7D53]" />Actif</span></td>
+                        <td className="text-center"><span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold text-[#1B2632] bg-[#2E7D53]/15 border-[#2E7D53]/40"><span className="w-2 h-2 rounded-full bg-[#2E7D53]" />{t('par.actif')}</span></td>
                         {peutGererEntrepots && (
                           <td className="text-right">
                             <button onClick={() => supprimerEntrepot(e)}
                               className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#A35139]/40 bg-white text-[#A35139] hover:bg-[#A35139]/10 transition-colors cursor-pointer">
-                              Supprimer
+                              {t('par.supprimer')}
                             </button>
                           </td>
                         )}
@@ -1026,47 +1023,47 @@ export default function ParametresAdmin() {
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Inventaire et Mouvements</h2>
-                <p className="text-sm text-[#1B2632]/60 mt-1">Déclarez vos mouvements ici. Le stock du produit se met à jour automatiquement.</p>
+                <h2 className="text-xl font-bold text-[#1B2632]">{t('par.inventaire')}</h2>
+                <p className="text-sm text-[#1B2632]/60 mt-1">{t('par.inventaireAide')}</p>
               </div>
 
               {/* Même fond neutre en pointillés que tous les autres formulaires de la page */}
               <form onSubmit={ajouterMouvement} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Produit</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.produit')}</label>
                   <select required value={nouveauMouvement.produit_id} onChange={(e) => setNouveauMouvement({...nouveauMouvement, produit_id: e.target.value})} className="fg-input cursor-pointer">
-                    <option value="">Sélectionner un produit</option>
+                    <option value="">{t('par.selectProduit')}</option>
                     {listeProduits.map((p) => (<option key={p.id} value={p.id}>{p.product} ({p.code})</option>))}
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Entrepôt cible</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.entrepotCible')}</label>
                   <select required value={nouveauMouvement.entrepot_id} onChange={(e) => setNouveauMouvement({...nouveauMouvement, entrepot_id: e.target.value})} className="fg-input cursor-pointer">
-                    <option value="">Sélectionner un entrepôt</option>
+                    <option value="">{t('par.selectEntrepot')}</option>
                     {listeEntrepots.map((e) => (<option key={e.id} value={e.id}>{e.nom}</option>))}
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Nature de l'opération</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.natureOperation')}</label>
                   <select required value={nouveauMouvement.type_mouvement} onChange={(e) => setNouveauMouvement({...nouveauMouvement, type_mouvement: e.target.value})} className="fg-input cursor-pointer">
-                    <option value="entree">Entrée (Réception / Fournisseur)</option>
-                    <option value="sortie">Sortie (Perte / Autre)</option>
-                    <option value="retour_ok">Retour Client (Remis en stock)</option>
-                    <option value="retour_defaut">Retour Client (Défectueux)</option>
-                    <option value="ajustement">Ajustement inventaire (+)</option>
+                    <option value="entree">{t('par.optEntree')}</option>
+                    <option value="sortie">{t('par.optSortie')}</option>
+                    <option value="retour_ok">{t('par.optRetourOk')}</option>
+                    <option value="retour_defaut">{t('par.optRetourDefaut')}</option>
+                    <option value="ajustement">{t('par.optAjustement')}</option>
                   </select>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Quantité</label>
+                  <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.quantite')}</label>
                   <input type="number" min="1" required value={nouveauMouvement.quantite} onChange={(e) => setNouveauMouvement({...nouveauMouvement, quantite: e.target.value})} className="fg-input" />
                 </div>
 
                 {/* Bouton dans sa propre colonne, même hauteur (44px) et même couleur primaire que partout ailleurs */}
                 <div className="flex gap-2">
-                  <button type="submit" className="fg-btn-primary w-full">Valider le mouvement</button>
+                  <button type="submit" className="fg-btn-primary w-full">{t('par.validerMouvement')}</button>
                 </div>
               </form>
 
@@ -1074,15 +1071,15 @@ export default function ParametresAdmin() {
                 <table className="fg-table w-full min-w-[560px]">
                   <thead>
                     <tr>
-                      <th>Produit</th>
-                      <th>SKU</th>
-                      <th>Entrepôt</th>
-                      <th className="text-right">Disponible</th>
-                      <th className="text-right">Défectueux</th>
+                      <th>{t('par.produit')}</th>
+                      <th>{t('par.sku')}</th>
+                      <th>{t('par.entrepot')}</th>
+                      <th className="text-right">{t('par.disponible')}</th>
+                      <th className="text-right">{t('par.defectueux')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {listeStocks.length === 0 && <tr><td colSpan="5" className="text-center py-6 text-gray-400">Aucun stock. Ajoutez un mouvement pour commencer.</td></tr>}
+                    {listeStocks.length === 0 && <tr><td colSpan="5" className="text-center py-6 text-gray-400">{t('par.aucunStock')}</td></tr>}
                     {listeStocks.map((s) => (
                       <tr key={s.id} className="hover:bg-[#EEE9DF]/20">
                         <td className="font-bold text-[#1B2632]">{s.produits?.product}</td>
@@ -1097,41 +1094,41 @@ export default function ParametresAdmin() {
               </div>
 
               <div className="mt-10 mb-4">
-                <h3 className="text-lg font-bold text-[#1B2632]">Historique des mouvements</h3>
+                <h3 className="text-lg font-bold text-[#1B2632]">{t('par.historiqueMouvements')}</h3>
                 <p className="text-sm text-[#1B2632]/60 mt-1">
                   Tous les produits de l&apos;entreprise, supprimés compris : un mouvement garde le nom du produit.
-                  {listeMouvements.length >= MOUVEMENTS_AFFICHES && ` Les ${MOUVEMENTS_AFFICHES} plus récents.`}
+                  {listeMouvements.length >= MOUVEMENTS_AFFICHES && t("par.plusRecents", { n: MOUVEMENTS_AFFICHES })}
                 </p>
               </div>
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full min-w-[720px]">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Produit</th>
-                      <th>SKU</th>
-                      <th>Entrepôt</th>
-                      <th>Type</th>
-                      <th className="text-right">Quantité</th>
-                      <th>Raison</th>
+                      <th>{t('par.date')}</th>
+                      <th>{t('par.produit')}</th>
+                      <th>{t('par.sku')}</th>
+                      <th>{t('par.entrepot')}</th>
+                      <th>{t('par.type')}</th>
+                      <th className="text-right">{t('par.quantite')}</th>
+                      <th>{t('par.raison')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {listeMouvements.length === 0 && <tr><td colSpan="7" className="text-center py-6 text-gray-400">Aucun mouvement.</td></tr>}
+                    {listeMouvements.length === 0 && <tr><td colSpan="7" className="text-center py-6 text-gray-400">{t('par.aucunMouvement')}</td></tr>}
                     {listeMouvements.map((m) => {
                       // Tant que le produit existe, son nom actuel ; supprimé,
                       // le nom écrit sur le mouvement.
                       const supprime = !m.produits;
                       return (
                         <tr key={m.id} className="hover:bg-[#EEE9DF]/20">
-                          <td className="whitespace-nowrap text-sm text-gray-700">{m.created_at ? new Date(m.created_at).toLocaleString("fr-FR") : "—"}</td>
+                          <td className="whitespace-nowrap text-sm text-gray-700">{m.created_at ? new Date(m.created_at).toLocaleString(locale) : "—"}</td>
                           <td className="font-bold text-[#1B2632]">
                             {(supprime ? m.produit_nom : m.produits.product) || "—"}
-                            {supprime && <span className="ml-2 text-[11px] font-semibold text-[#A35139]">produit supprimé</span>}
+                            {supprime && <span className="ml-2 text-[11px] font-semibold text-[#A35139]">{t('par.produitSupprime')}</span>}
                           </td>
                           <td><span className="font-mono text-xs text-[#A35139] font-semibold">{(supprime ? m.produit_code : m.produits.code) || ""}</span></td>
                           <td className="font-medium text-gray-700">{m.entrepots?.nom || "—"}</td>
-                          <td className="text-sm text-gray-700">{LIBELLE_MOUVEMENT[m.type_mouvement] || m.type_mouvement}</td>
+                          <td className="text-sm text-gray-700">{LIBELLE_MOUVEMENT[m.type_mouvement] ? t("par.mouv." + m.type_mouvement) : m.type_mouvement}</td>
                           <td className="text-right font-bold text-[#1B2632]">{m.quantite}</td>
                           {/* Commande supprimée depuis : les 8 premiers caractères de son id. */}
                           <td className="text-sm text-gray-600">{String(m.notes || "").replace(UUID_G, (u) => refsCommandes[u] || u.slice(0, 8))}</td>
@@ -1150,92 +1147,90 @@ export default function ParametresAdmin() {
           <div className="flex flex-col gap-6">
             <div className="bg-white p-8 rounded-2xl border border-[#C9C1B1] shadow-sm">
               <div className="mb-6 border-b border-[#C9C1B1]/50 pb-4">
-                <h2 className="text-xl font-bold text-[#1B2632]">Frais vendeurs</h2>
+                <h2 className="text-xl font-bold text-[#1B2632]">{t('par.fraisVendeurs')}</h2>
                 <p className="text-sm text-[#1B2632]/60 mt-1">
-                  Retenus sur chaque lead livré : frais commande + frais livraison + upsell × (unités − 1).
-                  Une ligne « Tous les vendeurs » vaut pour le pays ; une ligne d&apos;un vendeur la remplace pour lui.
-                  Pour changer un montant, ajoutez une ligne avec sa date de début : les relevés déjà établis ne changent pas.
+                  {t("par.fraisAide")}
                 </p>
               </div>
 
               {peutModifierFrais ? (
                 <form onSubmit={ajouterTarif} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end mb-8 p-6 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Pays</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.pays')}</label>
                     <select required value={nouveauTarif.pays_id} onChange={(e) => setNouveauTarif({ ...nouveauTarif, pays_id: e.target.value })} className="fg-input cursor-pointer">
-                      <option value="">Choisir</option>
+                      <option value="">{t('par.choisirCourt')}</option>
                       {listePays.map((p) => (<option key={p.id} value={p.id}>{p.nom}</option>))}
                     </select>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Vendeur</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.vendeur')}</label>
                     <select value={nouveauTarif.vendeur_id} onChange={(e) => setNouveauTarif({ ...nouveauTarif, vendeur_id: e.target.value })} className="fg-input cursor-pointer">
-                      <option value="">Tous les vendeurs</option>
+                      <option value="">{t('par.tousVendeurs')}</option>
                       {listeVendeurs.map((v) => (<option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>))}
                     </select>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais commande</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.fraisCommande')}</label>
                     <input type="number" min="0" step="any" required value={nouveauTarif.frais_commande} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_commande: e.target.value })} className="fg-input" placeholder="1000" />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais livraison</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.fraisLivraison')}</label>
                     <input type="number" min="0" step="any" required value={nouveauTarif.frais_livraison} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_livraison: e.target.value })} className="fg-input" placeholder="12000" />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Upsell / unité en +</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.upsellUnite')}</label>
                     <input type="number" min="0" step="any" required value={nouveauTarif.frais_upsell_unite} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_upsell_unite: e.target.value })} className="fg-input" placeholder="1500" />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Frais de transfert (%)</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.fraisTransfert')}</label>
                     <input type="number" min="0" max="100" step="any" value={nouveauTarif.frais_transfert_pct} onChange={(e) => setNouveauTarif({ ...nouveauTarif, frais_transfert_pct: e.target.value })} className="fg-input" placeholder="0" />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">Valide depuis</label>
+                    <label className="text-xs font-bold text-[#1B2632]/70 uppercase tracking-wide">{t('par.valideDepuis')}</label>
                     <input type="date" value={nouveauTarif.valide_depuis} onChange={(e) => setNouveauTarif({ ...nouveauTarif, valide_depuis: e.target.value })} className="fg-input" />
                   </div>
-                  <button type="submit" className="fg-btn-primary w-full">Ajouter</button>
+                  <button type="submit" className="fg-btn-primary w-full">{t('par.ajouter')}</button>
                 </form>
               ) : (
-                <p className="text-xs text-[#1B2632]/50 mb-6">Seul l&apos;administrateur modifie les frais vendeurs.</p>
+                <p className="text-xs text-[#1B2632]/50 mb-6">{t('par.seulAdmin')}</p>
               )}
               {peutModifierFrais && (
-                <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">Date vide = à partir d&apos;aujourd&apos;hui. Elle compte au jour de la livraison du lead (au jour du relevé pour le transfert). Transfert vide = 0 %.</p>
+                <p className="text-xs text-[#1B2632]/50 -mt-6 mb-8">{t('par.dateVideAide')}</p>
               )}
 
               <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
                 <table className="fg-table w-full min-w-[860px]">
                   <thead>
                     <tr>
-                      <th>Pays</th><th>Vendeur</th>
-                      <th className="text-right">Frais commande</th><th className="text-right">Frais livraison</th>
-                      <th className="text-right">Upsell / unité</th><th className="text-right">Transfert</th><th>Valide depuis</th>
-                      {peutModifierFrais && <th className="text-right">Actions</th>}
+                      <th>{t('par.pays')}</th><th>{t('par.vendeur')}</th>
+                      <th className="text-right">{t('par.fraisCommande')}</th><th className="text-right">{t('par.fraisLivraison')}</th>
+                      <th className="text-right">{t('par.upsellUniteCourt')}</th><th className="text-right">{t('par.transfert')}</th><th>{t('par.valideDepuis')}</th>
+                      {peutModifierFrais && <th className="text-right">{t('par.actions')}</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {listeTarifs.length === 0 && (
                       <tr><td colSpan={peutModifierFrais ? 8 : 7} className="text-center py-6 text-gray-400">
-                        Aucun frais saisi : aucun relevé vendeur ne peut être établi.
+                        {t('par.aucunFrais')}
                       </td></tr>
                     )}
-                    {listeTarifs.map((t) => {
-                      const devise = t.pays?.devise || "";
-                      const m = (x) => `${Number(x || 0).toLocaleString("fr-FR")} ${devise}`;
+                    {listeTarifs.map((tarif) => {
+                      const devise = tarif.pays?.devise || "";
+                      const m = (x) => `${Number(x || 0).toLocaleString(locale)} ${devise}`;
                       return (
-                        <tr key={t.id} className="hover:bg-[#EEE9DF]/20">
-                          <td className="font-bold text-[#1B2632]">{t.pays?.nom || "-"}</td>
-                          <td>{nomVendeurTarif(t.vendeur_id)}</td>
-                          <td className="text-right font-mono">{m(t.frais_commande)}</td>
-                          <td className="text-right font-mono">{m(t.frais_livraison)}</td>
-                          <td className="text-right font-mono">{m(t.frais_upsell_unite)}</td>
-                          <td className="text-right font-mono">{Number(t.frais_transfert_pct || 0).toLocaleString("fr-FR")} %</td>
-                          <td>{new Date(t.valide_depuis + "T00:00:00").toLocaleDateString("fr-FR")}</td>
+                        <tr key={tarif.id} className="hover:bg-[#EEE9DF]/20">
+                          <td className="font-bold text-[#1B2632]">{tarif.pays?.nom || "-"}</td>
+                          <td>{nomVendeurTarif(tarif.vendeur_id)}</td>
+                          <td className="text-right font-mono">{m(tarif.frais_commande)}</td>
+                          <td className="text-right font-mono">{m(tarif.frais_livraison)}</td>
+                          <td className="text-right font-mono">{m(tarif.frais_upsell_unite)}</td>
+                          <td className="text-right font-mono">{Number(tarif.frais_transfert_pct || 0).toLocaleString(locale)} %</td>
+                          <td>{new Date(tarif.valide_depuis + "T00:00:00").toLocaleDateString(locale)}</td>
                           {peutModifierFrais && (
                             <td className="text-right">
-                              <button onClick={() => supprimerTarif(t.id)}
+                              <button onClick={() => supprimerTarif(tarif.id)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#A35139]/40 bg-white text-[#A35139] hover:bg-[#A35139]/10 transition-colors cursor-pointer">
-                                Supprimer
+                                {t('par.supprimer')}
                               </button>
                             </td>
                           )}
