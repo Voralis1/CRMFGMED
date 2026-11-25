@@ -15,6 +15,9 @@ import { usePermissions } from "../context/PermissionsContext";
 import { CarteDelai } from "../components/DelaiPriseEnCharge";
 // La période en français, le même calendrier que Commandes / Centre d'appel (19/11).
 import PlageDates from "../components/PlageDates";
+import { useLangue } from "../context/LangueContext";
+import { localeDe } from "../../lib/langues/index.mjs";
+import { messageErreur } from "../../lib/messageErreur.mjs";
 
 // Les statuts de livraison arrivent de stats_dashboard en français : affichés en
 // anglais comme partout (17/11), la base n'est pas touchée.
@@ -22,7 +25,9 @@ const LIVRAISON_ANGLAIS = { "En attente": "Pending", "Livrée": "Delivered", "In
 
 // Ce que « Total commandes » compte vraiment : les commandes de la période
 // choisie (stats_dashboard, cmd_periode) — pas « l'historique global ».
-const SOUS_TITRE_PERIODE = { "Aujourd'hui": "aujourd'hui", "7 jours": "7 derniers jours", "30 jours": "30 derniers jours", "Personnalisé": "sur la période" };
+// Les valeurs de `periode` restent ces codes internes ; leur texte vient de lib/langues (25/11).
+const SOUS_TITRE_PERIODE = { "Aujourd'hui": "dash.sous.jour", "7 jours": "dash.sous.7", "30 jours": "dash.sous.30", "Personnalisé": "dash.sous.perso" };
+const NOM_PERIODE = { "Aujourd'hui": "dash.periode.jour", "7 jours": "dash.periode.7", "30 jours": "dash.periode.30" };
 
 // ==================================================================
 //  COMPOSANTS VISUELS
@@ -42,6 +47,7 @@ function StatCard({ label, valeur, sousLabel, accent }) {
 }
 
 function StatCardEncaisse({ liste, deviseParDefaut = "" }) {
+  const { t } = useLangue();
   const [index, setIndex] = useState(0);
   const [pause, setPause] = useState(false);
   const n = liste.length;
@@ -60,11 +66,11 @@ function StatCardEncaisse({ liste, deviseParDefaut = "" }) {
       <div className="fg-card fg-stat">
         <div className="fg-stat-bar" style={{ background: "#A35139" }} />
         <div className="fg-stat-body">
-          <span className="fg-stat-label">Encaissé (COD)</span>
+          <span className="fg-stat-label">{t("dash.encaisse")}</span>
           <span className="fg-stat-value">
             {formatMontant(liste[0]?.total || 0, liste[0]?.devise || deviseParDefaut)}
           </span>
-          <span className="fg-stat-sub">remis en caisse</span>
+          <span className="fg-stat-sub">{t("dash.remisCaisse")}</span>
         </div>
       </div>
     );
@@ -87,10 +93,10 @@ function StatCardEncaisse({ liste, deviseParDefaut = "" }) {
       <div className="fg-stat-bar" style={{ background: "#A35139" }} />
       <div className="fg-stat-body">
         <div className="fg-ca-head">
-          <span className="fg-stat-label">Encaissé (COD)</span>
+          <span className="fg-stat-label">{t("dash.encaisse")}</span>
           <div className="fg-ca-nav">
-            <button type="button" onClick={() => setIndex((i) => (i - 1 + n) % n)} aria-label="Devise précédente">‹</button>
-            <button type="button" onClick={() => setIndex((i) => (i + 1) % n)} aria-label="Devise suivante">›</button>
+            <button type="button" onClick={() => setIndex((i) => (i - 1 + n) % n)} aria-label={t("dash.devisePrecedente")}>‹</button>
+            <button type="button" onClick={() => setIndex((i) => (i + 1) % n)} aria-label={t("dash.deviseSuivante")}>›</button>
           </div>
         </div>
 
@@ -102,7 +108,7 @@ function StatCardEncaisse({ liste, deviseParDefaut = "" }) {
         </div>
 
         <div className="fg-ca-foot">
-          <span className="fg-stat-sub">remis en caisse · {n} devises</span>
+          <span className="fg-stat-sub">{t("dash.remisCaisseDevises", { n })}</span>
           <div className="fg-ca-dots">
             {liste.map((c, i) => (
               <button
@@ -137,7 +143,7 @@ function StatutPill({ children, ton }) {
 
 function formatMontant(n, devise) {
   return (
-    new Intl.NumberFormat("fr-FR").format(n || 0) + (devise ? " " + devise : "")
+    new Intl.NumberFormat(localeDe()).format(n || 0) + (devise ? " " + devise : "")
   );
 }
 
@@ -203,7 +209,7 @@ async function chargerStats(periode, dateDebutPerso, dateFinPerso, tenantId, ent
     // On renvoie l'erreur au lieu de null : sinon la page reste indéfiniment
     // sur « Chargement… » et personne ne sait pourquoi.
     console.error("stats_dashboard:", error.message);
-    return { erreur: error.message };
+    return { erreur: messageErreur(error) };
   }
   return data;
 }
@@ -217,6 +223,8 @@ export default function DashboardFGMED() {
   const { entrepotId } = useEntrepot();
   // 🚀 On récupère 'hasPermission' en plus de 'roleNom'
   const { hasPermission, roleNom, loading: permsLoading } = usePermissions();
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue();
 
   const [data, setData] = useState(null);
   const [periode, setPeriode] = useState("Aujourd'hui");
@@ -279,13 +287,9 @@ export default function DashboardFGMED() {
   if (data?.erreur) {
     return (
       <div className="p-8 max-w-xl mx-auto mt-20 text-center">
-        <h1 className="text-xl font-bold text-[#A35139] mb-2">Le tableau de bord n'a pas pu être chargé</h1>
-        <p className="text-sm text-[#1B2632]/70 mb-4">
-          La base a refusé la requête. Message exact :
-        </p>
-        <pre className="text-xs text-left bg-[#EEE9DF] border border-[#C9C1B1] rounded-xl p-4 whitespace-pre-wrap break-words">
-          {data.erreur}
-        </pre>
+        <h1 className="text-xl font-bold text-[#A35139] mb-2">{t("dash.erreurTitre")}</h1>
+        {/* 24–25/11 : plus le texte brut de la base ; la référence renvoie à la console. */}
+        <p className="text-sm text-[#1B2632]/70">{data.erreur}</p>
       </div>
     );
   }
@@ -294,7 +298,7 @@ export default function DashboardFGMED() {
     return (
       <div className="flex items-center justify-center h-full text-[#1B2632] font-medium p-20">
         <StyleFGMED />
-        Chargement des statistiques...
+        {t("dash.chargement")}
       </div>
     );
   }
@@ -308,7 +312,7 @@ export default function DashboardFGMED() {
 
       {/* En-tête */}
       <header className="fg-head">
-        <h1 className="fg-title">Tableau de bord</h1>
+        <h1 className="fg-title">{t("dash.titre")}</h1>
 
         <div className="fg-periode">
           {["Aujourd'hui", "7 jours", "30 jours"].map((p) => (
@@ -321,12 +325,12 @@ export default function DashboardFGMED() {
                 setDateFinPerso("");
               }}
             >
-              {p}
+              {t(NOM_PERIODE[p])}
             </button>
           ))}
 
           <div className="fg-date-wrap">
-            <PlageDates etiquette="dashboard" du={dateDebutPerso} au={dateFinPerso} placeholder="Période"
+            <PlageDates etiquette="dashboard" du={dateDebutPerso} au={dateFinPerso} placeholder={t("dash.periode.perso")}
               onChange={(du, au) => {
                 setDateDebutPerso(du);
                 setDateFinPerso(au);
@@ -340,27 +344,27 @@ export default function DashboardFGMED() {
       {/* Bandeau KPIs */}
       <section className="fg-kpis">
         <StatCard
-          label="Total Commandes"
+          label={t("dash.totalCommandes")}
           valeur={kpis.commandesTotal}
-          sousLabel={SOUS_TITRE_PERIODE[periode] || "sur la période"}
+          sousLabel={t(SOUS_TITRE_PERIODE[periode] || "dash.sous.perso")}
           accent="#C9C1B1"
         />
         <StatCard
-          label="Aujourd'hui"
+          label={t("dash.aujourdhui")}
           valeur={kpis.commandesJour}
-          sousLabel="nouvelles entrées"
+          sousLabel={t("dash.nouvellesEntrees")}
           accent="#1B2632"
         />
         <StatCard
-          label="Taux Confirmation"
+          label={t("dash.tauxConfirmation")}
           valeur={kpis.tauxConfirmation + " %"}
-          sousLabel="appels aboutis"
+          sousLabel={t("dash.appelsAboutis")}
           accent="#FFB162"
         />
         <StatCard
-          label="Taux Livraison"
+          label={t("dash.tauxLivraison")}
           valeur={kpis.tauxLivraison + " %"}
-          sousLabel="commandes livrées"
+          sousLabel={t("dash.commandesLivrees")}
           accent="#2C3B4D"
         />
         <StatCardEncaisse liste={caEncaisseListe} deviseParDefaut={deviseUnique} />
@@ -374,8 +378,8 @@ export default function DashboardFGMED() {
         <div className="fg-card">
           <div className="fg-card-head">
             <div>
-              <h2 className="fg-card-title">Confirmation — centre d'appel</h2>
-              <p className="fg-card-sub">Répartition horaire</p>
+              <h2 className="fg-card-title">{t("dash.confirmationTitre")}</h2>
+              <p className="fg-card-sub">{t("dash.repartitionHoraire")}</p>
             </div>
             <div className="fg-legend">
               <span><i style={{ background: "#1B2632" }} />Confirmed</span>
@@ -385,7 +389,7 @@ export default function DashboardFGMED() {
           {/* Sans aucun appel sur la période : une ligne au lieu d'une grille
               vide de 260 px (19/11). */}
           {!(data.confirmationParHeure || []).some((h) => (h.confirmees || 0) + (h.annulees || 0) > 0) ? (
-            <p className="text-sm text-[#1B2632]/50 py-6">Aucune donnée pour cette période.</p>
+            <p className="text-sm text-[#1B2632]/50 py-6">{t("dash.aucuneDonnee")}</p>
           ) : (
           <div style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -405,12 +409,12 @@ export default function DashboardFGMED() {
         <div className="fg-card">
           <div className="fg-card-head">
             <div>
-              <h2 className="fg-card-title">Statuts de livraison</h2>
-              <p className="fg-card-sub">{totalLivraison} suivies</p>
+              <h2 className="fg-card-title">{t("dash.statutsLivraison")}</h2>
+              <p className="fg-card-sub">{t("dash.suivies", { n: totalLivraison })}</p>
             </div>
           </div>
           {data.statutsLivraison.length === 0 ? (
-            <p className="text-sm text-[#1B2632]/50 py-6">Aucune donnée pour cette période.</p>
+            <p className="text-sm text-[#1B2632]/50 py-6">{t("dash.aucuneDonnee")}</p>
           ) : (
           <div className="fg-donut-wrap">
             <div className="w-[180px] max-w-full h-[180px] shrink-0">
@@ -442,28 +446,28 @@ export default function DashboardFGMED() {
       <section className="fg-card fg-agents-card">
         <div className="fg-card-head">
           <div>
-            <h2 className="fg-card-title">Analytics par agent</h2>
-            <p className="fg-card-sub">Performance du centre d'appel — {analyticsAgents.length} agent{analyticsAgents.length > 1 ? "s" : ""}</p>
+            <h2 className="fg-card-title">{t("dash.analyticsAgents")}</h2>
+            <p className="fg-card-sub">{t("dash.perfCentre", { n: analyticsAgents.length })}</p>
           </div>
-          <StatutPill ton="neutre">Appels · Confirmed · Unreached · Cancelled · Reminder</StatutPill>
+          <StatutPill ton="neutre">{t("dash.legendeAgents")}</StatutPill>
         </div>
 
         {analyticsAgents.length === 0 ? (
           <p className="text-sm text-[#1B2632]/50 italic" style={{ margin: 0 }}>
-            Aucun appel enregistré pour le moment.
+            {t("dash.aucunAppel")}
           </p>
         ) : (
           <div className="fg-table-wrap">
             <table className="fg-table">
               <thead>
                 <tr>
-                  <th>Agent</th>
-                  <th className="fg-num-col">Appels</th>
+                  <th>{t("dash.agent")}</th>
+                  <th className="fg-num-col">{t("dash.appels")}</th>
                   <th className="fg-num-col">Confirmed</th>
                   <th className="fg-num-col">Unreached</th>
                   <th className="fg-num-col">Cancelled</th>
                   <th className="fg-num-col">Reminder</th>
-                  <th className="fg-taux-col">Taux conf.</th>
+                  <th className="fg-taux-col">{t("dash.tauxConf")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -508,7 +512,7 @@ export default function DashboardFGMED() {
               </tbody>
               <tfoot>
                 <tr>
-                  <td>Total</td>
+                  <td>{t("dash.total")}</td>
                   <td className="fg-num-col"><span className="fg-num">{totauxAgents.appels}</span></td>
                   <td className="fg-num-col"><span className="fg-num fg-num-ok">{totauxAgents.confirmees}</span></td>
                   <td className="fg-num-col"><span className="fg-num fg-num-warn">{totauxAgents.injoignables}</span></td>
@@ -543,10 +547,10 @@ export default function DashboardFGMED() {
       <section className="fg-grid-3">
         <div className="fg-card">
           <div className="fg-card-head">
-            <h2 className="fg-card-title">Vue d'ensemble des appels</h2>
+            <h2 className="fg-card-title">{t("dash.vueAppels")}</h2>
           </div>
           <ul className="fg-overview">
-            {data.overviewAppels.length === 0 && <li className="text-sm text-gray-400" style={{ display: "block" }}>Aucun appel</li>}
+            {data.overviewAppels.length === 0 && <li className="text-sm text-gray-400" style={{ display: "block" }}>{t("dash.aucunAppelCourt")}</li>}
             {data.overviewAppels.map((o, i) => (
               <li key={i}>
                 <span className="fg-ov-label">{libelleStatut(o.label)}</span>
@@ -561,10 +565,10 @@ export default function DashboardFGMED() {
 
         <div className="fg-card">
           <div className="fg-card-head">
-            <h2 className="fg-card-title">Top Produits</h2>
+            <h2 className="fg-card-title">{t("dash.topProduits")}</h2>
           </div>
           <ol className="fg-top">
-            {data.topProduits.length === 0 && <li className="text-sm text-gray-400" style={{ display: "block" }}>Aucun produit</li>}
+            {data.topProduits.length === 0 && <li className="text-sm text-gray-400" style={{ display: "block" }}>{t("dash.aucunProduit")}</li>}
             {/* Par PRODUIT depuis le 29/10 (stats_dashboard) : les orthographes
                 d'un même produit comptent ensemble. « Produit non reconnu »
                 arrive sans rang, en dernier : une ligne à part, jamais classée. */}
@@ -583,12 +587,12 @@ export default function DashboardFGMED() {
 
         {!estSeller && (<div className="fg-card">
           <div className="fg-card-head">
-            <h2 className="fg-card-title">Top Agents (Livrées)</h2>
-            <StatutPill ton="positif">Livrées</StatutPill>
+            <h2 className="fg-card-title">{t("dash.topAgents")}</h2>
+            <StatutPill ton="positif">{t("dash.livrees")}</StatutPill>
           </div>
           <ol className="fg-top">
             {(!data.topAgents || data.topAgents.length === 0) && (
-              <li className="text-sm text-[#1B2632]/50 italic" style={{ display: "block" }}>Aucune commande livrée n'est liée à un agent.</li>
+              <li className="text-sm text-[#1B2632]/50 italic" style={{ display: "block" }}>{t("dash.aucuneLivreeAgent")}</li>
             )}
             {(data.topAgents || []).map((a, i) => (
               <li key={i}>

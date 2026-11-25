@@ -9,18 +9,21 @@
 // Valeurs : 'AAAA-MM-JJ' ou '' — les dates du jour LOCAL, comme un
 // <input type="date">.
 import { useEffect, useRef, useState } from 'react'
+import { useLangue } from '../context/LangueContext'
 
-const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
-const JOURS = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
+// Mois et jours dans la langue choisie (25/11) : le nom du mois vient du navigateur (Intl).
+const nomMois = (d, locale) => d.toLocaleDateString(locale, { month: 'long' })
 
 const versTexte = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const depuisTexte = (t) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t || '')
   return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null
 }
-const affiche = (t) => { const d = depuisTexte(t); return d ? d.toLocaleDateString('fr-FR') : '' }
+const affiche = (t, locale = 'fr-FR') => { const d = depuisTexte(t); return d ? d.toLocaleDateString(locale) : '' }
 
-export default function PlageDates({ du, au, onChange, placeholder = 'Choisir une période', etiquette }) {
+export default function PlageDates({ du, au, onChange, placeholder, etiquette }) {
+  const { t, locale } = useLangue()
+  const JOURS = t('dates.jours').split(',')
   const [ouvert, setOuvert] = useState(false)
   const [mois, setMois] = useState(() => depuisTexte(du) || new Date())
   // Le premier clic d'une nouvelle période, tant que le second n'est pas fait.
@@ -62,7 +65,7 @@ export default function PlageDates({ du, au, onChange, placeholder = 'Choisir un
   const cases = [...Array(decalage).fill(null), ...Array.from({ length: nbJours }, (_, i) => new Date(mois.getFullYear(), mois.getMonth(), i + 1))]
   const aujourdhui = versTexte(new Date())
 
-  const texte = du && au ? `${affiche(du)} → ${affiche(au)}` : du ? `${affiche(du)} → …` : ''
+  const texte = du && au ? `${affiche(du, locale)} → ${affiche(au, locale)}` : du ? `${affiche(du, locale)} → …` : ''
 
   return (
     <div className="relative" ref={boite} data-plage-dates={etiquette || ''}>
@@ -71,9 +74,9 @@ export default function PlageDates({ du, au, onChange, placeholder = 'Choisir un
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0 text-[#1B2632]/50">
           <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
-        <span className={`flex-1 truncate ${texte ? 'text-[#1B2632]' : 'text-[#1B2632]/35'}`}>{texte || placeholder}</span>
+        <span className={`flex-1 truncate ${texte ? 'text-[#1B2632]' : 'text-[#1B2632]/35'}`}>{texte || placeholder || t('dates.choisirPeriode')}</span>
         {(du || au) && (
-          <span role="button" tabIndex={0} aria-label="Effacer la période"
+          <span role="button" tabIndex={0} aria-label={t('dates.effacer')}
             onClick={(e) => { e.stopPropagation(); setDebutEnCours(null); onChange('', '') }}
             className="text-[#1B2632]/40 hover:text-[#A35139] text-xs px-1">✕</span>
         )}
@@ -82,10 +85,10 @@ export default function PlageDates({ du, au, onChange, placeholder = 'Choisir un
       {ouvert && (
         <div className="absolute z-30 left-0 mt-1 w-[280px] max-w-[calc(100vw-2rem)] bg-white border border-[#C9C1B1] rounded-xl shadow-xl p-3" data-calendrier>
           <div className="flex items-center justify-between mb-2">
-            <button type="button" aria-label="Mois précédent" onClick={() => setMois(new Date(mois.getFullYear(), mois.getMonth() - 1, 1))}
+            <button type="button" aria-label={t('dates.moisPrecedent')} onClick={() => setMois(new Date(mois.getFullYear(), mois.getMonth() - 1, 1))}
               className="w-8 h-8 rounded-lg hover:bg-[#EEE9DF] text-[#1B2632]">‹</button>
-            <span className="text-sm font-bold text-[#1B2632]">{MOIS[mois.getMonth()]} {mois.getFullYear()}</span>
-            <button type="button" aria-label="Mois suivant" onClick={() => setMois(new Date(mois.getFullYear(), mois.getMonth() + 1, 1))}
+            <span className="text-sm font-bold text-[#1B2632]">{nomMois(mois, locale)} {mois.getFullYear()}</span>
+            <button type="button" aria-label={t('dates.moisSuivant')} onClick={() => setMois(new Date(mois.getFullYear(), mois.getMonth() + 1, 1))}
               className="w-8 h-8 rounded-lg hover:bg-[#EEE9DF] text-[#1B2632]">›</button>
           </div>
           <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] font-bold text-[#1B2632]/45 mb-1">
@@ -112,7 +115,7 @@ export default function PlageDates({ du, au, onChange, placeholder = 'Choisir un
             })}
           </div>
           <p className="text-[11px] text-[#1B2632]/50 mt-2">
-            {debutEnCours ? 'Choisissez le dernier jour.' : 'Choisissez le premier jour, puis le dernier.'}
+            {debutEnCours ? t('dates.choisirDernier') : t('dates.choisirPremier')}
           </p>
         </div>
       )}

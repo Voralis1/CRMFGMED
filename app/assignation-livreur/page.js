@@ -10,6 +10,7 @@ import { usePermissions } from '../context/PermissionsContext'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
+import { useLangue } from '../context/LangueContext'
 // Le drapeau du pays dans la colonne Lieu (19/11).
 import { drapeau } from '../../lib/paysMonde'
 
@@ -25,6 +26,8 @@ export default function AssignationLivreurPage() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
 
@@ -118,7 +121,7 @@ export default function AssignationLivreurPage() {
         .order('id', { ascending: false })
         .range(debut, fin)
 
-      if (error) annoncer(`Chargement impossible : ${messageErreur(error)}`, 'erreur')
+      if (error) annoncer(t('commun.chargementImpossible', { erreur: messageErreur(error) }), 'erreur')
       else {
         setCommandes((data || []).map((c) => ({ ...c, livreur_actuel: null })))
         setTotalCommandes(count || 0)
@@ -138,7 +141,7 @@ export default function AssignationLivreurPage() {
         .order('id', { ascending: false })
         .range(debut, fin)
 
-      if (error) annoncer(`Chargement impossible : ${messageErreur(error)}`, 'erreur')
+      if (error) annoncer(t('commun.chargementImpossible', { erreur: messageErreur(error) }), 'erreur')
       else {
         setCommandes(
           (data || [])
@@ -179,7 +182,7 @@ export default function AssignationLivreurPage() {
   async function assigner(commandeId) {
     const livreurId = livreurChoisiParCommande[commandeId]
     if (!livreurId) {
-      annoncer('Choisissez un livreur avant d\'assigner.', 'erreur')
+      annoncer(t('assign.choisirAvant'), 'erreur')
       return
     }
 
@@ -201,12 +204,12 @@ export default function AssignationLivreurPage() {
     const lignes = commandes.filter((c) => selection[c.id])
     const livreur = livreurs.find((l) => l.id === livreurLot)
     if (!lignes.length || !livreur) return
-    if (!(await confirmer({ titre: 'Assigner au livreur', message: `Assigner ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page à ${livreur.nom} ?`, bouton: 'Assigner' }))) return
+    if (!(await confirmer({ titre: t('assign.confirmTitre'), message: t('assign.confirmMessage', { n: lignes.length, nom: livreur.nom }), bouton: t('assign.assigner') }))) return
 
     setLotEnCours(true)
     const { data, error } = await supabase.rpc('affecter_livreur_lot', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_livreur: livreurLot })
     setLotEnCours(false)
-    const action = `Assignation à ${livreur.nom}`
+    const action = t('assign.action', { nom: livreur.nom })
     if (error) {
       setResultatLot({ action, erreur: messageErreur(error) })
       return
@@ -237,7 +240,7 @@ export default function AssignationLivreurPage() {
   const livreursPourLot = livreurs.filter((l) => lignesCochees.every((c) => c.pays_id === l.pays_id))
 
   if (authLoading || permsLoading || !hasPermission('menu_assignation_livreur')) {
-    return <div className="p-8 text-[#1B2632] font-medium">Vérification des accès...</div>
+    return <div className="p-8 text-[#1B2632] font-medium">{t('commun.verificationAcces')}</div>
   }
 
   return (
@@ -246,7 +249,7 @@ export default function AssignationLivreurPage() {
       {/* En-tête compact (19/11), comme les autres pages. */}
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4 pt-4 sm:pt-2">
         <div className="flex justify-between items-end flex-wrap gap-4 px-6 md:px-0">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Assignation livreur</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('assign.titre')}</h1>
         </div>
 
         <div className="flex flex-wrap gap-2 px-6 md:px-0">
@@ -258,7 +261,7 @@ export default function AssignationLivreurPage() {
                 : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
             }`}
           >
-            À assigner
+            {t('assign.ongletAAssigner')}
             {/* En rouge quand quelque chose attend un livreur (19/11). */}
             {comptes.a_assigner !== null && (
               <span className={`ml-2 inline-flex min-w-[22px] justify-center px-1.5 rounded-full text-xs font-bold ${
@@ -275,7 +278,7 @@ export default function AssignationLivreurPage() {
                 : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
             }`}
           >
-            Assignées (en attente)
+            {t('assign.ongletAssignees')}
             {comptes.assignees !== null && (
               <span className={`ml-2 inline-flex min-w-[22px] justify-center px-1.5 rounded-full text-xs font-bold ${
                 ongletActif === 'assignees' ? 'bg-white/20' : 'bg-[#EEE9DF] text-[#1B2632]/60'}`}>
@@ -287,8 +290,8 @@ export default function AssignationLivreurPage() {
 
         <p className="px-6 md:px-0 text-sm text-[#1B2632]/60">
           {ongletActif === 'a_assigner'
-            ? "Commandes confirmées qu'aucun livreur n'a pu prendre automatiquement : à assigner à la main."
-            : 'Livraisons pas encore effectuées. Le livreur peut encore être changé.'}
+            ? t('assign.aideAAssigner')
+            : t('assign.aideAssignees')}
         </p>
       </header>
 
@@ -301,41 +304,41 @@ export default function AssignationLivreurPage() {
       {peutAgirEnMasse && lignesCochees.length > 0 && (
         <div className="mx-6 md:mx-0 flex flex-wrap items-center gap-3 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm">
           <span className="text-sm font-semibold">
-            {lignesCochees.length} commande{lignesCochees.length > 1 ? 's' : ''} cochée{lignesCochees.length > 1 ? 's' : ''}
-            <span className="font-normal text-white/60"> — sur cette page seulement</span>
+            {t('commun.cochees', { n: lignesCochees.length })}
+            <span className="font-normal text-white/60">{t('commun.surCettePage')}</span>
           </span>
           <select
             value={livreurLot}
             onChange={(e) => setLivreurLot(e.target.value)}
             className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none max-w-full sm:max-w-[240px]"
           >
-            <option value="">Assigner à…</option>
-            {livreursPourLot.map((l) => <option key={l.id} value={l.id}>{l.nom} — {l.zone ? l.zone.trim() : 'sans zone'}</option>)}
+            <option value="">{t('assign.assignerA')}</option>
+            {livreursPourLot.map((l) => <option key={l.id} value={l.id}>{l.nom} — {l.zone ? l.zone.trim() : t('commun.sansZone')}</option>)}
           </select>
           {livreursPourLot.length === 0 && (
-            <span className="text-xs text-[#FFB162]">Aucun livreur ne couvre tous les pays cochés.</span>
+            <span className="text-xs text-[#FFB162]">{t('assign.aucunLivreurPays')}</span>
           )}
           <button
             onClick={assignerLot}
             disabled={!livreurLot || lotEnCours}
             className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50"
           >
-            {lotEnCours ? 'Assignation…' : 'Assigner'}
+            {lotEnCours ? t('assign.enCours') : t('assign.assigner')}
           </button>
           <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
-            Tout décocher
+            {t('commun.toutDecocher')}
           </button>
         </div>
       )}
 
       <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden flex flex-col mx-6 md:mx-0">
         {chargement ? (
-          <p className="text-sm text-[#1B2632]/60 p-6">Chargement...</p>
+          <p className="text-sm text-[#1B2632]/60 p-6">{t('commun.chargement')}</p>
         ) : commandes.length === 0 ? (
           <p className="text-sm text-[#1B2632]/60 p-6">
             {ongletActif === 'a_assigner'
-              ? 'Aucune commande en attente : tout a trouvé un livreur automatiquement.'
-              : 'Aucune livraison en cours.'}
+              ? t('assign.videAAssigner')
+              : t('assign.videAssignees')}
           </p>
         ) : (
           <>
@@ -347,18 +350,18 @@ export default function AssignationLivreurPage() {
                       <th className="pl-4 pr-1 py-4 w-[1%]">
                         {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
                         <input type="checkbox" checked={toutCoche} onChange={basculerTout}
-                          title={`Cocher les ${commandes.length} commandes de cette page (pas toute la base)`}
-                          aria-label="Cocher les commandes de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                          title={t('commun.cocherPage', { n: commandes.length })}
+                          aria-label={t('commun.cocherPageCourt')} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                       </th>
                     )}
-                    <th className="px-6 py-4">Lead ID</th>
-                    <th className="px-6 py-4">Date</th>
-                    <th className="px-6 py-4">Client</th>
-                    <th className="px-6 py-4">Lieu</th>
-                    <th className="px-6 py-4">Produit</th>
-                    <th className="px-6 py-4">Prix</th>
-                    <th className="px-6 py-4">Livreur</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+                    <th className="px-6 py-4">{t('commun.leadId')}</th>
+                    <th className="px-6 py-4">{t('commun.date')}</th>
+                    <th className="px-6 py-4">{t('commun.client')}</th>
+                    <th className="px-6 py-4">{t('commun.lieu')}</th>
+                    <th className="px-6 py-4">{t('commun.produit')}</th>
+                    <th className="px-6 py-4">{t('commun.prix')}</th>
+                    <th className="px-6 py-4">{t('commun.livreur')}</th>
+                    <th className="px-6 py-4 text-right">{t('commun.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -383,27 +386,27 @@ export default function AssignationLivreurPage() {
                         {peutAgirEnMasse && (
                           <td className="pl-4 pr-1 py-4">
                             <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
-                              aria-label={`Cocher ${cmd.lead_id || 'cette commande'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                              aria-label={t('commun.cocher', { lead: cmd.lead_id || t('commun.cetteCommande') })} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                           </td>
                         )}
 
                         <td className="px-6 py-4 font-mono text-sm text-[#1B2632]/80 whitespace-nowrap">
                           #{cmd.lead_id || 'N/A'}
                           {refusParId[cmd.id] && (
-                            <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">Refusé</span></div>
+                            <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">{t('commun.refuse')}</span></div>
                           )}
                         </td>
 
                         <td className="px-6 py-4 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
-                          {cmd.date_commande ? new Date(cmd.date_commande).toLocaleDateString('fr-FR') : (cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-FR') : '-')}
+                          {cmd.date_commande ? new Date(cmd.date_commande).toLocaleDateString(locale) : (cmd.created_at ? new Date(cmd.created_at).toLocaleDateString(locale) : '-')}
                         </td>
 
                         <td className="px-6 py-4">
                           <div className="font-bold text-[#1B2632]">
-                            {cmd.client_nom || 'Client inconnu'}
+                            {cmd.client_nom || t('commun.clientInconnu')}
                           </div>
                           <div className="font-mono text-xs text-[#1B2632]/75 font-semibold mt-1 whitespace-nowrap">
-                            {cmd.client_telephone || 'Aucun numéro'}
+                            {cmd.client_telephone || t('commun.aucunNumero')}
                           </div>
                         </td>
 
@@ -415,19 +418,19 @@ export default function AssignationLivreurPage() {
 
                         <td className="px-6 py-4">
                           <div className="text-sm font-medium text-[#1B2632]">{cmd.produit || '-'}</div>
-                          <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté: {cmd.quantite || 1}</div>
+                          <div className="text-xs text-[#1B2632]/50 mt-0.5">{t('commun.qte', { n: cmd.quantite || 1 })}</div>
                         </td>
 
                         <td className="px-6 py-4 font-bold text-sm text-[#1B2632] whitespace-nowrap">
                           {cmd.prix !== null && cmd.prix !== undefined
-                            ? <>{Number(cmd.prix).toLocaleString('fr-FR')}{cmd.pays?.devise && <span className="text-xs font-semibold text-[#1B2632]/50"> {cmd.pays.devise}</span>}</>
+                            ? <>{Number(cmd.prix).toLocaleString(locale)}{cmd.pays?.devise && <span className="text-xs font-semibold text-[#1B2632]/50"> {cmd.pays.devise}</span>}</>
                             : '-'}
                         </td>
 
                         <td className="px-6 py-4">
                           {cmd.livreur_actuel && (
                             <div className="text-xs font-semibold text-[#1B2632] mb-1.5">
-                              Actuel : <span className="bg-[#EEE9DF] px-2 py-0.5 rounded-md">{cmd.livreur_actuel}</span>
+                              {t('assign.actuel')} <span className="bg-[#EEE9DF] px-2 py-0.5 rounded-md">{cmd.livreur_actuel}</span>
                             </div>
                           )}
                           <select
@@ -435,15 +438,15 @@ export default function AssignationLivreurPage() {
                             onChange={(e) => choisirLivreur(cmd.id, e.target.value)}
                             className="border border-[#C9C1B1] rounded-xl px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-w-[180px] shadow-sm cursor-pointer"
                           >
-                            <option value="">Choisir un livreur…</option>
+                            <option value="">{t('assign.choisirLivreur')}</option>
                             {livreursFiltres.map((l) => (
                               <option key={l.id} value={l.id}>
-                                {l.nom} — {l.zone ? l.zone.trim() : 'sans zone'}{memeZone(l) ? ' ✓' : ''}
+                                {l.nom} — {l.zone ? l.zone.trim() : t('commun.sansZone')}{memeZone(l) ? ' ✓' : ''}
                               </option>
                             ))}
                           </select>
                           {livreursFiltres.length === 0 && (
-                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">Aucun livreur dans ce pays</span>
+                            <span className="text-[11px] font-semibold text-[#A35139] block mt-1.5">{t('assign.aucunLivreurDansPays')}</span>
                           )}
                         </td>
 
@@ -451,10 +454,10 @@ export default function AssignationLivreurPage() {
                           <button
                             onClick={() => assigner(cmd.id)}
                             disabled={envoiEnCoursId === cmd.id || livreursFiltres.length === 0 || !hasPermission('assigner_livreur') || !livreurChoisiParCommande[cmd.id]}
-                            title={!hasPermission('assigner_livreur') ? "Vous n'avez pas le droit d'assigner un livreur" : (!livreurChoisiParCommande[cmd.id] ? "Choisissez d'abord un livreur" : undefined)}
+                            title={!hasPermission('assigner_livreur') ? t('assign.pasLeDroit') : (!livreurChoisiParCommande[cmd.id] ? t('assign.choisirDabord') : undefined)}
                             className="px-4 py-2 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-sm font-bold shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
                           >
-                            {envoiEnCoursId === cmd.id ? '...' : (cmd.livreur_actuel ? 'Changer' : 'Assigner')}
+                            {envoiEnCoursId === cmd.id ? '...' : (cmd.livreur_actuel ? t('assign.changer') : t('assign.assigner'))}
                           </button>
                         </td>
                       </tr>
@@ -466,7 +469,7 @@ export default function AssignationLivreurPage() {
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20">
               <span className="text-sm text-[#1B2632]/70 font-medium">
-                Page {pageActuelle + 1} sur {totalPages}
+                {t('commun.pageSur', { page: pageActuelle + 1, total: totalPages })}
               </span>
               <div className="flex items-center gap-3">
                 <button
@@ -474,14 +477,14 @@ export default function AssignationLivreurPage() {
                   disabled={pageActuelle === 0}
                   className="px-4 py-2 bg-white text-[#1B2632] rounded-xl text-sm font-medium hover:bg-[#EEE9DF]/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all border border-[#C9C1B1] shadow-sm cursor-pointer"
                 >
-                  Précédent
+                  {t('commun.precedent')}
                 </button>
                 <button
                   onClick={() => setPageActuelle((p) => Math.min(totalPages - 1, p + 1))}
                   disabled={pageActuelle >= totalPages - 1}
                   className="px-4 py-2 bg-white text-[#1B2632] rounded-xl text-sm font-medium hover:bg-[#EEE9DF]/50 disabled:opacity-40 disabled:cursor-not-allowed transition-all border border-[#C9C1B1] shadow-sm cursor-pointer"
                 >
-                  Suivant
+                  {t('commun.suivant')}
                 </button>
               </div>
             </div>

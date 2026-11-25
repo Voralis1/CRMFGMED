@@ -10,6 +10,8 @@ import * as XLSX from 'xlsx'
 import VignetteProduit from '../components/VignetteProduit'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
+import { useLangue } from '../context/LangueContext'
+import { localeDe } from '../../lib/langues/index.mjs'
 import { produitDeCommande } from '../../lib/verdictImport.mjs'
 // Le vendeur : la commande sans l'agent ni qui l'a remontée (02/11).
 import { COLONNES_COMMANDE_VENDEUR } from '../../lib/colonnesVendeur.mjs'
@@ -46,11 +48,12 @@ const STATUTS_EN_COURS = ['a_preparer', 'expedie']
 // de suivi ou le téléphone du client qu'on a sous les yeux quand on cherche.
 // « Tout » d'abord et par défaut (19/11) : on tape, on trouve.
 const CHAMPS_RECHERCHE = [
-  { cle: 'tout', nom: 'Tout', aide: 'Nom, téléphone, N° de suivi…' },
-  { cle: 'tracking_number', nom: 'N° de suivi' },
-  { cle: 'lead_id', nom: 'Lead ID' },
-  { cle: 'client_telephone', nom: 'Téléphone client' },
-  { cle: 'client_nom', nom: 'Nom du client' },
+  // nom / aide = des clés de texte (25/11, lib/langues).
+  { cle: 'tout', nom: 'commun.tout', aide: 'commun.rechercheTout' },
+  { cle: 'tracking_number', nom: 'commun.numSuivi' },
+  { cle: 'lead_id', nom: 'commun.leadId' },
+  { cle: 'client_telephone', nom: 'commun.telephoneClient' },
+  { cle: 'client_nom', nom: 'commun.nomClient' },
 ]
 
 // « Toutes » en premier et par défaut : une livraison marquée « Livré » doit
@@ -58,18 +61,18 @@ const CHAMPS_RECHERCHE = [
 // exactement ce que montre ShipLead — une seule liste, la colonne Statut fait
 // la différence. Les deux autres vues ne sont qu'un raccourci.
 const VUES = [
-  { cle: 'toutes', nom: 'Toutes' },
-  { cle: 'a_faire', nom: 'À effectuer' },
-  { cle: 'historique', nom: 'Historique' },
+  { cle: 'toutes', nom: 'liv.vue.toutes' },
+  { cle: 'a_faire', nom: 'liv.vue.aFaire' },
+  { cle: 'historique', nom: 'liv.vue.historique' },
 ]
 
 const FILTRES_VIDES = { statut: '', zone: '', livreur: '', vendeur: '', du: '', au: '' }
 
 const nombre = (v) =>
-  Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  Number(v || 0).toLocaleString(localeDe(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // Un montant à encaisser, lisible d'un coup d'œil (19/11) : 98 798.
-const montantLisible = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString('fr-FR'))
+const montantLisible = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString(localeDe()))
 
 // Le fond d'une ligne (blanc / beige un sur deux) — aussi celui de la colonne
 // collée à droite, pour que le texte qui défile dessous ne se voie pas.
@@ -95,6 +98,8 @@ export default function LivraisonsPage() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const estLivreur = String(roleNom || '').toLowerCase() === 'livreur'
   // Le vendeur (02/11) : ni le livreur ni l'agent n'arrivent dans son
@@ -350,14 +355,14 @@ export default function LivraisonsPage() {
     try {
       if (!tenantId) {
         setLivraisons([]); setTotal(0)
-        setErreur("Aucune entreprise active sur ce compte : impossible de charger les livraisons.")
+        setErreur(t('liv.erreurEntreprise'))
         return
       }
 
       const construite = await construireRequete()
       if (!construite) {
         setLivraisons([]); setTotal(0)
-        setErreur("Aucune fiche livreur rattachée à ce compte : rien à afficher.")
+        setErreur(t('liv.erreurFiche'))
         return
       }
       const { requete } = construite
@@ -376,7 +381,7 @@ export default function LivraisonsPage() {
         if (estLivreur) chargerProduitsDuLivreur(data || [])
       }
     } catch (e) {
-      setErreur(messageErreur(e, 'Erreur inattendue pendant le chargement.'))
+      setErreur(messageErreur(e, t('liv.erreurChargement')))
       setLivraisons([]); setTotal(0)
     } finally {
       setChargement(false)
@@ -443,8 +448,8 @@ export default function LivraisonsPage() {
     const { data, error } = await requete.range(0, 4999)
     setExportEnCours(false)
 
-    if (error) { annoncer(`Export impossible : ${messageErreur(error)}`, 'erreur'); return }
-    if (!data || data.length === 0) { annoncer('Aucune livraison à exporter avec ces filtres.', 'info'); return }
+    if (error) { annoncer(t('commun.exportImpossible', { erreur: messageErreur(error) }), 'erreur'); return }
+    if (!data || data.length === 0) { annoncer(t('liv.rienAExporter'), 'info'); return }
 
     // Le livreur (30/10) : son export, sans Lead ID, sans date, sans livreur
     // (lui) ni vendeur — les colonnes de son écran.
@@ -526,7 +531,7 @@ export default function LivraisonsPage() {
     resultat = await reponse.json()
     } catch (e) {
       setEnvoiEnCours(false)
-      annoncer(messageErreur(e, 'La livraison n\u2019a pas pu être enregistrée.'), 'erreur')
+      annoncer(messageErreur(e, t('liv.nonEnregistree')), 'erreur')
       return
     }
     setEnvoiEnCours(false)
@@ -548,7 +553,7 @@ export default function LivraisonsPage() {
   const zoneDetail = detail?.commandes?.zones
 
   if (authLoading || permsLoading || !hasPermission('menu_livraisons')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('commun.verificationAcces')}</div>
   }
 
   const nbColonnes = estResponsable ? 9 : 7
@@ -569,7 +574,7 @@ export default function LivraisonsPage() {
         {/* En-tête compact (19/11) : le titre et le total ; plus l'e-mail du
             compte affiché en haut de l'écran. */}
         <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Livraisons</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('liv.titre')}</h1>
           <span className="text-sm font-semibold text-[#1B2632]/50">{total}</span>
         </div>
 
@@ -578,14 +583,14 @@ export default function LivraisonsPage() {
         {hasPermission('voir_caisse') && (
           <div className="bg-[#1B2632] text-white rounded-2xl px-5 py-3.5 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-widest text-white/50 mb-1">
-              {maCaisse.length === 1 ? 'Ma caisse — non remise' : 'Caisses — non remises'}
+              {maCaisse.length === 1 ? t('liv.maCaisse') : t('liv.caisses')}
             </p>
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
               {maCaisse.length === 0 && (
                 <span className="flex items-baseline gap-1.5">
                   <span className="text-xl font-bold font-mono">0</span>
                   {deviseCaisse && <span className="text-xs text-white/60">{deviseCaisse}</span>}
-                  <span className="text-[11px] text-white/40">· rien encaissé pour l&apos;instant</span>
+                  <span className="text-[11px] text-white/40">{t('liv.rienEncaisse')}</span>
                 </span>
               )}
               {maCaisse.map((c, i) => (
@@ -593,7 +598,7 @@ export default function LivraisonsPage() {
                   {maCaisse.length > 1 && <span className="text-xs text-white/50">{c.livreur_nom}</span>}
                   <span className="text-xl font-bold font-mono">{nombre(c.total)}</span>
                   <span className="text-xs text-white/60">{c.devise}</span>
-                  <span className="text-[11px] text-white/40">· {c.nb_paiements} encaissement{c.nb_paiements > 1 ? 's' : ''}</span>
+                  <span className="text-[11px] text-white/40">{t('liv.encaissements', { n: c.nb_paiements })}</span>
                 </span>
               ))}
             </div>
@@ -610,7 +615,7 @@ export default function LivraisonsPage() {
             className="px-3 py-2.5 bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl sm:rounded-l-xl sm:rounded-r-none sm:border-r-0 text-sm font-semibold text-[#1B2632] outline-none cursor-pointer"
           >
             {/* Le livreur ne cherche pas par Lead ID : il ne le voit plus (30/10). */}
-            {CHAMPS_RECHERCHE.filter((c) => !(estLivreur && c.cle === 'lead_id')).map((c) => <option key={c.cle} value={c.cle}>{c.nom}</option>)}
+            {CHAMPS_RECHERCHE.filter((c) => !(estLivreur && c.cle === 'lead_id')).map((c) => <option key={c.cle} value={c.cle}>{t(c.nom)}</option>)}
           </select>
 
           <input
@@ -619,7 +624,7 @@ export default function LivraisonsPage() {
             value={recherche}
             onChange={(e) => setRecherche(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') appliquerFiltres() }}
-            placeholder={(() => { const c = CHAMPS_RECHERCHE.find((x) => x.cle === champRecherche); return c?.aide || c?.nom })()}
+            placeholder={(() => { const c = CHAMPS_RECHERCHE.find((x) => x.cle === champRecherche); return t(c?.aide || c?.nom) })()}
             className="flex-1 min-w-0 px-4 py-2.5 border border-[#C9C1B1] sm:border-x-0 rounded-xl sm:rounded-none text-sm text-[#1B2632] outline-none focus:border-[#FFB162] placeholder:text-[#1B2632]/30"
           />
 
@@ -629,7 +634,7 @@ export default function LivraisonsPage() {
               className="flex-1 sm:flex-none px-4 py-2.5 sm:py-0 rounded-xl sm:rounded-none bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors flex items-center justify-center gap-2 font-semibold text-sm cursor-pointer"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
-              <span className="sm:hidden">Rechercher</span>
+              <span className="sm:hidden">{t('commun.rechercher')}</span>
             </button>
 
             <button
@@ -640,7 +645,7 @@ export default function LivraisonsPage() {
                   : 'bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
               }`}
             >
-              <span className="sm:hidden">Filtres</span>
+              <span className="sm:hidden">{t('commun.filtres')}</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
                    style={{ transform: panneauOuvert ? 'rotate(180deg)' : 'none' }}>
                 <polyline points="6 9 12 15 18 9" />
@@ -658,29 +663,29 @@ export default function LivraisonsPage() {
           <div className="border-t border-[#C9C1B1]/50 px-5 py-5">
             <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${estResponsable ? 'lg:grid-cols-5' : 'lg:grid-cols-3'}`}>
               <div>
-                <label className="lv-label">Statut</label>
+                <label className="lv-label">{t('commun.statut')}</label>
                 <select className="lv-input" value={filtres.statut}
                   onChange={(e) => setFiltres({ ...filtres, statut: e.target.value })}>
-                  <option value="">Tous</option>
+                  <option value="">{t('commun.tous')}</option>
                   {Object.entries(STATUTS).map(([cle, s]) => <option key={cle} value={cle}>{s.label}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="lv-label">Zone</label>
+                <label className="lv-label">{t('commun.zone')}</label>
                 <select className="lv-input" value={filtres.zone}
                   onChange={(e) => setFiltres({ ...filtres, zone: e.target.value })}>
-                  <option value="">Toutes</option>
+                  <option value="">{t('commun.toutes')}</option>
                   {listeZones.map((z) => <option key={z.id} value={z.id}>{z.nom_zone}</option>)}
                 </select>
               </div>
 
               {estResponsable && (
                 <div>
-                  <label className="lv-label">Livreur</label>
+                  <label className="lv-label">{t('commun.livreur')}</label>
                   <select className="lv-input" value={filtres.livreur}
                     onChange={(e) => setFiltres({ ...filtres, livreur: e.target.value })}>
-                    <option value="">Tous</option>
+                    <option value="">{t('commun.tous')}</option>
                     {listeLivreurs.map((l) => <option key={l.id} value={l.id}>{l.nom}</option>)}
                   </select>
                 </div>
@@ -688,10 +693,10 @@ export default function LivraisonsPage() {
 
               {estResponsable && (
                 <div>
-                  <label className="lv-label">Vendeur</label>
+                  <label className="lv-label">{t('commun.vendeur')}</label>
                   <select className="lv-input" value={filtres.vendeur}
                     onChange={(e) => setFiltres({ ...filtres, vendeur: e.target.value })}>
-                    <option value="">Tous</option>
+                    <option value="">{t('commun.tous')}</option>
                     {listeVendeurs.map((v) => (
                       <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>
                     ))}
@@ -700,7 +705,7 @@ export default function LivraisonsPage() {
               )}
 
               <div>
-                <label className="lv-label">Période</label>
+                <label className="lv-label">{t('commun.periode')}</label>
                 <div className="flex flex-col sm:flex-row items-stretch gap-1.5">
                   <input type="date" className="lv-input" value={filtres.du}
                     onChange={(e) => setFiltres({ ...filtres, du: e.target.value })} />
@@ -714,12 +719,12 @@ export default function LivraisonsPage() {
               <button onClick={reinitialiserFiltres}
                 className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 2v6h6" /><path d="M3.5 13a9 9 0 1 0 2.6-5.4L3 8" /></svg>
-                Réinitialiser
+                {t('commun.reinitialiser')}
               </button>
               <button onClick={appliquerFiltres}
                 className="flex items-center justify-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors cursor-pointer">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
-                Filtrer
+                {t('commun.filtrer')}
               </button>
             </div>
           </div>
@@ -741,7 +746,7 @@ export default function LivraisonsPage() {
                   vue === v.cle ? 'bg-[#1B2632] text-white shadow-sm' : 'text-[#1B2632]/70 hover:text-[#1B2632]'
                 }`}
               >
-                {v.nom}
+                {t(v.nom)}
               </button>
             ))}
           </div>
@@ -749,13 +754,13 @@ export default function LivraisonsPage() {
           <button
             onClick={exporterExcel}
             disabled={exportEnCours || total === 0}
-            title="Exporter Excel"
+            title={t('liv.exporterExcel')}
             className="sm:ml-auto flex items-center gap-2 px-3 sm:px-5 py-2.5 rounded-xl bg-[#A35139] text-white text-sm font-bold hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer shrink-0"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
             </svg>
-            <span className="hidden sm:inline">{exportEnCours ? 'Export…' : 'Exporter Excel'}</span>
+            <span className="hidden sm:inline">{exportEnCours ? t('liv.export') : t('liv.exporterExcel')}</span>
           </button>
         </div>
 
@@ -771,9 +776,9 @@ export default function LivraisonsPage() {
             grand. L'ordinateur garde le tableau (md et plus). */}
         <div className="md:hidden flex flex-col divide-y divide-[#C9C1B1]/40 border-t border-[#C9C1B1]/40">
           {chargement ? (
-            <p className="px-5 py-12 text-center text-[#1B2632]/60">Chargement...</p>
+            <p className="px-5 py-12 text-center text-[#1B2632]/60">{t('commun.chargement')}</p>
           ) : livraisons.length === 0 ? (
-            <p className="px-5 py-12 text-center text-[#1B2632]/60">Aucune livraison avec ces critères.</p>
+            <p className="px-5 py-12 text-center text-[#1B2632]/60">{t('liv.aucune')}</p>
           ) : livraisons.map((liv, i) => {
             const c = liv.commandes || {}
             const aTraiter = peutTraiter && STATUTS_EN_COURS.includes(liv.statut)
@@ -783,7 +788,7 @@ export default function LivraisonsPage() {
                   <div className="min-w-0">
                     <p className="text-base font-bold text-[#1B2632] truncate">{c.client_nom || '—'}</p>
                     <p className="text-sm text-[#1B2632]/70">
-                      {c.adresse || <span className="text-[#1B2632]/40">Adresse non renseignée</span>}
+                      {c.adresse || <span className="text-[#1B2632]/40">{t('commun.adresseNonRenseignee')}</span>}
                       {(c.zones?.nom_zone || c.ville_zone) && <span className="text-[#1B2632]/50"> · {c.zones?.nom_zone || c.ville_zone}</span>}
                     </p>
                   </div>
@@ -816,13 +821,13 @@ export default function LivraisonsPage() {
                   </p>
                 )}
                 {liv.statut === 'retour' && liv.motif_retour && (
-                  <p className="text-xs text-[#A35139]">Motif : {liv.motif_retour}</p>
+                  <p className="text-xs text-[#A35139]">{t('commun.motif', { motif: liv.motif_retour })}</p>
                 )}
 
                 {aTraiter && (
                   <button onClick={(e) => { e.stopPropagation(); ouvrirDetail(liv) }}
                     className="w-full py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white active:bg-[#2C3B4D]">
-                    Traiter
+                    {t('liv.traiter')}
                   </button>
                 )}
               </div>
@@ -839,27 +844,27 @@ export default function LivraisonsPage() {
                     combien encaisser. Le Lead ID et la date sont des repères de
                     bureau — ils lui prenaient trois colonnes pour rien. */}
                 {estLivreur
-                  ? <th className="px-5 py-3.5">Client</th>
-                  : <th className="px-5 py-3.5">Lead ID</th>}
-                {!estLivreur && <th className="px-5 py-3.5">Date</th>}
-                <th className="px-5 py-3.5">N° de suivi</th>
-                <th className="px-5 py-3.5">Commande</th>
+                  ? <th className="px-5 py-3.5">{t('commun.client')}</th>
+                  : <th className="px-5 py-3.5">{t('commun.leadId')}</th>}
+                {!estLivreur && <th className="px-5 py-3.5">{t('commun.date')}</th>}
+                <th className="px-5 py-3.5">{t('commun.numSuivi')}</th>
+                <th className="px-5 py-3.5">{t('commun.commande')}</th>
                 {estLivreur
-                  ? <th className="px-5 py-3.5">Adresse</th>
-                  : <th className="px-5 py-3.5">Zone</th>}
-                {estLivreur && <th className="px-5 py-3.5 text-right">À encaisser</th>}
-                {estResponsable && <th className="px-5 py-3.5">Livreur</th>}
-                {estResponsable && <th className="px-5 py-3.5">Vendeur</th>}
-                <th className="px-5 py-3.5">Statut</th>
+                  ? <th className="px-5 py-3.5">{t('commun.adresse')}</th>
+                  : <th className="px-5 py-3.5">{t('commun.zone')}</th>}
+                {estLivreur && <th className="px-5 py-3.5 text-right">{t('liv.aEncaisser')}</th>}
+                {estResponsable && <th className="px-5 py-3.5">{t('commun.livreur')}</th>}
+                {estResponsable && <th className="px-5 py-3.5">{t('commun.vendeur')}</th>}
+                <th className="px-5 py-3.5">{t('commun.statut')}</th>
                 {/* Collé à droite : toujours visible même si le tableau défile. */}
                 <th className="px-5 py-3.5 text-center sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody>
               {chargement ? (
-                <tr><td colSpan={nbColonnes} className="px-5 py-14 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-5 py-14 text-center text-[#1B2632]/60">{t('commun.chargement')}</td></tr>
               ) : livraisons.length === 0 ? (
-                <tr><td colSpan={nbColonnes} className="px-5 py-14 text-center text-[#1B2632]/60">Aucune livraison avec ces critères.</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-5 py-14 text-center text-[#1B2632]/60">{t('liv.aucune')}</td></tr>
               ) : (
                 livraisons.map((liv, i) => {
                   const c = liv.commandes || {}
@@ -904,8 +909,8 @@ export default function LivraisonsPage() {
                         >
                           <span className="text-sm leading-tight">
                             <span className="font-bold text-[#A35139]">1</span>{' '}
-                            <span className="text-[#1B2632]/80">produit</span>
-                            <span className="block text-xs text-[#1B2632]/55">Quantité : <b className="text-[#1B2632]">{c.quantite ?? 1}</b></span>
+                            <span className="text-[#1B2632]/80">{t('commun.produitUn')}</span>
+                            <span className="block text-xs text-[#1B2632]/55">{t('commun.quantite')} : <b className="text-[#1B2632]">{c.quantite ?? 1}</b></span>
                           </span>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="2.5" strokeLinecap="round"
                                className="mt-0.5 shrink-0 transition-transform group-hover:opacity-70"
@@ -917,11 +922,11 @@ export default function LivraisonsPage() {
                         {ouverte && (
                           <div className="mt-3 rounded-xl border border-[#C9C1B1]/70 bg-white px-4 py-3 text-xs flex flex-col gap-1.5 min-w-[240px]">
                             <div className="flex justify-between gap-4">
-                              <span className="text-[#1B2632]/50">Produit</span>
+                              <span className="text-[#1B2632]/50">{t('commun.produit')}</span>
                               <span className="font-semibold text-[#1B2632] text-right">{c.produit || '—'}</span>
                             </div>
                             <div className="flex justify-between gap-4">
-                              <span className="text-[#1B2632]/50">Prix</span>
+                              <span className="text-[#1B2632]/50">{t('commun.prix')}</span>
                               <span className="font-bold text-[#1B2632]">{montantLisible(c.prix)} {c.pays?.devise || ''}</span>
                             </div>
                             {/* Le client : pour le bureau seulement — le tableau du
@@ -929,11 +934,11 @@ export default function LivraisonsPage() {
                             {!estLivreur && (
                               <>
                                 <div className="flex justify-between gap-4">
-                                  <span className="text-[#1B2632]/50">Client</span>
+                                  <span className="text-[#1B2632]/50">{t('commun.client')}</span>
                                   <span className="font-semibold text-[#1B2632] text-right">{c.client_nom || '—'}</span>
                                 </div>
                                 <div className="flex justify-between gap-4">
-                                  <span className="text-[#1B2632]/50">Téléphone</span>
+                                  <span className="text-[#1B2632]/50">{t('commun.telephone')}</span>
                                   <span className="font-mono font-semibold text-[#1B2632] whitespace-nowrap">{c.client_telephone || '—'}</span>
                                 </div>
                               </>
@@ -945,7 +950,7 @@ export default function LivraisonsPage() {
                       {estLivreur ? (
                         <>
                           <td className="px-5 py-4 align-top text-sm text-[#1B2632]/80 max-w-[260px]">
-                            {c.adresse || <span className="text-[#1B2632]/35">Adresse non renseignée</span>}
+                            {c.adresse || <span className="text-[#1B2632]/35">{t('commun.adresseNonRenseignee')}</span>}
                             <span className="block text-xs text-[#1B2632]/50 mt-0.5">
                               {c.zones?.nom_zone || c.ville_zone || '—'}
                             </span>
@@ -963,7 +968,7 @@ export default function LivraisonsPage() {
 
                       {estResponsable && (
                         <td className="px-5 py-4 align-top text-sm text-[#1B2632]/80">
-                          {liv.livreurs?.nom || <span className="text-[#1B2632]/35">Non assigné</span>}
+                          {liv.livreurs?.nom || <span className="text-[#1B2632]/35">{t('commun.nonAssigne')}</span>}
                         </td>
                       )}
 
@@ -976,7 +981,7 @@ export default function LivraisonsPage() {
                       <td className="px-5 py-4 align-top">
                         <PillStatut statut={liv.statut} />
                         {liv.statut === 'retour' && liv.motif_retour && (
-                          <span className="block mt-1.5 text-[11px] text-[#A35139]">Motif : {liv.motif_retour}</span>
+                          <span className="block mt-1.5 text-[11px] text-[#A35139]">{t('commun.motif', { motif: liv.motif_retour })}</span>
                         )}
                       </td>
 
@@ -990,12 +995,12 @@ export default function LivraisonsPage() {
                             onClick={() => ouvrirDetail(liv)}
                             className="mr-2 px-4 py-2 rounded-lg text-xs font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors cursor-pointer"
                           >
-                            Traiter
+                            {t('liv.traiter')}
                           </button>
                         )}
                         <button
                           onClick={() => ouvrirDetail(liv)}
-                          title="Voir la fiche"
+                          title={t('commun.voirFiche')}
                           className="w-9 h-9 rounded-lg text-[#1B2632]/70 hover:text-[#A35139] hover:bg-[#EEE9DF] transition-colors inline-flex items-center justify-center cursor-pointer"
                         >
                           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1014,13 +1019,13 @@ export default function LivraisonsPage() {
         {/* Pagination */}
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 sm:px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
           <span className="text-sm text-[#1B2632]/70 font-medium">
-            {total === 0 ? 'Aucune livraison' : `${premier} – ${dernier} sur ${total}`} · Page {page + 1} / {totalPages}
+            {total === 0 ? t('liv.aucuneLivraison') : t('liv.plage', { premier, dernier, total })} · {t('liv.pagePage', { page: page + 1, total: totalPages })}
           </span>
           <div className="flex flex-wrap items-center gap-2">
             {/* Combien de lignes par page : en bas, comme Commandes (19/11). */}
             <label className="flex items-center gap-2 text-sm text-[#1B2632]/60 mr-1">
-              Par page
-              <select value={parPage} onChange={(e) => setParPage(Number(e.target.value))} title="Lignes par page"
+              {t('commun.parPage')}
+              <select value={parPage} onChange={(e) => setParPage(Number(e.target.value))} title={t('commun.lignesParPage')}
                 className="px-2.5 py-1.5 bg-white border border-[#C9C1B1] rounded-lg text-sm font-bold text-[#1B2632] outline-none cursor-pointer">
                 {TAILLES_PAGE.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
@@ -1030,14 +1035,14 @@ export default function LivraisonsPage() {
               disabled={page === 0 || chargement}
               className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
             >
-              Précédent
+              {t('commun.precedent')}
             </button>
             <button
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1 || chargement}
               className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
             >
-              Suivant
+              {t('commun.suivant')}
             </button>
           </div>
         </div>
@@ -1052,12 +1057,12 @@ export default function LivraisonsPage() {
 
               <div className="flex items-center gap-3 px-5 sm:px-8 pt-6 sm:pt-7 pb-5 sm:pb-6">
                 <button
-                  onClick={() => setDetail(null)} title="Retour"
+                  onClick={() => setDetail(null)} title={t('commun.retour')}
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0 cursor-pointer"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <h2 className="text-xl sm:text-2xl font-bold text-[#A35139]">Détail de la livraison</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-[#A35139]">{t('liv.detailTitre')}</h2>
                 <div className="ml-auto"><PillStatut statut={detail.statut} /></div>
               </div>
 
@@ -1065,27 +1070,27 @@ export default function LivraisonsPage() {
 
                 {/* Deux cartes (19/11) : la zone vit dans la carte Client. */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                  <CarteDetail titre="Livraison">
-                    {!estLivreur && <LigneDetail label="Lead ID" valeur={detail.commandes?.lead_id} mono nowrap />}
-                    <LigneDetail label="N° de suivi" valeur={detail.commandes?.tracking_number} mono />
+                  <CarteDetail titre={t('liv.carteLivraison')}>
+                    {!estLivreur && <LigneDetail label={t('commun.leadId')} valeur={detail.commandes?.lead_id} mono nowrap />}
+                    <LigneDetail label={t('commun.numSuivi')} valeur={detail.commandes?.tracking_number} mono />
 {!estLivreur && (
                     <LigneDetail
-                      label="Créée le"
-                      valeur={detail.created_at ? new Date(detail.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                      label={t('liv.creeeLe')}
+                      valeur={detail.created_at ? new Date(detail.created_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
                     )}
                     {/* Le livreur, c'est lui : la ligne ne lui apprend rien. */}
-                    {!estSeller && !estLivreur && <LigneDetail label="Livreur" valeur={detail.livreurs?.nom} />}
-                    {estResponsable && <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.commandes?.vendeur_id)} />}
-                    <LigneDetail label="Statut" valeur={STATUTS[detail.statut]?.label || detail.statut} />
-                    <LigneDetail label="Motif de retour" valeur={detail.motif_retour} />
+                    {!estSeller && !estLivreur && <LigneDetail label={t('commun.livreur')} valeur={detail.livreurs?.nom} />}
+                    {estResponsable && <LigneDetail label={t('commun.vendeur')} valeur={nomDuVendeur(detail.commandes?.vendeur_id)} />}
+                    <LigneDetail label={t('commun.statut')} valeur={STATUTS[detail.statut]?.label || detail.statut} />
+                    <LigneDetail label={t('liv.motifRetour')} valeur={detail.motif_retour} />
                   </CarteDetail>
 
-                  <CarteDetail titre="Client">
+                  <CarteDetail titre={t('commun.client')}>
                     <LigneDetail label="Nom" valeur={detail.commandes?.client_nom} />
                     {detail.commandes?.client_telephone ? (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">Téléphone</span>
+                        <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">{t('commun.telephone')}</span>
                         {/* Cliquable : le livreur appelle sans recopier le
                             numéro, et ne se trompe pas d'un chiffre. */}
                         <a href={`tel:${detail.commandes.client_telephone.replace(/\s/g, '')}`}
@@ -1093,19 +1098,19 @@ export default function LivraisonsPage() {
                           {detail.commandes.client_telephone}
                         </a>
                       </div>
-                    ) : <LigneDetail label="Téléphone" valeur={null} />}
-                    <LigneDetail label="Adresse" valeur={detail.commandes?.adresse} />
-                    <LigneDetail label="Pays" valeur={detail.commandes?.pays?.nom} />
-                    <LigneDetail label="Ville / Zone" valeur={detail.commandes?.ville_zone} />
+                    ) : <LigneDetail label={t('commun.telephone')} valeur={null} />}
+                    <LigneDetail label={t('commun.adresse')} valeur={detail.commandes?.adresse} />
+                    <LigneDetail label={t('commun.pays')} valeur={detail.commandes?.pays?.nom} />
+                    <LigneDetail label={t('commun.villeZone')} valeur={detail.commandes?.ville_zone} />
                     {/* La zone de livraison (19/11, l'ancienne carte « Zone de
                         livraison ») : écrite seulement si elle dit autre chose
                         que la ville ; sans zone, l'avertissement reste pour le bureau. */}
                     {zoneDetail?.nom_zone
                       ? (zoneDetail.nom_zone.trim().toLowerCase() !== (detail.commandes?.ville_zone || '').trim().toLowerCase()
-                          && <LigneDetail label="Zone" valeur={zoneDetail.nom_zone} />)
+                          && <LigneDetail label={t('commun.zone')} valeur={zoneDetail.nom_zone} />)
                       : !estLivreur && (
                         <p className="text-xs text-[#8a5a1f] bg-[#FFB162]/15 border border-[#FFB162]/40 rounded-lg px-3 py-2.5 font-medium">
-                          Aucune zone pour « {detail.commandes?.ville_zone || 'non spécifiée'} ».
+                          {t('liv.aucuneZone', { ville: detail.commandes?.ville_zone || t('liv.nonSpecifiee') })}
                         </p>
                       )}
                   </CarteDetail>
@@ -1113,14 +1118,14 @@ export default function LivraisonsPage() {
 
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50">
-                    <h3 className="text-sm font-bold text-[#1B2632]">Produit à livrer</h3>
+                    <h3 className="text-sm font-bold text-[#1B2632]">{t('liv.produitALivrer')}</h3>
                   </div>
                   <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
-                        <th className="px-5 py-2.5">Produit</th>
-                        <th className="px-5 py-2.5 text-right">Quantité</th>
-                        <th className="px-5 py-2.5 text-right">Prix</th>
+                        <th className="px-5 py-2.5">{t('commun.produit')}</th>
+                        <th className="px-5 py-2.5 text-right">{t('commun.quantite')}</th>
+                        <th className="px-5 py-2.5 text-right">{t('commun.prix')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1150,16 +1155,16 @@ export default function LivraisonsPage() {
                     lecture seule n'a rien à enregistrer. */}
                 {STATUTS_EN_COURS.includes(detail.statut) && (
                   <div className="border border-[#C9C1B1] rounded-xl p-5 flex flex-col gap-4">
-                    <h3 className="text-sm font-bold text-[#1B2632]">Traiter la livraison</h3>
+                    <h3 className="text-sm font-bold text-[#1B2632]">{t('liv.traiterTitre')}</h3>
 
                     {peutTraiter ? (
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
-                            <label className="lv-label">Résultat</label>
+                            <label className="lv-label">{t('liv.resultat')}</label>
                             <select className="lv-input" value={statutChoisi}
                               onChange={(e) => setStatutChoisi(e.target.value)}>
-                              <option value="" disabled>Choisir le résultat…</option>
+                              <option value="" disabled>{t('liv.choisirResultat')}</option>
                               {/* On ne propose pas le statut actuel : « Expédiée »
                                   sur une livraison déjà expédiée ne veut rien dire.
                                   « Livré » seulement après « Expédiée » (sa décision
@@ -1173,7 +1178,7 @@ export default function LivraisonsPage() {
 
                           {statutChoisi === 'livre' && (
                             <div>
-                              <label className="lv-label">Montant encaissé</label>
+                              <label className="lv-label">{t('liv.montantEncaisse')}</label>
                               <input type="number" step="0.01" className="lv-input" value={montant}
                                 onChange={(e) => setMontant(e.target.value)} placeholder="0" />
                             </div>
@@ -1181,10 +1186,10 @@ export default function LivraisonsPage() {
 
                           {['retour', 'annule'].includes(statutChoisi) && (
                             <div>
-                              <label className="lv-label">{statutChoisi === 'annule' ? "Motif de l'annulation" : 'Motif du retour'}</label>
+                              <label className="lv-label">{statutChoisi === 'annule' ? t('liv.motifAnnulation') : t('liv.motifDuRetour')}</label>
                               <input type="text" className="lv-input" value={motifTexte}
                                 onChange={(e) => setMotifTexte(e.target.value)}
-                                placeholder="Ex : client absent, refus..." />
+                                placeholder={t('liv.exMotif')} />
                             </div>
                           )}
                         </div>
@@ -1192,10 +1197,10 @@ export default function LivraisonsPage() {
                         <button
                           onClick={envoyerConfirmation}
                           disabled={envoiEnCours || !statutChoisi}
-                          title={!statutChoisi ? "Choisissez d'abord le résultat" : undefined}
+                          title={!statutChoisi ? t('liv.choisirDabord') : undefined}
                           className="w-full sm:w-auto sm:self-start px-8 py-3.5 sm:py-3 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors cursor-pointer"
                         >
-                          {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
+                          {envoiEnCours ? t('commun.enregistrement') : t('commun.enregistrer')}
                         </button>
                       </>
                     ) : (
