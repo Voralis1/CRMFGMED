@@ -8,6 +8,7 @@ import { useEntrepot } from '../context/EntrepotContext'
 import { usePermissions } from '../context/PermissionsContext'
 import * as XLSX from 'xlsx'
 import VignetteProduit from '../components/VignetteProduit'
+import PlageDates from '../components/PlageDates'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
 import { useLangue } from '../context/LangueContext'
@@ -563,6 +564,7 @@ export default function LivraisonsPage() {
 
       <style>{`
         .lv-label { display:block; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(27,38,50,.55); margin-bottom:6px; }
+        .cm-input { width:100%; border:1px solid #C9C1B1; border-radius:10px; padding:9px 11px; font-size:14px; outline:none; background:#fff; color:#1B2632; }
         .lv-input { width:100%; border:1px solid #C9C1B1; border-radius:10px; padding:9px 11px; font-size:14px; outline:none; background:#fff; color:#1B2632; }
         .lv-input:focus { border-color:#1B2632; box-shadow:0 0 0 2px rgba(27,38,50,.05); }
         @keyframes popInLv { from { opacity:0; transform:translateY(-6px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
@@ -706,12 +708,11 @@ export default function LivraisonsPage() {
 
               <div>
                 <label className="lv-label">{t('commun.periode')}</label>
-                <div className="flex flex-col sm:flex-row items-stretch gap-1.5">
-                  <input type="date" className="lv-input" value={filtres.du}
-                    onChange={(e) => setFiltres({ ...filtres, du: e.target.value })} />
-                  <input type="date" className="lv-input" value={filtres.au}
-                    onChange={(e) => setFiltres({ ...filtres, au: e.target.value })} />
-                </div>
+                {/* Le calendrier partagé (25/11) : un seul champ, dans la langue
+                    choisie. Les deux champs du navigateur affichaient « mm/dd/yyyy »
+                    et le second sortait de l'écran. */}
+                <PlageDates etiquette="livraisons" du={filtres.du} au={filtres.au}
+                  onChange={(du, au) => setFiltres((f) => ({ ...f, du, au }))} />
               </div>
             </div>
 
@@ -910,7 +911,7 @@ export default function LivraisonsPage() {
                           <span className="text-sm leading-tight">
                             <span className="font-bold text-[#A35139]">1</span>{' '}
                             <span className="text-[#1B2632]/80">{t('commun.produitUn')}</span>
-                            <span className="block text-xs text-[#1B2632]/55">{t('commun.quantite')} : <b className="text-[#1B2632]">{c.quantite ?? 1}</b></span>
+                            <span className="block text-xs text-[#1B2632]/55">{t('commun.quantiteDeux')} <b className="text-[#1B2632]">{c.quantite ?? 1}</b></span>
                           </span>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="2.5" strokeLinecap="round"
                                className="mt-0.5 shrink-0 transition-transform group-hover:opacity-70"

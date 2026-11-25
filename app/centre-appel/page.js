@@ -1019,7 +1019,7 @@ export default function CentreAppelAgent() {
   }
 
   return (
-    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 sm:pt-16 px-4 sm:px-6 pb-10">
+    <div className="flex flex-col gap-6 w-full max-w-[1400px] mx-auto pt-4 sm:pt-2 px-4 sm:px-6 pb-10">
       <style>{`
         @keyframes drawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -1035,9 +1035,12 @@ export default function CentreAppelAgent() {
             sur la même bande — plus de leads visibles sans défiler. */}
         <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
           <h1 className="text-2xl font-bold text-[#1B2632]">{t('ca.titre')}</h1>
-          <span className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest">
-            {agentActuel?.nom || t('ca.vueGlobale')}
-          </span>
+          {/* « Vue globale » retiré (25/11, sa demande) : un agent voit encore son nom. */}
+          {agentActuel?.nom && (
+            <span className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest">
+              {agentActuel.nom}
+            </span>
+          )}
         </div>
 
         <div className="flex justify-between items-start flex-wrap gap-3 sm:gap-4">
@@ -1292,7 +1295,10 @@ export default function CentreAppelAgent() {
                     )}
                     <tr
                       onClick={() => ouvrirPanneau(cmd)}
-                      className={`cursor-pointer transition-colors ${estSelectionne ? 'bg-[#FFB162]/10' : 'hover:bg-[#EEE9DF]/40'}`}
+                      // Couleurs OPAQUES (25/11) : la colonne « Traiter », collée à droite,
+                      // prend celle de la ligne (bg-inherit) — avant, elle restait blanche
+                      // au survol et coupait la ligne.
+                      className={`cursor-pointer transition-colors ${estSelectionne ? 'bg-[#FFF4E8]' : 'bg-white hover:bg-[#F3EFE7]'}`}
                     >
                       {peutAgirEnMasse && (
                         // La ligne ouvre le panneau d'appel : la case ne doit pas.
@@ -1404,7 +1410,7 @@ export default function CentreAppelAgent() {
                       </td>
                       {/* Collé à droite (sticky) : toujours visible ; fond opaque pour
                           que le texte qui défile dessous ne se voie pas. */}
-                      <td className={`px-4 py-3 text-right sticky right-0 ${estSelectionne ? 'bg-[#FFF4E8]' : 'bg-white'}`}>
+                      <td className="px-4 py-3 text-right sticky right-0 bg-inherit">
                         <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D]`}>
                           {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) ? t('ca.modifier') : t('ca.traiter')}
                         </button>
