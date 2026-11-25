@@ -11,6 +11,8 @@
 //     page qui décide de l'afficher ; un vendeur et un agent ne le voient pas.
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
+import { traduire } from '../../lib/langues/index.mjs'
+import { useLangue } from '../context/LangueContext'
 
 // La valeur « Sans agent » : jamais un id d'agent (ce sont des uuid).
 export const AUCUN_AGENT = 'aucun'
@@ -20,8 +22,8 @@ export const libelleAgent = (a) => (a.actif && a.user_id ? a.nom : `${a.nom} (in
 
 export function nomFiltreAgent(valeur, agents) {
   if (!valeur) return ''
-  if (valeur === AUCUN_AGENT) return 'Sans agent'
-  return (agents || []).find((a) => a.id === valeur)?.nom || 'Agent'
+  if (valeur === AUCUN_AGENT) return traduire('agent.sans')
+  return (agents || []).find((a) => a.id === valeur)?.nom || traduire('agent.defaut')
 }
 
 // Tous les agents de l'entreprise (id, nom, pays_id, actif, user_id).
@@ -49,16 +51,17 @@ export function filtrerParAgent(q, valeur) {
 }
 
 export default function SelectAgent({ agents, value, onChange, className, title }) {
+  const { t } = useLangue()
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      title={title || "Ne montrer que les leads d'un agent. Ne change rien à ce que vous pouvez voir."}
+      title={title || t('agent.aide')}
       className={className}
       data-filtre-agent
     >
-      <option value="">Tous les agents</option>
-      <option value={AUCUN_AGENT}>Sans agent</option>
+      <option value="">{t('agent.tous')}</option>
+      <option value={AUCUN_AGENT}>{t('agent.sans')}</option>
       {(agents || []).map((a) => <option key={a.id} value={a.id}>{libelleAgent(a)}</option>)}
     </select>
   )

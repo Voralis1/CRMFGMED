@@ -11,6 +11,7 @@ import VignetteProduit from '../components/VignetteProduit'
 import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
+import { useLangue } from '../context/LangueContext'
 // Le filtre par agent, partagé avec Commandes : même liste, mêmes règles.
 import SelectAgent, { AUCUN_AGENT, nomFiltreAgent as nomDuFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 // Le filtre produit par PRODUIT (produit_id), partagé avec Commandes.
@@ -137,7 +138,7 @@ function detecterPaysDepuisTelephone(cmd, paysListDB) {
 // Le texte de MESSAGE_ADRESSE_MANQUANTE (supabase/functions/_shared/appel.ts).
 // Le serveur refuse avec le sien de toute façon ; celui-ci ne sert qu'à le
 // dire avant l'envoi.
-const MESSAGE_ADRESSE = 'Ajoutez l\'adresse avant de confirmer. Un repère suffit (« près du marché, maison bleue ») : écrivez ce que le client a dit.'
+// Le texte affiché vient maintenant de lib/langues (ca.messageAdresse, 25/11).
 
 const ROLES_VUE_GLOBALE = ['admin', 'manager', 'ceo', 'super_admin']
 
@@ -169,6 +170,8 @@ export default function CentreAppelAgent() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId;
 
@@ -410,7 +413,7 @@ export default function CentreAppelAgent() {
   const nomAgent = (id) => {
     if (!id) return null
     if (listeAgents.length === 0) return '…' // liste pas encore chargée
-    return listeAgents.find((a) => a.id === id)?.nom || 'Agent supprimé'
+    return listeAgents.find((a) => a.id === id)?.nom || t('ca.agentSupprime')
   }
   // LA VUE DE L'AGENT (28/10). On mesure s'il appelle vraiment : rien sur son
   // écran ne doit lui dire qu'un lead a déjà été essayé.
@@ -458,12 +461,12 @@ export default function CentreAppelAgent() {
     const lignes = commandes.filter((c) => selection[c.id])
     const agent = listeAgents.find((a) => a.id === agentLot)
     if (!lignes.length || !agent) return
-    if (!(await confirmer({ titre: 'Affecter les leads', message: `Affecter ${lignes.length} lead${lignes.length > 1 ? 's' : ''} de cette page à ${agent.nom} ?`, bouton: 'Affecter' }))) return
+    if (!(await confirmer({ titre: t('ca.affecterTitre'), message: t('ca.affecterMessage', { n: lignes.length, nom: agent.nom }), bouton: t('ca.affecter') }))) return
 
     setLotEnCours(true)
     const { data, error } = await supabase.rpc('affecter_agent_lot', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_agent: agentLot })
     setLotEnCours(false)
-    const action = `Affectation à ${agent.nom}`
+    const action = t('ca.actionAffectation', { nom: agent.nom })
     if (error) {
       setResultatLot({ action, erreur: messageErreur(error) })
       return
@@ -614,8 +617,8 @@ export default function CentreAppelAgent() {
     if (statutsBas.length === 0) return
     const { count, error: erreurCompte } = await groupeARemonter(supabase.from('commandes').select('id', { count: 'exact', head: true }))
     if (erreurCompte) { annoncer(messageErreur(erreurCompte), 'erreur'); return }
-    if (!count) { annoncer('Aucun lead en attente de rappel ne correspond aux filtres.', 'info'); return }
-    if (!(await confirmer({ titre: 'Remonter les leads', message: `Remonter ${count} lead${count > 1 ? 's' : ''} en attente de rappel${filtreAgent ? ` (filtre agent : ${nomFiltreAgent})` : ''} ?\n\nIls passent en tête de la file de leur agent. Leur statut ne change pas.`, bouton: 'Remonter' }))) return
+    if (!count) { annoncer(t('ca.rienARemonter'), 'info'); return }
+    if (!(await confirmer({ titre: t('ca.remonterTitre'), message: t('ca.remonterMessage', { n: count, filtre: filtreAgent ? t('ca.filtreAgent', { nom: nomFiltreAgent }) : '' }), bouton: t('ca.remonter') }))) return
 
     setRemonteeEnCours(true)
     try {
@@ -635,7 +638,7 @@ export default function CentreAppelAgent() {
         if (error) throw error
         remontes += data || 0
       }
-      annoncer(`${remontes} lead${remontes > 1 ? 's' : ''} remonté${remontes > 1 ? 's' : ''}.`, 'succes')
+      annoncer(t('ca.remontes', { n: remontes }), 'succes')
     } catch (e) {
       annoncer(messageErreur(e), 'erreur')
     }
@@ -855,13 +858,13 @@ export default function CentreAppelAgent() {
 
   async function validerAppel() {
     if (!statutChoisi) {
-      annoncer("Choisissez un résultat d'appel.", 'erreur');
+      annoncer(t('ca.choisirResultatMsg'), 'erreur');
       return;
     }
     // Même règle que confirmer-appel, dite avant l'envoi. Le serveur reste
     // celui qui décide ; ici on évite seulement l'aller-retour.
     if (adresseExigee) {
-      setErreurEnvoi(MESSAGE_ADRESSE)
+      setErreurEnvoi(t('ca.messageAdresse'))
       return
     }
     // L'heure du rappel : l'heure locale du champ devient un instant UTC ici,
@@ -910,7 +913,7 @@ export default function CentreAppelAgent() {
     resultat = await reponse.json()
     } catch (e) {
       setEnvoiEnCours(false)
-      setErreurEnvoi(messageErreur(e, "L'appel n'a pas pu être enregistré."))
+      setErreurEnvoi(messageErreur(e, t('ca.appelNonEnregistre')))
       return
     }
     setEnvoiEnCours(false)
@@ -926,9 +929,9 @@ export default function CentreAppelAgent() {
       const { data: apres } = await supabase.from('commandes')
         .select('statut_confirmation').eq('id', commandeSelectionnee.id).maybeSingle()
       if (apres?.statut_confirmation === 'Rupture de stock') {
-        annoncer(`Commande mise en « Out of stock » : pas assez de « ${formData.produit} » disponible dans l'entrepôt. Elle reviendra « En attente » toute seule quand le stock reviendra.`, 'info')
+        annoncer(t('ca.rupture', { produit: formData.produit }), 'info')
       } else if (apres?.statut_confirmation === 'Produit non reconnu') {
-        annoncer(`Commande mise en « Produit non reconnu » : le CRM ne trouve pas « ${formData.produit} » au catalogue. Prévenez un responsable pour relier le produit.`, 'info')
+        annoncer(t('ca.nonReconnu', { produit: formData.produit }), 'info')
       }
     }
 
@@ -991,13 +994,13 @@ export default function CentreAppelAgent() {
   // Seuls les agents qui peuvent prendre TOUS les leads cochés (leur pays).
   const agentsPourLot = agentsAssignables.filter((a) => !a.pays_id || lignesCochees.every((c) => c.pays_id === a.pays_id))
   // « 3 sur 47 » quand le filtre d'agent est posé.
-  const surTotal = (total) => (total === null || total === undefined ? '' : ` sur ${total}`)
+  const surTotal = (total) => (total === null || total === undefined ? '' : t('ca.surTotal', { n: total }))
 
   const whatsappTexte = encodeURIComponent(`Bonjour ${formData.client_nom}, c'est le service de confirmation. Nous vous contactons concernant votre commande pour le produit ${formData.produit}. Pouvons-nous valider la livraison à ${formData.ville_zone || 'votre adresse'} ?`);
   const estUnDoublon = commandes.filter(c => c.client_telephone && formData.client_telephone && c.client_telephone.replace(/\s/g, '') === formData.client_telephone.replace(/\s/g, '')).length > 1;
 
   if (authLoading || permsLoading || !hasPermission('menu_centre_appel')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('commun.verificationAcces')}</div>
   }
 
   // 🚀 BLOCAGE D'INTERFACE SI L'UTILISATEUR N'A PAS DE PROFIL AGENT
@@ -1007,9 +1010,9 @@ export default function CentreAppelAgent() {
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#A35139" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
-        <h2 className="text-xl font-bold text-[#1B2632]">Espace de travail indisponible</h2>
+        <h2 className="text-xl font-bold text-[#1B2632]">{t('ca.indispoTitre')}</h2>
         <p className="text-sm text-[#1B2632]/60 max-w-md text-center">
-          Votre compte n'est lié à aucun profil "Agent" actif. Veuillez demander à votre administrateur de vous créer un profil dans la section "Gestion des Utilisateurs".
+          {t('ca.indispoTexte')}
         </p>
       </div>
     )
@@ -1031,9 +1034,9 @@ export default function CentreAppelAgent() {
         {/* En-tête compact (17/11) : titre, à qui est la vue, puis les compteurs
             sur la même bande — plus de leads visibles sans défiler. */}
         <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Centre d'appels</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('ca.titre')}</h1>
           <span className="text-xs font-mono font-medium text-[#A35139] uppercase tracking-widest">
-            {agentActuel?.nom || 'Vue globale'}
+            {agentActuel?.nom || t('ca.vueGlobale')}
           </span>
         </div>
 
@@ -1046,11 +1049,11 @@ export default function CentreAppelAgent() {
               {comptes && (
                 <>
                   {comptes.totalATraiter !== null && <span className="font-semibold text-[#1B2632]">{nomFiltreAgent} : </span>}
-                  <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{comptes.aTraiter}{surTotal(comptes.totalATraiter)} à traiter</span>
+                  <span className={comptes.aTraiter > 0 ? 'font-bold text-[#A35139]' : ''}>{t('ca.aTraiter', { n: `${comptes.aTraiter}${surTotal(comptes.totalATraiter)}` })}</span>
                   {' · '}
                   <button type="button" className="underline decoration-dotted underline-offset-2 hover:text-[#1B2632]"
                     onClick={() => document.getElementById('separateur-suivi')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
-                    {comptes.traites}{surTotal(comptes.totalTraites)} en suivi
+                    {t('ca.enSuivi', { n: `${comptes.traites}${surTotal(comptes.totalTraites)}` })}
                   </button>
 
                 </>
@@ -1065,7 +1068,7 @@ export default function CentreAppelAgent() {
               </svg>
               <input
                 type="text"
-                placeholder="Nom, téléphone, N° commande..."
+                placeholder={t('ca.rechercher')}
                 value={recherche}
                 onChange={(e) => setRecherche(e.target.value)}
                 className="outline-none bg-transparent text-sm text-[#1B2632] font-medium w-full placeholder:text-[#1B2632]/30"
@@ -1092,20 +1095,20 @@ export default function CentreAppelAgent() {
               <button
                 onClick={remonterLeads}
                 disabled={remonteeEnCours}
-                title="Remonter en tête de file tous les leads en attente de rappel que les filtres retiennent"
+                title={t('ca.remonterAide')}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50 disabled:opacity-50 transition-all"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
                   <path d="M12 19V5" /><path d="m5 12 7-7 7 7" />
                 </svg>
-                {remonteeEnCours ? 'Remontée…' : 'Remonter'}
+                {remonteeEnCours ? t('ca.remontee') : t('ca.remonter')}
               </button>
             )}
 
             {peutChangerAgent && (
               <button
                 onClick={() => setModeAgents(o => !o)}
-                title="Afficher l'agent affecté à chaque lead et le changer"
+                title={t('ca.agentsAide')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-sm border transition-all ${
                   modeAgents
                     ? 'bg-[#A35139] text-white border-[#A35139]'
@@ -1115,7 +1118,7 @@ export default function CentreAppelAgent() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0">
                   <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
                 </svg>
-                {modeAgents ? 'Masquer les agents' : "Changer d'agent"}
+                {modeAgents ? t('ca.masquerAgents') : t('ca.changerAgent')}
               </button>
             )}
 
@@ -1128,7 +1131,7 @@ export default function CentreAppelAgent() {
                     : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                Filtres
+                {t('commun.filtres')}
                 {nombreFiltresActifs > 0 && (
                   <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FFB162] text-[#1B2632] text-[11px] font-bold flex items-center justify-center">
                     {nombreFiltresActifs}
@@ -1146,23 +1149,23 @@ export default function CentreAppelAgent() {
                   />
                   <div className="fixed inset-x-3 bottom-3 max-h-[85dvh] overflow-y-auto z-50 sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[300px] sm:max-h-none sm:overflow-visible bg-white rounded-2xl border border-[#C9C1B1] shadow-xl p-5 pop-in">
                     <div className="flex items-center justify-between mb-4">
-                      <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">Filtres</span>
+                      <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">{t('commun.filtres')}</span>
                       {nombreFiltresActifs > 0 && (
                         <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">
-                          Tout effacer
+                          {t('ca.toutEffacer')}
                         </button>
                       )}
                     </div>
 
                     <div className="flex flex-col gap-4">
-                      <SelectFiltre label="Pays" value={filtrePays} onChange={appliquer(setFiltrePays)} options={optionsFiltres.pays.map(p => ({ value: p.id, label: p.nom }))} placeholder="Tous les pays" />
-                      <SelectFiltre label="Produit" value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={[...optionsProduit(catalogue), { value: NON_RECONNU, label: `Produit non reconnu${nbNonReconnu != null ? ` (${nbNonReconnu})` : ''}` }]} placeholder="Tous les produits" />
-                      <SelectFiltre label="Ville" value={filtreVille} onChange={appliquer(setFiltreVille)} options={optionsFiltres.villes.map(v => ({ value: v, label: v }))} placeholder="Toutes les villes" />
-                      <SelectFiltre label="Source" value={filtreSource} onChange={appliquer(setFiltreSource)} options={optionsFiltres.sources.map(s => ({ value: s, label: s }))} placeholder="Toutes les sources" />
+                      <SelectFiltre label={t('commun.pays')} value={filtrePays} onChange={appliquer(setFiltrePays)} options={optionsFiltres.pays.map(p => ({ value: p.id, label: p.nom }))} placeholder={t('ca.tousPays')} />
+                      <SelectFiltre label={t('commun.produit')} value={filtreProduit} onChange={appliquer(setFiltreProduit)} options={[...optionsProduit(catalogue), { value: NON_RECONNU, label: `${t('ca.produitNonReconnu')}${nbNonReconnu != null ? ` (${nbNonReconnu})` : ''}` }]} placeholder={t('ca.tousProduits')} />
+                      <SelectFiltre label={t('ca.ville')} value={filtreVille} onChange={appliquer(setFiltreVille)} options={optionsFiltres.villes.map(v => ({ value: v, label: v }))} placeholder={t('ca.toutesVilles')} />
+                      <SelectFiltre label={t('ca.source')} value={filtreSource} onChange={appliquer(setFiltreSource)} options={optionsFiltres.sources.map(s => ({ value: s, label: s }))} placeholder={t('ca.toutesSources')} />
                     </div>
 
                     <button onClick={() => setPanneauFiltresOuvert(false)} className="w-full mt-5 py-3 sm:py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors">
-                      Appliquer
+                      {t('ca.appliquer')}
                     </button>
                   </div>
                 </>
@@ -1172,13 +1175,13 @@ export default function CentreAppelAgent() {
             {/* La période (17/11) : le calendrier de Commandes, en français,
                 une seule case « du → au ». Mêmes valeurs AAAA-MM-JJ qu'avant. */}
             <div className="w-full sm:w-[250px]">
-              <PlageDates etiquette="centre-appel" du={dateDebut} au={dateFin} placeholder="Période d'arrivée"
+              <PlageDates etiquette="centre-appel" du={dateDebut} au={dateFin} placeholder={t('ca.periodeArrivee')}
                 onChange={(du, au) => { setDateDebut(du); setDateFin(au); allerPage1() }} />
             </div>
 
             {filtresActifs && (
               <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">
-                Réinitialiser
+                {t('commun.reinitialiser')}
               </button>
             )}
           </div>
@@ -1186,11 +1189,11 @@ export default function CentreAppelAgent() {
 
         {(nombreFiltresActifs > 0 || filtreAgent) && (
           <div className="flex flex-wrap items-center gap-2">
-            {filtreAgent && <ChipFiltre label={`Agent : ${nomFiltreAgent}`} onClear={() => appliquer(setFiltreAgent)('')} />}
-            {filtrePays && <ChipFiltre label={`Pays : ${optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || ''}`} onClear={() => appliquer(setFiltrePays)('')} />}
-            {filtreProduit && <ChipFiltre label={`Produit : ${nomProduitFiltre(filtreProduit, catalogue)}`} onClear={() => appliquer(setFiltreProduit)('')} />}
-            {filtreVille && <ChipFiltre label={`Ville : ${filtreVille}`} onClear={() => appliquer(setFiltreVille)('')} />}
-            {filtreSource && <ChipFiltre label={`Source : ${filtreSource}`} onClear={() => appliquer(setFiltreSource)('')} />}
+            {filtreAgent && <ChipFiltre label={t('ca.puce', { nom: t('ca.agent'), valeur: nomFiltreAgent })} onClear={() => appliquer(setFiltreAgent)('')} />}
+            {filtrePays && <ChipFiltre label={t('ca.puce', { nom: t('commun.pays'), valeur: optionsFiltres.pays.find(p => String(p.id) === String(filtrePays))?.nom || '' })} onClear={() => appliquer(setFiltrePays)('')} />}
+            {filtreProduit && <ChipFiltre label={t('ca.puce', { nom: t('commun.produit'), valeur: nomProduitFiltre(filtreProduit, catalogue) })} onClear={() => appliquer(setFiltreProduit)('')} />}
+            {filtreVille && <ChipFiltre label={t('ca.puce', { nom: t('ca.ville'), valeur: filtreVille })} onClear={() => appliquer(setFiltreVille)('')} />}
+            {filtreSource && <ChipFiltre label={t('ca.puce', { nom: t('ca.source'), valeur: filtreSource })} onClear={() => appliquer(setFiltreSource)('')} />}
           </div>
         )}
       </header>
@@ -1200,29 +1203,29 @@ export default function CentreAppelAgent() {
       {peutAgirEnMasse && lignesCochees.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm">
           <span className="text-sm font-semibold">
-            {lignesCochees.length} lead{lignesCochees.length > 1 ? 's' : ''} coché{lignesCochees.length > 1 ? 's' : ''}
-            <span className="font-normal text-white/60"> — sur cette page seulement</span>
+            {t('ca.leadsCoches', { n: lignesCochees.length })}
+            <span className="font-normal text-white/60">{t('commun.surCettePage')}</span>
           </span>
           <select
             value={agentLot}
             onChange={(e) => setAgentLot(e.target.value)}
             className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none max-w-full sm:max-w-[220px]"
           >
-            <option value="">Affecter à…</option>
+            <option value="">{t('ca.affecterA')}</option>
             {agentsPourLot.map((a) => <option key={a.id} value={a.id}>{a.nom}</option>)}
           </select>
           {agentsPourLot.length === 0 && (
-            <span className="text-xs text-[#FFB162]">Aucun agent ne couvre tous les pays cochés.</span>
+            <span className="text-xs text-[#FFB162]">{t('ca.aucunAgentPays')}</span>
           )}
           <button
             onClick={affecterLot}
             disabled={!agentLot || lotEnCours}
             className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50"
           >
-            {lotEnCours ? 'Affectation…' : 'Affecter'}
+            {lotEnCours ? t('ca.affectation') : t('ca.affecter')}
           </button>
           <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
-            Tout décocher
+            {t('commun.toutDecocher')}
           </button>
         </div>
       )}
@@ -1236,31 +1239,31 @@ export default function CentreAppelAgent() {
                   <th className="pl-4 pr-1 py-3 w-[1%]">
                     {/* Coche ce qui est AFFICHÉ, jamais la base entière : le titre le dit. */}
                     <input type="checkbox" checked={toutCoche} onChange={basculerTout} disabled={lignesCochables.length === 0}
-                      title={`Cocher les ${lignesCochables.length} leads de cette page (pas toute la base)`}
-                      aria-label="Cocher les leads de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                      title={t('ca.cocherPage', { n: lignesCochables.length })}
+                      aria-label={t('ca.cocherPageCourt')} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                   </th>
                 )}
-                {!vueAgent && <th className="px-4 py-3">Date</th>}
-                <th className="px-4 py-3">Client</th>
-                <th className="px-4 py-3">Lieu</th>
-                <th className="px-4 py-3">Produit</th>
-                <th className="px-4 py-3 text-right">Prix</th>
-                {modeAgents && <th className="px-4 py-3">Agent affecté</th>}
-                <th className="px-4 py-3">Statut</th>
+                {!vueAgent && <th className="px-4 py-3">{t('commun.date')}</th>}
+                <th className="px-4 py-3">{t('commun.client')}</th>
+                <th className="px-4 py-3">{t('commun.lieu')}</th>
+                <th className="px-4 py-3">{t('commun.produit')}</th>
+                <th className="px-4 py-3 text-right">{t('commun.prix')}</th>
+                {modeAgents && <th className="px-4 py-3">{t('ca.agentAffecte')}</th>}
+                <th className="px-4 py-3">{t('commun.statut')}</th>
                 {/* « Traiter » collé à droite : visible même si le tableau défile. */}
                 <th className="px-4 py-3 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {loading ? (
-                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{t('commun.chargement')}</td></tr>
               ) : erreurChargement ? (
-                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-sm font-medium text-[#A35139]">Impossible de charger les leads : {erreurChargement}</td></tr>
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-sm font-medium text-[#A35139]">{t('ca.erreurLeads', { erreur: erreurChargement })}</td></tr>
               ) : commandes.length === 0 ? (
-                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? 'Aucun lead ne vous est assigné.'
+                <tr><td colSpan={nbColonnes} className="px-6 py-12 text-center text-[#1B2632]/60">{agentActuel ? t('ca.aucunAssigne')
                   : comptes?.totalATraiter != null
-                    ? `Aucun lead pour « ${nomFiltreAgent} ». Tous agents confondus : ${comptes.totalATraiter} à traiter, ${comptes.totalTraites} en suivi.`
-                    : 'Aucune commande pour ce filtre.'}</td></tr>
+                    ? t('ca.aucunPourAgent', { nom: nomFiltreAgent, aTraiter: comptes.totalATraiter, suivi: comptes.totalTraites })
+                    : t('ca.aucuneCommande')}</td></tr>
               ) : (
                 commandes.map((cmd, i) => {
                   const estSelectionne = commandeSelectionnee?.id === cmd.id
@@ -1273,17 +1276,17 @@ export default function CentreAppelAgent() {
                   // Le pager de chaque groupe, après sa dernière ligne, s'il a plusieurs pages.
                   const finDeGroupe = comptes && cmd.groupe !== commandes[i + 1]?.groupe
                   const pager = finDeGroupe && (cmd.groupe === 'a_traiter'
-                    ? comptes.pagesHaut > 1 && { libelle: 'À traiter', page: comptes.pageHaut, pages: comptes.pagesHaut, total: comptes.aTraiter, aller: setPage }
-                    : comptes.pagesBas > 1 && { libelle: 'En suivi', page: comptes.pageBas, pages: comptes.pagesBas, total: comptes.traites, aller: setPageBas })
+                    ? comptes.pagesHaut > 1 && { libelle: t('ca.libATraiter'), page: comptes.pageHaut, pages: comptes.pagesHaut, total: comptes.aTraiter, aller: setPage }
+                    : comptes.pagesBas > 1 && { libelle: t('ca.libEnSuivi'), page: comptes.pageBas, pages: comptes.pagesBas, total: comptes.traites, aller: setPageBas })
 
                   return (
                     <Fragment key={cmd.id}>
                     {separateur && (
                       <tr id="separateur-suivi" className="bg-[#F4F0E6] scroll-mt-14">
                         <td colSpan={nbColonnes} className="px-6 py-2.5 text-xs font-bold uppercase tracking-wider text-[#1B2632]/60 border-y border-[#C9C1B1]/60">
-                          {comptes.aTraiter === 0 ? 'Rien à traiter' : `${comptes.aTraiter} à traiter au-dessus`}
+                          {comptes.aTraiter === 0 ? t('ca.rienATraiter') : t('ca.aTraiterAuDessus', { n: comptes.aTraiter })}
                           <span className="text-[#1B2632]/30 mx-2">•</span>
-                          {comptes.traites} en suivi : {vueAgent ? 'rappels à venir, confirmées pas encore livrées' : 'non joints, rappels à venir, confirmées pas encore livrées'}
+                          {t(vueAgent ? 'ca.suiviAgent' : 'ca.suiviGlobal', { n: comptes.traites })}
                         </td>
                       </tr>
                     )}
@@ -1296,18 +1299,18 @@ export default function CentreAppelAgent() {
                         <td className="pl-4 pr-1 py-3" onClick={(e) => e.stopPropagation()}>
                           {cochable(cmd) && (
                             <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
-                              aria-label={`Cocher ${cmd.lead_id || 'ce lead'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                              aria-label={t('commun.cocher', { lead: cmd.lead_id || t('ca.ceLead') })} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                           )}
                         </td>
                       )}
                       {!vueAgent && (
                         <td className="px-4 py-3 text-sm font-medium text-[#1B2632]/80 whitespace-nowrap">
-                          {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">traité le</span>}
-                          {dateAffichage ? dateAffichage.toLocaleDateString('fr-FR') : '-'}
+                          {cmd.groupe === 'traite' && <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">{t('ca.traiteLe')}</span>}
+                          {dateAffichage ? dateAffichage.toLocaleDateString(locale) : '-'}
                         </td>
                       )}
                       <td className="px-4 py-3">
-                        <div className="font-bold text-[#1B2632] whitespace-nowrap">{cmd.client_nom || 'Client inconnu'}</div>
+                        <div className="font-bold text-[#1B2632] whitespace-nowrap">{cmd.client_nom || t('commun.clientInconnu')}</div>
                         {/* Texte simple, pas de lien d'appel (sa décision 17/11) :
                             on appelle depuis le panneau, bouton « Appeler ». */}
                         {cmd.client_telephone ? (
@@ -1315,12 +1318,12 @@ export default function CentreAppelAgent() {
                             {cmd.client_telephone}
                           </div>
                         ) : (
-                          <div className="font-mono text-xs text-[#1B2632]/40 mt-0.5">Aucun numéro</div>
+                          <div className="font-mono text-xs text-[#1B2632]/40 mt-0.5">{t('commun.aucunNumero')}</div>
                         )}
                         {/* Le Lead ID, sous le client : on le cherche rarement des yeux. */}
                         <div className="font-mono text-[11px] text-[#1B2632]/40 mt-0.5 whitespace-nowrap">#{cmd.lead_id || 'N/A'}</div>
                         {refusParId[cmd.id] && (
-                          <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">Refusé</span></div>
+                          <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">{t('commun.refuse')}</span></div>
                         )}
                       </td>
                       {/* Le lieu (17/11) : ville et pays sur une ligne, sans répéter un
@@ -1331,11 +1334,11 @@ export default function CentreAppelAgent() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="text-sm font-medium text-[#1B2632] max-w-[220px] truncate" title={cmd.produit}>{cmd.produit || '-'}</div>
-                        <div className="text-xs text-[#1B2632]/50 mt-0.5">Qté : {cmd.quantite || 1}</div>
+                        <div className="text-xs text-[#1B2632]/50 mt-0.5">{t('commun.qte', { n: cmd.quantite || 1 })}</div>
                       </td>
                       <td className="px-4 py-3 font-bold text-sm text-[#1B2632] whitespace-nowrap text-right">
                         {cmd.prix !== null && cmd.prix !== undefined
-                          ? <>{Number(cmd.prix).toLocaleString('fr-FR')}{cmd.pays?.devise && <span className="text-xs font-semibold text-[#1B2632]/50"> {cmd.pays.devise}</span>}</>
+                          ? <>{Number(cmd.prix).toLocaleString(locale)}{cmd.pays?.devise && <span className="text-xs font-semibold text-[#1B2632]/50"> {cmd.pays.devise}</span>}</>
                           : '-'}
                       </td>
                       {modeAgents && (
@@ -1343,7 +1346,7 @@ export default function CentreAppelAgent() {
                         // stopPropagation, choisir un agent déclencherait l'appel.
                         <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                           <div className="text-sm font-semibold text-[#1B2632] whitespace-nowrap mb-1">
-                            {nomAgent(cmd.agent_id) || <span className="text-[#A35139]">Non affecté</span>}
+                            {nomAgent(cmd.agent_id) || <span className="text-[#A35139]">{t('ca.nonAffecte')}</span>}
                           </div>
 
                           {/* Tout lead change d'agent, traité compris (29/10) : la même
@@ -1355,7 +1358,7 @@ export default function CentreAppelAgent() {
                                 onChange={(e) => setAgentChoisi((prec) => ({ ...prec, [cmd.id]: e.target.value }))}
                                 className="text-xs border border-[#C9C1B1] rounded-lg px-2 py-1.5 bg-white text-[#1B2632] outline-none focus:border-[#FFB162] max-w-[140px]"
                               >
-                                <option value="">Changer…</option>
+                                <option value="">{t('ca.changer')}</option>
                                 {/* Un agent ne peut traiter que les leads de son pays :
                                     la même règle qu'en base, mais visible ici. */}
                                 {agentsAssignables
@@ -1389,13 +1392,13 @@ export default function CentreAppelAgent() {
                         })()}
                         {cmd.remonte_le && !vueAgent && (
                           <div className="text-[11px] font-bold text-[#A35139] mt-1 whitespace-nowrap">
-                            ↑ Remonté le {new Date(cmd.remonte_le).toLocaleDateString('fr-FR')}
+                            {t('ca.remonteLe', { date: new Date(cmd.remonte_le).toLocaleDateString(locale) })}
                           </div>
                         )}
                         {/* Le suivi : où en est la livraison de ce qu'il a confirmé. */}
                         {cmd.groupe === 'traite' && statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) && (
                           <div className="text-[11px] text-[#1B2632]/50 mt-1 whitespace-nowrap">
-                            Livraison : {LIVRAISON_LIBELLES[cmd.statut_livraison] || 'pas encore assignée'}
+                            {t('ca.livraison', { statut: LIVRAISON_LIBELLES[cmd.statut_livraison] || t('ca.pasAssignee') })}
                           </div>
                         )}
                       </td>
@@ -1403,7 +1406,7 @@ export default function CentreAppelAgent() {
                           que le texte qui défile dessous ne se voie pas. */}
                       <td className={`px-4 py-3 text-right sticky right-0 ${estSelectionne ? 'bg-[#FFF4E8]' : 'bg-white'}`}>
                         <button className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors bg-[#1B2632] text-white hover:bg-[#2C3B4D]`}>
-                          {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) ? 'Modifier' : 'Traiter'}
+                          {statutsSuivis.some((st) => st.nom === cmd.statut_confirmation) ? t('ca.modifier') : t('ca.traiter')}
                         </button>
                       </td>
                     </tr>
@@ -1412,13 +1415,13 @@ export default function CentreAppelAgent() {
                         <td colSpan={nbColonnes} className="px-6 py-2.5">
                           <div className="flex items-center justify-between gap-3 text-xs text-[#1B2632]/60">
                             <span>
-                              <b className="text-[#1B2632]/80">{pager.libelle}</b> : {(pager.page - 1) * ITEMS_PER_PAGE + 1}–{Math.min(pager.page * ITEMS_PER_PAGE, pager.total)} sur {pager.total}
+                              <b className="text-[#1B2632]/80">{pager.libelle}</b> : {t('ca.pagerPlage', { debut: (pager.page - 1) * ITEMS_PER_PAGE + 1, fin: Math.min(pager.page * ITEMS_PER_PAGE, pager.total), total: pager.total })}
                             </span>
                             <span className="flex gap-2">
                               <button onClick={() => pager.aller(pager.page - 1)} disabled={pager.page <= 1 || loading}
-                                className="px-3 py-1.5 rounded-lg font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50">Précédent</button>
+                                className="px-3 py-1.5 rounded-lg font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50">{t('commun.precedent')}</button>
                               <button onClick={() => pager.aller(pager.page + 1)} disabled={pager.page >= pager.pages || loading}
-                                className="px-3 py-1.5 rounded-lg font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50">Suivant</button>
+                                className="px-3 py-1.5 rounded-lg font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50">{t('commun.suivant')}</button>
                             </span>
                           </div>
                         </td>
@@ -1442,7 +1445,7 @@ export default function CentreAppelAgent() {
             <div className="flex justify-between items-start px-6 py-5 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20">
               <div>
                 <h2 className="text-lg font-bold text-[#1B2632] mb-1">
-                  {statutsSuivis.some((st) => st.nom === commandeSelectionnee.statut_confirmation) ? 'Modifier la commande' : 'Traiter la commande'}
+                  {statutsSuivis.some((st) => st.nom === commandeSelectionnee.statut_confirmation) ? t('ca.modifierCommande') : t('ca.traiterCommande')}
                 </h2>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-mono text-[#A35139]">#{commandeSelectionnee.lead_id || 'N/A'}</span>
@@ -1474,8 +1477,8 @@ export default function CentreAppelAgent() {
             {estUnDoublon && (
               <div className="mx-6 mt-5 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-800">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider mb-0.5">Alerte Doublon</p>
-                  <p className="text-[11px] leading-tight opacity-90">Ce numéro de téléphone apparaît plusieurs fois dans la liste actuelle.</p>
+                  <p className="text-xs font-bold uppercase tracking-wider mb-0.5">{t('ca.alerteDoublon')}</p>
+                  <p className="text-[11px] leading-tight opacity-90">{t('ca.alerteDoublonTexte')}</p>
                 </div>
               </div>
             )}
@@ -1492,14 +1495,14 @@ export default function CentreAppelAgent() {
                 const devise = paysChoisi?.devise || commandeSelectionnee.pays?.devise || ''
                 return (
                   <div className="rounded-xl bg-[#1B2632] text-white px-4 py-3.5">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-1">À confirmer avec le client</p>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-white/50 mb-1">{t('ca.aConfirmer')}</p>
                     <p className="text-sm font-semibold leading-snug">
-                      {formData.produit || 'Produit non renseigné'}
+                      {formData.produit || t('ca.produitNonRenseigne')}
                       <span className="text-white/60 font-normal"> × {formData.quantite || 1}</span>
                     </p>
                     <div className="flex items-baseline justify-between gap-3 mt-1.5">
                       <span className="text-xl font-bold text-[#FFB162]">
-                        {Number(formData.prix || 0).toLocaleString('fr-FR')}{devise ? ` ${devise}` : ''}
+                        {Number(formData.prix || 0).toLocaleString(locale)}{devise ? ` ${devise}` : ''}
                       </span>
                       {lieu && <span className="text-xs text-white/70 text-right truncate">{lieu}</span>}
                     </div>
@@ -1509,7 +1512,7 @@ export default function CentreAppelAgent() {
 
               <div className="flex flex-col gap-5">
                 <div>
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Nom du client</label>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('ca.nomClient')}</label>
                   <input
                     type="text"
                     value={formData.client_nom}
@@ -1519,7 +1522,7 @@ export default function CentreAppelAgent() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Téléphone Principal</label>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('ca.telephonePrincipal')}</label>
                   <div className="flex gap-2 items-center">
                     <input
                       type="text"
@@ -1527,7 +1530,7 @@ export default function CentreAppelAgent() {
                       onChange={(e) => setFormData({...formData, client_telephone: e.target.value})}
                       className="flex-1 border-b border-[#C9C1B1] py-2 text-sm font-mono font-bold text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                     />
-                    <a href={`tel:${formData.client_telephone}`} title="Appeler" className="px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-semibold transition-colors">Appeler</a>
+                    <a href={`tel:${formData.client_telephone}`} title={t('ca.appeler')} className="px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg text-xs font-semibold transition-colors">{t('ca.appeler')}</a>
                     <a href={`https://wa.me/${formData.client_telephone.replace(/[+\s]/g, '')}?text=${whatsappTexte}`} target="_blank" rel="noreferrer" title="WhatsApp" className="px-3 py-1.5 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 rounded-lg text-xs font-semibold transition-colors">WhatsApp</a>
                   </div>
                   {/* Ce que le vendeur a déposé avec le lead : surtout les numéros
@@ -1540,7 +1543,7 @@ export default function CentreAppelAgent() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Zone officielle</label>
+                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('ca.zoneOfficielle')}</label>
                     <select
                       value={formData.zone_id}
                       onChange={(e) => {
@@ -1554,20 +1557,20 @@ export default function CentreAppelAgent() {
                       }}
                       className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] font-bold bg-transparent focus:outline-none focus:border-[#FFB162]"
                     >
-                      <option value="">Sélectionner...</option>
+                      <option value="">{t('ca.selectionner')}</option>
                       {listeZones.filter(z => !formData.pays_id || z.pays_id === formData.pays_id).map((z) => (
                         <option key={z.id} value={z.id}>{z.nom_zone}</option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Pays</label>
+                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('commun.pays')}</label>
                     <select
                       value={formData.pays_id}
                       onChange={(e) => setFormData({...formData, pays_id: e.target.value, zone_id: ''})}
                       className="w-full border-b border-[#C9C1B1] py-2 text-sm text-[#1B2632] focus:outline-none focus:border-[#FFB162] bg-transparent"
                     >
-                      <option value="">Sélectionner</option>
+                      <option value="">{t('ca.selectionner')}</option>
                       {listePays.map((p) => (
                         <option key={p.id} value={p.id}>{p.nom}</option>
                       ))}
@@ -1580,23 +1583,23 @@ export default function CentreAppelAgent() {
                     la porte. Un repère vaut une adresse. */}
                 <div>
                   <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
-                    Adresse de livraison {statutEnvoieAuLivreur && <span className="text-[#A35139]">*</span>}
+                    {t('ca.adresseLivraison')} {statutEnvoieAuLivreur && <span className="text-[#A35139]">*</span>}
                   </label>
                   <textarea
                     value={formData.adresse}
                     onChange={(e) => { setFormData({ ...formData, adresse: e.target.value }); setErreurEnvoi('') }}
-                    placeholder="Rue, quartier ou repère : « près du marché, maison bleue »"
+                    placeholder={t('ca.adresseAide')}
                     rows={2}
                     className={`w-full border-b py-2 text-sm text-[#1B2632] bg-transparent focus:outline-none focus:border-[#FFB162] resize-none ${adresseExigee ? 'border-[#A35139]' : 'border-[#C9C1B1]'}`}
                   />
                   {adresseExigee && (
-                    <p className="mt-1 text-[11px] font-medium text-[#A35139]">{MESSAGE_ADRESSE}</p>
+                    <p className="mt-1 text-[11px] font-medium text-[#A35139]">{t('ca.messageAdresse')}</p>
                   )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="sm:col-span-2">
-                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Produit</label>
+                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('commun.produit')}</label>
                     <div className="flex items-center gap-3">
                       {/* Le LIEN de la commande d'abord (10/11, T9), tant que le texte
                           n'a pas été changé pendant l'appel ; texte corrigé → retrouvé
@@ -1617,12 +1620,12 @@ export default function CentreAppelAgent() {
                         confirmation (la commande passe « Produit non reconnu »). */}
                     {commandeSelectionnee && !commandeSelectionnee.produit_id && (
                       <p className="mt-1.5 text-[11px] font-semibold text-[#A35139]">
-                        Produit non reconnu : la confirmation est impossible tant qu&apos;un responsable n&apos;a pas relié ce produit au catalogue.
+                        {t('ca.produitInconnuAide')}
                       </p>
                     )}
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Quantité</label>
+                    <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('commun.quantite')}</label>
                     {/* La quantité ne touche JAMAIS le prix (03/11) : le prix est le
                         total de l'offre (2 unités = 45 000, 3 = 58 000), pas
                         quantité × prix unitaire. L'agent saisit le nouveau total. */}
@@ -1646,7 +1649,7 @@ export default function CentreAppelAgent() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Prix total</label>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('ca.prixTotal')}</label>
                   <input
                     type="number"
                     step="0.01"
@@ -1668,7 +1671,7 @@ export default function CentreAppelAgent() {
               {appelsPrecedents.length > 0 && (
                 <div className="p-4 rounded-xl border border-[#C9C1B1]/50 bg-white">
                   <p className="text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-2.5">
-                    {appelsPrecedents.length} appel{appelsPrecedents.length > 1 ? 's' : ''} déjà passé{appelsPrecedents.length > 1 ? 's' : ''}
+                    {t('ca.appelsPasses', { n: appelsPrecedents.length })}
                   </p>
                   <div className="flex flex-col gap-2">
                     {appelsPrecedents.map((a) => (
@@ -1676,7 +1679,7 @@ export default function CentreAppelAgent() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-semibold text-[#1B2632]">{libelleStatut(a.statut) || '—'}</span>
                           <span className="text-[#1B2632]/45">
-                            {a.created_at ? new Date(a.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : ''}
+                            {a.created_at ? new Date(a.created_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : ''}
                           </span>
                           {a.duree_secondes != null && (
                             <span className="font-mono text-[#1B2632]/55">{formatTemps(a.duree_secondes)}</span>
@@ -1697,14 +1700,14 @@ export default function CentreAppelAgent() {
                 écran, le pied défile lui-même au lieu de cacher le bouton. */}
             <div className="px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/30 max-h-[60vh] overflow-y-auto shrink-0">
               <div className="mb-3">
-                <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-1.5">Résultat de l'appel <span className="text-[#A35139]">*</span></label>
+                <label className="block text-xs font-bold text-[#1B2632] uppercase tracking-wider mb-1.5">{t('ca.resultatAppel')} <span className="text-[#A35139]">*</span></label>
                 
                 <select
                   value={statutChoisi}
                   onChange={(e) => setStatutChoisi(e.target.value)}
                   className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2.5 text-sm font-bold text-[#1B2632] bg-white shadow-sm"
                 >
-                  <option value="" disabled>Choisir le résultat…</option>
+                  <option value="" disabled>{t('ca.choisirResultat')}</option>
                   {statutsDeLaCommande.map((s) => (
                     <option key={s.id} value={s.nom}>{libelleStatut(s.nom)}</option>
                   ))}
@@ -1713,7 +1716,7 @@ export default function CentreAppelAgent() {
                 {rappelDemande && (
                   <div className="mt-3">
                     <label className="block text-[11px] font-bold text-[#8a5a1f] uppercase mb-1">
-                      Date et heure de rappel <span className="text-[#A35139]">*</span>
+                      {t('ca.dateRappel')} <span className="text-[#A35139]">*</span>
                     </label>
                     <input
                       type="datetime-local"
@@ -1725,7 +1728,7 @@ export default function CentreAppelAgent() {
                       className="w-full border border-[#FFB162]/50 rounded-lg px-3 py-2 text-sm text-[#8a5a1f] bg-white outline-none"
                     />
                     <p className="mt-1 text-[11px] text-[#8a5a1f]/80">
-                      À votre heure. Le lead reste en bas de la liste jusque-là, puis remonte seul dans la file.
+                      {t('ca.rappelAide')}
                     </p>
                   </div>
                 )}
@@ -1734,11 +1737,11 @@ export default function CentreAppelAgent() {
                     statut et l'heure : on garde ce qui a été dit à ce moment-là,
                     au lieu d'écraser une note unique sur la commande. */}
                 <div className="mt-2.5">
-                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Note de l&apos;appel</label>
+                  <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('ca.noteAppel')}</label>
                   <textarea
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder="Ce que le client a dit..."
+                    placeholder={t('ca.noteAide')}
                     className="w-full border border-[#1B2632]/20 rounded-lg px-3 py-2 text-sm text-[#1B2632] bg-white outline-none focus:border-[#FFB162] min-h-[44px]"
                   />
                 </div>
@@ -1750,13 +1753,13 @@ export default function CentreAppelAgent() {
               <button
                 onClick={validerAppel}
                 disabled={envoiEnCours || !statutChoisi}
-                title={!statutChoisi ? "Choisissez d'abord le résultat de l'appel" : undefined}
+                title={!statutChoisi ? t('ca.choisirDabord') : undefined}
                 className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md"
               >
-                {envoiEnCours ? 'Enregistrement...' : 'Enregistrer'}
+                {envoiEnCours ? t('commun.enregistrement') : t('commun.enregistrer')}
               </button>
               ) : (
-                <p className="text-center text-xs text-[#1B2632]/50 py-3">Lecture seule : vous n'avez pas le droit de traiter un appel.</p>
+                <p className="text-center text-xs text-[#1B2632]/50 py-3">{t('ca.lectureSeule')}</p>
               )}
             </div>
           </div>

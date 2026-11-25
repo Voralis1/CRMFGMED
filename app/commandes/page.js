@@ -28,6 +28,7 @@ import ResultatLot, { resumerLot } from '../components/ResultatLot'
 import CommandesSupprimees from '../components/CommandesSupprimees'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
+import { useLangue } from '../context/LangueContext'
 // Le filtre par agent, partagé avec le Centre d'appel : même liste, mêmes règles.
 import SelectAgent, { filtrerParAgent, nomFiltreAgent, useAgentsEntreprise } from '../components/FiltreAgent'
 import PlageDates from '../components/PlageDates'
@@ -121,6 +122,8 @@ export default function GestionCommandesPage() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
 
@@ -170,12 +173,13 @@ export default function GestionCommandesPage() {
   // « Tout » d'abord et par défaut (17/11) : on tape, on trouve — sans
   // choisir avant dans quelle colonne chercher.
   const CHAMPS_RECHERCHE = [
-    { cle: 'tout', nom: 'Tout', aide: 'Nom, téléphone, Lead ID, N° de suivi…' },
-    { cle: 'tracking_number', nom: 'N° de suivi' },
-    { cle: 'lead_id', nom: 'Lead ID' },
-    { cle: 'client_telephone', nom: 'Téléphone client' },
-    { cle: 'client_nom', nom: 'Nom du client' },
-    { cle: 'ville_zone', nom: 'Ville / Zone' },
+    // nom / aide = des clés de texte (25/11, lib/langues).
+    { cle: 'tout', nom: 'commun.tout', aide: 'cmd.rechercheTout' },
+    { cle: 'tracking_number', nom: 'commun.numSuivi' },
+    { cle: 'lead_id', nom: 'commun.leadId' },
+    { cle: 'client_telephone', nom: 'commun.telephoneClient' },
+    { cle: 'client_nom', nom: 'commun.nomClient' },
+    { cle: 'ville_zone', nom: 'commun.villeZone' },
   ]
   // statut     : ce que le BADGE montre — 'en_attente' (tout statut ouvert),
   //              ou un statut qui ferme (Confirmed, Cancelled…) ;
@@ -405,11 +409,10 @@ export default function GestionCommandesPage() {
   async function refusPaysSansEntrepot(paysId) {
     const { data, error } = await supabase.from('v_pays_livrables')
       .select('pays_id').eq('tenant_id', tenantKey).eq('pays_id', paysId).limit(1)
-    if (error) return 'Impossible de vérifier que ce pays a un entrepôt. Réessayez.'
+    if (error) return t('cmd.paysSansEntrepotVerif')
     if (!data || data.length === 0) {
-      const nom = listePays.find((p) => p.id === paysId)?.nom || 'Ce pays'
-      return `${nom} n\u2019a pas d\u2019entrepôt : une commande y serait impossible à expédier. ` +
-        'Un responsable doit d\u2019abord créer l\u2019entrepôt de ce pays dans Paramètres.'
+      const nom = listePays.find((p) => p.id === paysId)?.nom || t('cmd.cePays')
+      return t('cmd.paysSansEntrepot', { nom })
     }
     return null
   }
@@ -595,7 +598,7 @@ export default function GestionCommandesPage() {
     setNbNonReconnu(nonReconnu && !nonReconnu.error ? nonReconnu.count : null)
 
     if (error) {
-      annoncer(`Chargement impossible : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('commun.chargementImpossible', { erreur: messageErreur(error) }), 'erreur')
     } else {
       setCommandes(data || [])
       setTotalCommandes(count || 0)
@@ -642,7 +645,7 @@ export default function GestionCommandesPage() {
     setDroitSuppression(peutSupprimer ? null : undefined)
     if (peutSupprimer) {
       supabase.rpc('suppression_commande_possible', { p_id: cmd.id }).then(({ data, error }) => {
-        setDroitSuppression(error ? { permis: false, motif: messageErreur(error) } : (data || [])[0] || { permis: false, motif: 'Commande introuvable.' })
+        setDroitSuppression(error ? { permis: false, motif: messageErreur(error) } : (data || [])[0] || { permis: false, motif: t('cmd.introuvable') })
       })
     }
     if (peutChangerStatut) {
@@ -655,7 +658,7 @@ export default function GestionCommandesPage() {
         .then(({ data, error }) => {
           if (error) { setLivraisonDetail({ erreur: messageErreur(error) }); return }
           const l = (data || [])[0]
-          setLivraisonDetail(l ? { statut: l.statut, livreur: l.livreurs?.nom || 'sans nom' } : null)
+          setLivraisonDetail(l ? { statut: l.statut, livreur: l.livreurs?.nom || t('cmd.sansNom') } : null)
         })
     }
     // « Pending » n'est pas un choix de la liste : le retour au début a son
@@ -711,18 +714,18 @@ export default function GestionCommandesPage() {
     const lignes = lignesCochees
     if (!lignes.length || !lotStatut) return
     setErreurLot('')
-    if (lotStatut === 'Pending' && !lotMotif.trim()) { setErreurLot('Le motif est obligatoire pour renvoyer en attente.'); return }
+    if (lotStatut === 'Pending' && !lotMotif.trim()) { setErreurLot(t('cmd.motifObligatoire')); return }
     const rappelIso = lotDemandeRappel ? depuisChampLocal(lotRappel) : null
     // Même règle que le tiroir et confirmer-appel (_shared/appel.ts), dite
     // avant l'envoi ; la base revérifie.
     const refusRappel = rappelRefuse(listeStatutsDB, lotStatut, null, rappelIso)
     if (refusRappel) { setErreurLot(refusRappel); return }
-    if (!(await confirmer({ titre: 'Changer le statut', message: `Passer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page en « ${libelleStatut(lotStatut)} » ?`, bouton: 'Appliquer' }))) return
+    if (!(await confirmer({ titre: t('cmd.changerStatutTitre'), message: t('cmd.changerStatutMessage', { n: lignes.length, statut: libelleStatut(lotStatut) }), bouton: t('cmd.appliquer') }))) return
 
     setLotEnCours(true)
     const { data, error } = await appelerChangerStatut(lignes.map((c) => c.id), lotStatut, lotMotif.trim(), rappelIso)
     setLotEnCours(false)
-    const action = `Statut « ${libelleStatut(lotStatut)} »`
+    const action = t('cmd.actionStatut', { statut: libelleStatut(lotStatut) })
     if (error) { setResultatLot({ action, erreur: messageErreur(error) }); return }
     const resume = resumerLot(action, data, lignes)
     setResultatLot(resume)
@@ -738,15 +741,15 @@ export default function GestionCommandesPage() {
   async function supprimerDetail() {
     if (!detail || !droitSuppression?.permis) return
     const raison = raisonSuppression.trim()
-    if (!raison) { setErreurSuppression('La raison est obligatoire.'); return }
+    if (!raison) { setErreurSuppression(t('cmd.raisonObligatoire')); return }
     const avertir = droitSuppression.avertissement ? `\n\n${droitSuppression.avertissement}` : ''
-    if (!(await confirmer({ titre: 'Supprimer la commande', message: `Supprimer la commande ${detail.lead_id || ''} ? Elle disparaît de Commandes et du Centre d'appel. Pas de retour possible.${avertir}`, bouton: 'Supprimer', danger: true }))) return
+    if (!(await confirmer({ titre: t('cmd.supprimerTitre'), message: t('cmd.supprimerMessage', { lead: detail.lead_id || '' }) + avertir, bouton: t('cmd.supprimer'), danger: true }))) return
     setSuppressionEnCours(true)
     setErreurSuppression('')
     const { data, error } = await supabase.rpc('supprimer_commandes', { p_tenant: tenantKey, p_ids: [detail.id], p_raison: raison })
     setSuppressionEnCours(false)
     const r = (data || [])[0]
-    if (error || r?.resultat !== 'applique') { setErreurSuppression(error ? messageErreur(error, 'Suppression refusée.') : (r?.motif || 'Suppression refusée.')); return }
+    if (error || r?.resultat !== 'applique') { setErreurSuppression(error ? messageErreur(error, t('cmd.suppressionRefusee')) : (r?.motif || t('cmd.suppressionRefusee'))); return }
     setDetail(null)
     await chargerCommandes(pageActuelle)
   }
@@ -756,16 +759,16 @@ export default function GestionCommandesPage() {
     if (!lignes.length) return
     setErreurLot('')
     const raison = await confirmer({
-      titre: 'Supprimer les commandes',
-      message: `Supprimer ${lignes.length} commande${lignes.length > 1 ? 's' : ''} de cette page ? Elles disparaissent de Commandes et du Centre d'appel ; le stock sorti revient. Pas de retour possible.`,
-      saisie: { label: 'Raison', placeholder: 'Ex. : test, doublon, client injoignable…' },
-      bouton: 'Supprimer', danger: true,
+      titre: t('cmd.supprimerLotTitre'),
+      message: t('cmd.supprimerLotMessage', { n: lignes.length }),
+      saisie: { label: t('msg.raison'), placeholder: t('cmd.raisonExemple') },
+      bouton: t('cmd.supprimer'), danger: true,
     })
     if (!raison) return
     setLotEnCours(true)
     const { data, error } = await supabase.rpc('supprimer_commandes', { p_tenant: tenantKey, p_ids: lignes.map((c) => c.id), p_raison: raison })
     setLotEnCours(false)
-    const action = 'Suppression'
+    const action = t('cmd.actionSuppression')
     if (error) { setResultatLot({ action, erreur: messageErreur(error) }); return }
     const resume = resumerLot(action, data, lignes)
     setResultatLot(resume)
@@ -885,7 +888,7 @@ export default function GestionCommandesPage() {
       .eq('tenant_id', tenantKey)
 
     if (error) {
-      annoncer(`Assignation impossible : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('cmd.assignationImpossible', { erreur: messageErreur(error) }), 'erreur')
     } else {
       setCommandes(prev => prev.map(cmd => cmd.id === commandeId ? { ...cmd, agent_id: valueToSet } : cmd))
     }
@@ -900,7 +903,7 @@ export default function GestionCommandesPage() {
     // lui-même le « vendeur » et la commande n'entrait dans aucun relevé.
     const vendeurId = estSeller ? (user?.id || null) : (newCmd.vendeur_id || null)
     if (!vendeurId) {
-      annoncer('Choisissez le vendeur de cette commande.', 'erreur')
+      annoncer(t('cmd.choisirVendeur'), 'erreur')
       return
     }
     setCreationLoading(true)
@@ -935,7 +938,7 @@ export default function GestionCommandesPage() {
     setCreationLoading(false)
 
     if (error) {
-      annoncer(`Création impossible : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('cmd.creationImpossible', { erreur: messageErreur(error) }), 'erreur')
     } else {
       setIsCreateModalOpen(false)
       setNewCmd({ client_nom: '', client_telephone: '', pays_id: '', ville_zone: '', adresse: '', produit: '', quantite: 1, prix: 0, agent_id: '', commentaire_1: '', vendeur_id: '' })
@@ -970,7 +973,7 @@ export default function GestionCommandesPage() {
       }
     } catch (e) {
       setExportEnCours(false)
-      annoncer(`Export impossible : ${messageErreur(e)}`, 'erreur')
+      annoncer(t('commun.exportImpossible', { erreur: messageErreur(e) }), 'erreur')
       return
     }
     setExportEnCours(false)
@@ -980,7 +983,7 @@ export default function GestionCommandesPage() {
 
   function exporterCSV(commandes, nomFichier) {
     if (commandes.length === 0) {
-      annoncer('Aucune commande à exporter dans cette vue.', 'info');
+      annoncer(t('cmd.rienAExporter'), 'info');
       return;
     }
 
@@ -1173,20 +1176,20 @@ export default function GestionCommandesPage() {
         })),
       })
     } catch (e) {
-      setApercu({ erreur: messageErreur(e, 'Fichier illisible.') })
+      setApercu({ erreur: messageErreur(e, t('cmdi.fichierIllisible')) })
     }
   }
 
   async function lancerImport() {
     if (!vendeurDeLImport()) {
-      setImportResultat({ erreur: 'Choisissez le vendeur de ce fichier.' })
+      setImportResultat({ erreur: t('cmdi.choisirVendeurFichier') })
       return
     }
     if (!importFichier || !tenantKey) return
     const cible = cibleImport
     // Sans pays, impossible de savoir quel agent doit recevoir les leads :
     // mieux vaut refuser tout de suite que les faire entrer orphelins.
-    if (!cible) { annoncer(estSeller ? 'Choisissez le pays.' : 'Choisissez l\u2019entrepôt.', 'erreur'); return }
+    if (!cible) { annoncer(estSeller ? t('cmdi.choisirPaysMsg') : t('cmdi.choisirEntrepotMsg'), 'erreur'); return }
     // Le filet : les sélecteurs ne proposent déjà qu'un pays qui a un
     // entrepôt (vendeur : v_pays_livrables ; responsable : un entrepôt qui a
     // un pays). Relu ici au cas où il aurait changé depuis le chargement.
@@ -1209,7 +1212,7 @@ export default function GestionCommandesPage() {
       const lignes = XLSX.utils.sheet_to_json(classeur.Sheets[classeur.SheetNames[0]], { defval: '' })
 
       if (lignes.length === 0) {
-        setImportResultat({ erreur: 'Aucune ligne dans le fichier : la feuille « Commandes » n\u2019a que ses en-têtes.' })
+        setImportResultat({ erreur: t('cmdi.aucuneLigneErreur') })
         setImportEnCours(false)
         return
       }
@@ -1222,12 +1225,12 @@ export default function GestionCommandesPage() {
 
         const tel = separerNumeros(lireChamp(L, 'telephone'))
         if (!tel.principal) {
-          refusees.push(`Ligne ${i + 2} : téléphone manquant`)
+          refusees.push(t('cmdi.telManquant', { n: i + 2 }))
           return null
         }
         // Sans ville, ni zone ni livreur : la commande n'irait nulle part.
         if (!String(lireChamp(L, 'ville') ?? '').trim()) {
-          refusees.push(`Ligne ${i + 2} : ville manquante`)
+          refusees.push(t('cmdi.villeManquante', { n: i + 2 }))
           return null
         }
         // Le filet du verdict produit : « Importer » est bloqué tant qu'un
@@ -1235,7 +1238,7 @@ export default function GestionCommandesPage() {
         // contourné.
         const refus = produitsRefuses.find((v) => v.produit === produitDeLaLigne(L))
         if (refus) {
-          refusees.push(`Ligne ${i + 2} : ${refus.message}`)
+          refusees.push(t('cmdi.ligneRefus', { n: i + 2, raison: refus.message }))
           return null
         }
         const art = fusionnerProduits(
@@ -1278,7 +1281,7 @@ export default function GestionCommandesPage() {
       }).filter(Boolean)
 
       if (candidates.length === 0) {
-        setImportResultat({ erreur: 'Aucune ligne utilisable.', refusees })
+        setImportResultat({ erreur: t('cmdi.aucuneUtilisable'), refusees })
         setImportEnCours(false)
         return
       }
@@ -1322,7 +1325,7 @@ export default function GestionCommandesPage() {
 
       if (inserees > 0) { chargerCommandes(0); setPageActuelle(0) }
     } catch (e) {
-      setImportResultat({ erreur: messageErreur(e, 'Erreur de lecture du fichier.') })
+      setImportResultat({ erreur: messageErreur(e, t('cmdi.lectureFichier')) })
     }
     setImportEnCours(false)
   }
@@ -1330,7 +1333,7 @@ export default function GestionCommandesPage() {
   const totalPages = Math.max(1, Math.ceil(totalCommandes / taillePage))
 
   if (authLoading || permsLoading) {
-    return <div className="p-8 text-[#1B2632] font-medium text-center mt-20">Vérification des accès...</div>
+    return <div className="p-8 text-[#1B2632] font-medium text-center mt-20">{t('commun.verificationAcces')}</div>
   }
 
   return (
@@ -1348,7 +1351,7 @@ export default function GestionCommandesPage() {
           taille de page est descendue dans la pagination, où on la cherche. */}
       <header className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-3 border-b border-[#C9C1B1]/50 pb-3">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Commandes</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('cmd.titre')}</h1>
           <span className="text-sm font-semibold text-[#1B2632]/50">{totalCommandes}</span>
         </div>
         
@@ -1357,14 +1360,14 @@ export default function GestionCommandesPage() {
             <select
               value={filtreVendeur}
               onChange={(e) => { setFiltreVendeur(e.target.value); setPageActuelle(0) }}
-              title="N'afficher que les leads d'un vendeur"
+              title={t('cmd.filtrerVendeur')}
               className="flex-1 sm:flex-none px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] outline-none focus:border-[#FFB162] cursor-pointer"
             >
-              <option value="">Tous les vendeurs</option>
+              <option value="">{t('cmd.tousVendeurs')}</option>
               {listeSellers.map((v) => (
                 <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>
               ))}
-              <option value="aucun">Sans vendeur (imports)</option>
+              <option value="aucun">{t('cmd.sansVendeur')}</option>
             </select>
           )}
 
@@ -1372,32 +1375,32 @@ export default function GestionCommandesPage() {
             <button
               onClick={exporter}
               disabled={exportEnCours}
-              title={lignesCochees.length > 0 ? `Exporter les ${lignesCochees.length} commandes cochées` : 'Exporter tout ce que les filtres gardent (toutes les pages)'}
+              title={lignesCochees.length > 0 ? t('cmd.exporterCoches', { n: lignesCochees.length }) : t('cmd.exporterTout')}
               className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
             >
               <IconExporter />
-              {exportEnCours ? 'Export…' : lignesCochees.length > 0 ? `Exporter la sélection (${lignesCochees.length})` : 'Exporter CSV'}
+              {exportEnCours ? t('cmd.export') : lignesCochees.length > 0 ? t('cmd.exporterSelection', { n: lignesCochees.length }) : t('cmd.exporterCSV')}
             </button>
           )}
 
           {hasPermission('importer_csv') && (
             <button
               onClick={ouvrirImport}
-              title="Importer des commandes depuis un fichier CSV ou Excel"
+              title={t('cmd.importerAide')}
               className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#1B2632] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
             >
               <IconImporter />
-              Importer CSV
+              {t('cmd.importerCSV')}
             </button>
           )}
           
           {hasPermission('supprimer_commandes') && (
             <button
               onClick={() => setJournalOuvert(true)}
-              title="Les commandes supprimées : qui, quand, pourquoi"
+              title={t('cmd.supprimeesAide')}
               className="flex flex-1 sm:flex-none justify-center items-center gap-2 px-3 sm:px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-full text-sm font-bold text-[#A35139] hover:bg-[#EEE9DF]/50 hover:border-[#1B2632]/30 transition-colors shadow-sm cursor-pointer"
             >
-              Commandes supprimées
+              {t('cmd.supprimees')}
             </button>
           )}
 
@@ -1407,7 +1410,7 @@ export default function GestionCommandesPage() {
               className="flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2.5 bg-[#1B2632] text-white rounded-full text-sm font-bold hover:bg-[#2C3B4D] transition-colors shadow-sm cursor-pointer"
             >
               <IconPlus />
-              Nouvelle commande
+              {t('cmd.nouvelle')}
             </button>
           )}
         </div>
@@ -1424,7 +1427,7 @@ export default function GestionCommandesPage() {
             onChange={(e) => setChampRecherche(e.target.value)}
             className="px-3 py-2.5 bg-[#F4F0E6] border border-[#C9C1B1] rounded-xl sm:rounded-l-xl sm:rounded-r-none sm:border-r-0 text-sm font-semibold text-[#1B2632] outline-none cursor-pointer"
           >
-            {CHAMPS_RECHERCHE.map((c) => <option key={c.cle} value={c.cle}>{c.nom}</option>)}
+            {CHAMPS_RECHERCHE.map((c) => <option key={c.cle} value={c.cle}>{t(c.nom)}</option>)}
           </select>
 
           <input
@@ -1433,7 +1436,7 @@ export default function GestionCommandesPage() {
             value={recherche}
             onChange={(e) => setRecherche(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') appliquerFiltres() }}
-            placeholder={(() => { const c = CHAMPS_RECHERCHE.find((x) => x.cle === champRecherche); return c?.aide || c?.nom })()}
+            placeholder={(() => { const c = CHAMPS_RECHERCHE.find((x) => x.cle === champRecherche); return t(c?.aide || c?.nom) })()}
             className="flex-1 min-w-0 px-4 py-2.5 border border-[#C9C1B1] sm:border-x-0 rounded-xl sm:rounded-none text-sm text-[#1B2632] outline-none focus:border-[#FFB162] placeholder:text-[#1B2632]/30"
           />
 
@@ -1443,7 +1446,7 @@ export default function GestionCommandesPage() {
               className="flex-1 sm:flex-none px-4 py-2.5 sm:py-0 rounded-xl sm:rounded-none bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors flex items-center justify-center gap-2 font-semibold text-sm"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
-              <span className="sm:hidden">Rechercher</span>
+              <span className="sm:hidden">{t('commun.rechercher')}</span>
             </button>
 
             <button
@@ -1454,7 +1457,7 @@ export default function GestionCommandesPage() {
                   : 'bg-white text-[#1B2632] border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
               }`}
             >
-              <span className="sm:hidden">Filtres</span>
+              <span className="sm:hidden">{t('commun.filtres')}</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
                    style={{ transform: panneauOuvert ? 'rotate(180deg)' : 'none' }}>
                 <polyline points="6 9 12 15 18 9" />
@@ -1474,10 +1477,10 @@ export default function GestionCommandesPage() {
               {/* Statut = ce que montre le BADGE : « En attente » couvre tous
                   les statuts ouverts ; le détail est le filtre suivant. */}
               <div>
-                <label className="cm-label">Statut</label>
+                <label className="cm-label">{t('commun.statut')}</label>
                 <select className="cm-input" value={filtres.statut} data-filtre-statut
                   onChange={(e) => setFiltres({ ...filtres, statut: e.target.value, sousStatut: e.target.value === 'en_attente' ? filtres.sousStatut : '' })}>
-                  <option value="">Tous</option>
+                  <option value="">{t('commun.tous')}</option>
                   <option value="en_attente">{libelleStatut('Pending')}</option>
                   {groupesStatuts.fermants.map((nom) => <option key={nom} value={nom}>{libelleStatut(nom)}</option>)}
                 </select>
@@ -1488,65 +1491,65 @@ export default function GestionCommandesPage() {
                   choisir tant que « En attente » n'est pas choisi — un statut
                   qui conclut n'a pas de sous-statut. */}
               <div>
-                <label className="cm-label">Sous-statut</label>
+                <label className="cm-label">{t('cmd.sousStatut')}</label>
                 <select className="cm-input disabled:bg-[#F4F0E6] disabled:text-[#1B2632]/40 disabled:cursor-not-allowed"
                   value={filtres.statut === 'en_attente' ? filtres.sousStatut : ''} data-filtre-sous-statut
                   disabled={filtres.statut !== 'en_attente'}
                   onChange={(e) => setFiltres({ ...filtres, sousStatut: e.target.value })}>
                   {filtres.statut === 'en_attente' ? (
                     <>
-                      <option value="">Tous</option>
+                      <option value="">{t('commun.tous')}</option>
                       {/* « À appeler » et pas « Jamais appelé » : un lead renvoyé
                           en attente a pu être appelé avant. */}
-                      <option value="pending">To call</option>
+                      <option value="pending">{t('cmd.aAppeler')}</option>
                       <option value="non_joint">{groupesStatuts.non_joint.map(libelleStatut).join(', ') || 'Unreached'}</option>
                       <option value="rappel">{groupesStatuts.rappel.map(libelleStatut).join(', ') || 'Reminder'}</option>
                     </>
                   ) : <option value="">—</option>}
                 </select>
                 {filtres.statut !== 'en_attente' && (
-                  <p className="text-[11px] text-[#1B2632]/45 mt-1">Seulement pour « Pending ».</p>
+                  <p className="text-[11px] text-[#1B2632]/45 mt-1">{t('cmd.seulementPending')}</p>
                 )}
               </div>
 
               <div>
-                <label className="cm-label">Produit</label>
+                <label className="cm-label">{t('commun.produit')}</label>
                 <select className="cm-input" value={filtres.produit}
                   onChange={(e) => setFiltres({ ...filtres, produit: e.target.value })}>
-                  <option value="">Tous</option>
+                  <option value="">{t('commun.tous')}</option>
                   {/* Le catalogue que la personne voit, puis tout le reste. */}
                   {optionsProduit(catalogue).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  <option value={NON_RECONNU}>Produit non reconnu{nbNonReconnu != null ? ` (${nbNonReconnu})` : ''}</option>
+                  <option value={NON_RECONNU}>{t('cmd.produitNonReconnu')}{nbNonReconnu != null ? ` (${nbNonReconnu})` : ''}</option>
                 </select>
               </div>
 
               {/* Responsables seulement : le filtre du Centre d'appel (FiltreAgent.js). */}
               {peutChoisirAgent && (
                 <div>
-                  <label className="cm-label">Agent</label>
+                  <label className="cm-label">{t('ca.agent')}</label>
                   <SelectAgent agents={agentsFiltre} value={filtres.agent} className="cm-input"
                     onChange={(v) => setFiltres({ ...filtres, agent: v })} />
                 </div>
               )}
 
               <div>
-                <label className="cm-label">Source</label>
+                <label className="cm-label">{t('ca.source')}</label>
                 <select className="cm-input" value={filtres.source}
                   onChange={(e) => setFiltres({ ...filtres, source: e.target.value })}>
-                  <option value="">Toutes</option>
+                  <option value="">{t('commun.toutes')}</option>
                   {sourcesConnues.map((so) => <option key={so} value={so}>{so}</option>)}
                 </select>
               </div>
 
               {/* Deux périodes, UN contrôle chacune (calendrier). */}
               <div>
-                <label className="cm-label">Dernière action</label>
+                <label className="cm-label">{t('cmd.derniereAction')}</label>
                 <PlageDates etiquette="action" du={filtres.actionDu} au={filtres.actionAu}
                   onChange={(du, au) => setFiltres((f) => ({ ...f, actionDu: du, actionAu: au }))} />
               </div>
 
               <div>
-                <label className="cm-label">Date de la commande</label>
+                <label className="cm-label">{t('cmd.dateCommande')}</label>
                 <PlageDates etiquette="commande" du={filtres.du} au={filtres.au}
                   onChange={(du, au) => setFiltres((f) => ({ ...f, du, au }))} />
               </div>
@@ -1556,12 +1559,12 @@ export default function GestionCommandesPage() {
               <button onClick={reinitialiserFiltres}
                 className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 2v6h6" /><path d="M3.5 13a9 9 0 1 0 2.6-5.4L3 8" /></svg>
-                Réinitialiser
+                {t('commun.reinitialiser')}
               </button>
               <button onClick={appliquerFiltres}
                 className="flex items-center justify-center gap-2 px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
-                Filtrer
+                {t('commun.filtrer')}
               </button>
             </div>
           </div>
@@ -1572,11 +1575,11 @@ export default function GestionCommandesPage() {
           « il n'y en a que 23 ». */}
       <div className="flex flex-wrap items-center gap-3 text-sm text-[#1B2632]/70 -mt-2" data-comptes>
         <span>
-          <b className="text-[#1B2632]">{totalCommandes}</b> commande{totalCommandes > 1 ? 's' : ''}
-          {totalSansFiltre != null && totalSansFiltre !== totalCommandes && <> sur <b className="text-[#1B2632]">{totalSansFiltre}</b> (filtrées)</>}
+          <b className="text-[#1B2632]">{totalCommandes}</b> {t('cmd.motCommandes', { n: totalCommandes })}
+          {totalSansFiltre != null && totalSansFiltre !== totalCommandes && t('cmd.surFiltrees', { n: totalSansFiltre })}
         </span>
         {(nombreFiltresActifs > 0 || filtresActifs.texte) && (
-          <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">Retirer les filtres</button>
+          <button onClick={reinitialiserFiltres} className="text-xs font-semibold text-[#A35139] hover:underline">{t('cmd.retirerFiltres')}</button>
         )}
       </div>
 
@@ -1586,37 +1589,37 @@ export default function GestionCommandesPage() {
         <div className="flex flex-col gap-2 bg-[#1B2632] text-white rounded-2xl px-4 py-3 shadow-sm" data-barre-lot>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm font-semibold">
-              {lignesCochees.length} commande{lignesCochees.length > 1 ? 's' : ''} cochée{lignesCochees.length > 1 ? 's' : ''}
-              <span className="font-normal text-white/60"> — sur cette page seulement</span>
+              {t('commun.cochees', { n: lignesCochees.length })}
+              <span className="font-normal text-white/60">{t('commun.surCettePage')}</span>
             </span>
             <select value={lotStatut} onChange={(e) => { setLotStatut(e.target.value); setErreurLot('') }}
               className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none">
-              <option value="">Changer le statut en…</option>
+              <option value="">{t('cmd.changerStatutEn')}</option>
               {groupesStatuts.ouverts.map((nom) => <option key={nom} value={nom}>{libelleStatut(nom)}</option>)}
             </select>
             {lotStatut && (
               <input type="text" value={lotMotif} onChange={(e) => setLotMotif(e.target.value)}
-                placeholder={lotStatut === 'Pending' ? 'Motif (obligatoire)' : 'Motif (facultatif)'}
+                placeholder={lotStatut === 'Pending' ? t('cmd.motifObl') : t('cmd.motifFac')}
                 className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none min-w-[200px] flex-1 sm:flex-none" />
             )}
             {lotDemandeRappel && (
               <input type="datetime-local" value={lotRappel} onChange={(e) => setLotRappel(e.target.value)}
                 min={bornesChamp(RAPPEL_MAX_JOURS).min} max={bornesChamp(RAPPEL_MAX_JOURS).max}
-                title="Une heure pour toutes les commandes cochées"
+                title={t('cmd.uneHeure')}
                 className="text-sm rounded-lg px-3 py-2 bg-white text-[#1B2632] outline-none" />
             )}
             <button onClick={changerStatutLot} disabled={!lotStatut || lotEnCours}
               className="text-sm font-bold px-4 py-2 rounded-lg bg-[#FFB162] text-[#1B2632] disabled:opacity-50">
-              {lotEnCours ? 'En cours…' : 'Appliquer'}
+              {lotEnCours ? t('cmd.enCours') : t('cmd.appliquer')}
             </button>
             {peutSupprimerEnMasse && (
               <button onClick={supprimerLot} disabled={lotEnCours}
                 className="text-sm font-bold px-4 py-2 rounded-lg bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50">
-                Supprimer la sélection
+                {t('cmd.supprimerSelection')}
               </button>
             )}
             <button onClick={() => { setSelection({}); setRefusParId({}) }} className="text-xs font-semibold text-white/70 hover:text-white underline">
-              Tout décocher
+              {t('commun.toutDecocher')}
             </button>
           </div>
           {erreurLot && <p className="text-xs text-[#FFB162]">{erreurLot}</p>}
@@ -1633,28 +1636,28 @@ export default function GestionCommandesPage() {
                   <th className="pl-4 pr-1 py-3.5 w-[1%]">
                     {/* Coche ce qui est AFFICHÉ, jamais la base entière. */}
                     <input type="checkbox" checked={toutCoche} onChange={basculerTout} disabled={commandes.length === 0}
-                      title={`Cocher les ${commandes.length} commandes de cette page (pas toute la base)`}
-                      aria-label="Cocher les commandes de cette page" className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                      title={t('commun.cocherPage', { n: commandes.length })}
+                      aria-label={t('commun.cocherPageCourt')} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                   </th>
                 )}
                 <th className="px-4 py-3.5">ID</th>
-                {!estSeller && <th className="px-4 py-3.5">Vendeur</th>}
-                <th className="px-4 py-3.5">Client</th>
-                <th className="px-4 py-3.5">Détails</th>
-                <th className="px-4 py-3.5">Adresse de livraison</th>
-                <th className="px-4 py-3.5">Prix total</th>
-                <th className="px-4 py-3.5">Date</th>
-                <th className="px-4 py-3.5">Statut</th>
+                {!estSeller && <th className="px-4 py-3.5">{t('commun.vendeur')}</th>}
+                <th className="px-4 py-3.5">{t('commun.client')}</th>
+                <th className="px-4 py-3.5">{t('cmd.details')}</th>
+                <th className="px-4 py-3.5">{t('cmd.adresseLivraison')}</th>
+                <th className="px-4 py-3.5">{t('cmd.prixTotal')}</th>
+                <th className="px-4 py-3.5">{t('commun.date')}</th>
+                <th className="px-4 py-3.5">{t('commun.statut')}</th>
                 {/* Collé à droite : toujours visible même si le tableau défile. */}
                 <th className="px-4 py-3.5 text-center sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody>
               {chargement ? (
-                <tr><td colSpan={nbColonnes} className="text-center py-12 text-[#1B2632]/50">Chargement des données...</td></tr>
+                <tr><td colSpan={nbColonnes} className="text-center py-12 text-[#1B2632]/50">{t('cmd.chargementDonnees')}</td></tr>
               ) : commandes.length === 0 ? (
                 <tr><td colSpan={nbColonnes} className="text-center py-12 text-[#1B2632]/50">
-                  {totalSansFiltre ? `Aucune commande pour ces filtres — ${totalSansFiltre} au total.` : 'Aucune commande trouvée.'}
+                  {totalSansFiltre ? t('cmd.aucunePourFiltres', { n: totalSansFiltre }) : t('cmd.aucuneTrouvee')}
                 </td></tr>
               ) : (
                 commandes.map((cmd, i) => {
@@ -1670,14 +1673,14 @@ export default function GestionCommandesPage() {
                     {peutSelectionner && (
                       <td className="pl-4 pr-1 py-3.5 align-top" onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" checked={!!selection[cmd.id]} onChange={() => basculer(cmd.id)}
-                          aria-label={`Cocher ${cmd.lead_id || 'cette commande'}`} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
+                          aria-label={t('commun.cocher', { lead: cmd.lead_id || t('commun.cetteCommande') })} className="w-4 h-4 cursor-pointer accent-[#1B2632]" />
                       </td>
                     )}
 
                     <td className="px-4 py-3.5 align-top">
                       <div className="font-mono font-bold text-[#1B2632] text-[13px] whitespace-nowrap">{cmd.lead_id || '—'}</div>
                       {refusParId[cmd.id] && (
-                        <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">Refusé</span></div>
+                        <div><span title={refusParId[cmd.id]} className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md font-sans text-[10px] font-bold uppercase tracking-wide text-[#A35139] bg-[#A35139]/10 border border-[#A35139]/30 cursor-help">{t('commun.refuse')}</span></div>
                       )}
                       <div className="text-[10px] text-[#5c5648] uppercase bg-[#EEE9DF] px-1.5 py-0.5 rounded w-fit mt-1">
                         {cmd.source || 'direct'}{cmd.source_sheet ? ` · ${cmd.source_sheet}` : ''}
@@ -1696,7 +1699,7 @@ export default function GestionCommandesPage() {
                         // Texte simple, pas de lien d'appel (sa décision 17/11).
                         ? <span className="block font-mono text-[#1B2632]/75 font-semibold">{cmd.client_telephone}</span>
                         : <span className="text-[#1B2632]/35">—</span>}
-                      {cmd.is_doublon && <span className="block mt-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold w-fit">Doublon</span>}
+                      {cmd.is_doublon && <span className="block mt-1 text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold w-fit">{t('cmd.doublon')}</span>}
                     </td>
 
                     {/* Le chevron ouvre la ligne de détail juste en dessous. */}
@@ -1704,7 +1707,7 @@ export default function GestionCommandesPage() {
                       <button onClick={() => basculerLigne(cmd.id)} className="flex items-start gap-2 text-left cursor-pointer group">
                         <span className="leading-tight">
                           <span className="font-bold text-[#A35139]">1</span>{' '}
-                          <span className="text-[#1B2632]/80">produit</span>
+                          <span className="text-[#1B2632]/80">{t('commun.produitUn')}</span>
                           <span className="block text-[11px] text-[#1B2632]/50 whitespace-nowrap">
                             {cmd.created_at ? new Date(cmd.created_at).toLocaleDateString('fr-FR') : '—'}
                           </span>
@@ -1726,14 +1729,14 @@ export default function GestionCommandesPage() {
                     </td>
 
                     <td className="px-4 py-3.5 align-top whitespace-nowrap">
-                      <span className="font-bold text-sm text-[#1B2632]">{Number(cmd.prix ?? 0).toLocaleString('fr-FR')}</span>
+                      <span className="font-bold text-sm text-[#1B2632]">{Number(cmd.prix ?? 0).toLocaleString(locale)}</span>
                       {cmd.pays?.devise && <span className="text-[10px] text-[#1B2632]/50 ml-1 align-super">{cmd.pays.devise}</span>}
                     </td>
 
                     <td className="px-4 py-3.5 align-top text-sm text-[#1B2632]/75 whitespace-nowrap">
                       {/* Un seul format de date dans tout l'écran (17/11) : 16/11/2026 11:20,
                           comme le détail et l'historique (avant : 2026-11-16 11 h 20). */}
-                      {cmd.created_at ? new Date(cmd.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                      {cmd.created_at ? new Date(cmd.created_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                     </td>
 
                     <td className="px-4 py-3.5 align-top">
@@ -1749,7 +1752,7 @@ export default function GestionCommandesPage() {
                           derniere_tentative_*) — la seule définition d'une
                           tentative est en SQL. */}
                       {['non_joint', 'rappel'].includes(sousStatutOuvert(cmd.statut_confirmation, listeStatutsDB)) && (() => {
-                        const t = cmd.nb_tentatives > 0
+                        const tent = cmd.nb_tentatives > 0
                           ? { n: cmd.nb_tentatives, statut: cmd.derniere_tentative_statut, date: cmd.derniere_tentative_le }
                           : null
                         return (
@@ -1757,8 +1760,8 @@ export default function GestionCommandesPage() {
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" /></svg>
                             {/* Le mot = le dernier résultat ; le nombre = toutes les
                                 tentatives (Non joint et Rappel ensemble). */}
-                            {t
-                              ? <>{libelleStatut(t.statut)} — {t.n} tentative{t.n > 1 ? 's' : ''} — {new Date(t.date).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</>
+                            {tent
+                              ? <>{libelleStatut(tent.statut)} — {t('cmd.tentatives', { n: tent.n })} — {new Date(tent.date).toLocaleString(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</>
                               : libelleStatut(cmd.statut_confirmation)}
                           </span>
                         )
@@ -1766,7 +1769,7 @@ export default function GestionCommandesPage() {
                       {cmd.date_rappel && listeStatutsDB.some((st) => st.nom === cmd.statut_confirmation && st.necessite_rappel) && (
                         <span className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-1 w-fit">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
-                          Rappel prévu le {new Date(cmd.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}
+                          {t('cmd.rappelPrevu', { date: new Date(cmd.date_rappel).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })}
                         </span>
                       )}
                       {/* Le paiement ne se lit qu'une fois la commande livrée (ou
@@ -1776,16 +1779,16 @@ export default function GestionCommandesPage() {
                         if (!cmd.statut_livraison && !paiementUtile) return null
                         return (
                           <span className="block mt-1 text-[10px] text-[#1B2632]/55">
-                            {cmd.statut_livraison ? `Livraison : ${libelleDe(LIBELLES_LIVRAISON, cmd.statut_livraison)}` : ''}
+                            {cmd.statut_livraison ? t('cmd.livraisonStatut', { statut: libelleDe(LIBELLES_LIVRAISON, cmd.statut_livraison) }) : ''}
                             {cmd.statut_livraison && paiementUtile ? ' · ' : ''}
-                            {paiementUtile ? `Paiement : ${libelleDe(LIBELLES_PAIEMENT, cmd.statut_paiement)}` : ''}
+                            {paiementUtile ? t('cmd.paiementStatut', { statut: libelleDe(LIBELLES_PAIEMENT, cmd.statut_paiement) }) : ''}
                           </span>
                         )
                       })()}
                     </td>
 
                     <td className={`px-4 py-3.5 align-top text-center sticky right-0 ${fond}`}>
-                      <button onClick={(e) => { e.stopPropagation(); ouvrirDetail(cmd) }} title="Voir le détail"
+                      <button onClick={(e) => { e.stopPropagation(); ouvrirDetail(cmd) }} title={t('cmd.voirDetail')}
                         className="w-9 h-9 rounded-lg inline-flex items-center justify-center text-[#1B2632]/60 hover:text-[#A35139] hover:bg-[#EEE9DF] transition-colors cursor-pointer">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
                       </button>
@@ -1798,12 +1801,12 @@ export default function GestionCommandesPage() {
                         <table className="w-full text-left text-xs">
                           <thead>
                             <tr className="text-[10px] uppercase tracking-wider text-[#1B2632]/55 font-bold">
-                              <th className="px-3 py-2.5 w-[56px]">Image</th>
-                              <th className="px-3 py-2.5 w-[22%]">Entrepôt</th>
-                              <th className="px-3 py-2.5">Produit</th>
-                              <th className="px-3 py-2.5 w-[14%]">Prix</th>
-                              <th className="px-3 py-2.5 w-[12%]">Quantité</th>
-                              <th className="px-3 py-2.5 w-[18%]">Pays</th>
+                              <th className="px-3 py-2.5 w-[56px]">{t('cmd.image')}</th>
+                              <th className="px-3 py-2.5 w-[22%]">{t('cmd.entrepot')}</th>
+                              <th className="px-3 py-2.5">{t('commun.produit')}</th>
+                              <th className="px-3 py-2.5 w-[14%]">{t('commun.prix')}</th>
+                              <th className="px-3 py-2.5 w-[12%]">{t('commun.quantite')}</th>
+                              <th className="px-3 py-2.5 w-[18%]">{t('commun.pays')}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1817,7 +1820,7 @@ export default function GestionCommandesPage() {
                                     pas `entrepots` : il voit le pays, puisqu'un entrepôt = un pays
                                     et que la règle ne prend que celui du pays du client. */}
                                 {cmd.entrepots?.nom || (cmd.entrepot_id && cmd.pays?.nom)
-                                  || <span className="text-[#1B2632]/40">Non renseigné</span>}
+                                  || <span className="text-[#1B2632]/40">{t('cmd.nonRenseigne')}</span>}
                                 {/* La note de stock : pays sans entrepôt, produit introuvable ou ambigu, ou livré sans stock déclaré (négatif). */}
                                 {cmd.stock_note && (
                                   <span className="block mt-1 text-[10px] leading-snug text-[#A35139]">{cmd.stock_note}</span>
@@ -1830,7 +1833,7 @@ export default function GestionCommandesPage() {
                                 )}
                               </td>
                               <td className="px-3 py-2.5 font-semibold text-[#1B2632]">{cmd.produit || '—'}</td>
-                              <td className="px-3 py-2.5 text-[#1B2632]">{Number(cmd.prix ?? 0).toLocaleString('fr-FR')}{cmd.pays?.devise ? ` ${cmd.pays.devise}` : ''}</td>
+                              <td className="px-3 py-2.5 text-[#1B2632]">{Number(cmd.prix ?? 0).toLocaleString(locale)}{cmd.pays?.devise ? ` ${cmd.pays.devise}` : ''}</td>
                               <td className="px-3 py-2.5 font-mono text-[#1B2632]">{cmd.quantite ?? 1}</td>
                               <td className="px-3 py-2.5 text-[#1B2632]">{cmd.pays?.nom || <span className="text-[#1B2632]/40">—</span>}</td>
                             </tr>
@@ -1857,18 +1860,18 @@ export default function GestionCommandesPage() {
         {/* Pagination */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20">
           <span className="text-sm text-[#1B2632]/70 font-medium">
-            Page {pageActuelle + 1} sur {totalPages}
-            {totalCommandes > 0 && <span className="text-[#1B2632]/50"> · {pageActuelle * taillePage + 1}–{Math.min((pageActuelle + 1) * taillePage, totalCommandes)} sur {totalCommandes}</span>}
+            {t('commun.pageSur', { page: pageActuelle + 1, total: totalPages })}
+            {totalCommandes > 0 && <span className="text-[#1B2632]/50"> · {t('cmd.plage', { debut: pageActuelle * taillePage + 1, fin: Math.min((pageActuelle + 1) * taillePage, totalCommandes), total: totalCommandes })}</span>}
           </span>
           <div className="flex items-center gap-3">
             {/* Combien de lignes par page. Un simple état : un rechargement
                 revient à 50. */}
             <label className="flex items-center gap-2 text-sm text-[#1B2632]/60">
-              Par page
+              {t('commun.parPage')}
               <select
                 value={taillePage}
                 onChange={(e) => { setTaillePage(Number(e.target.value)); setPageActuelle(0) }}
-                title="Lignes par page"
+                title={t('commun.lignesParPage')}
                 data-taille-page
                 className="px-2.5 py-1.5 bg-white border border-[#C9C1B1] rounded-lg text-sm font-bold text-[#1B2632] outline-none cursor-pointer"
               >
@@ -1880,14 +1883,14 @@ export default function GestionCommandesPage() {
               disabled={pageActuelle === 0}
               className="px-4 py-2 bg-white border border-[#C9C1B1] rounded-xl text-sm font-medium hover:bg-[#EEE9DF]/50 disabled:opacity-40 transition-all cursor-pointer"
             >
-              Précédent
+              {t('commun.precedent')}
             </button>
             <button
               onClick={() => setPageActuelle(p => Math.min(totalPages - 1, p + 1))}
               disabled={pageActuelle >= totalPages - 1}
               className="px-4 py-2 bg-white border border-[#C9C1B1] rounded-xl text-sm font-medium hover:bg-[#EEE9DF]/50 disabled:opacity-40 transition-all cursor-pointer"
             >
-              Suivant
+              {t('commun.suivant')}
             </button>
           </div>
         </div>
@@ -1903,7 +1906,7 @@ export default function GestionCommandesPage() {
           <div className="bg-[#EEE9DF] rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
             
             <div className="flex justify-between items-center px-6 py-5 border-b border-[#C9C1B1] bg-white">
-              <h2 className="text-xl font-bold text-[#1B2632]">Nouvelle commande manuelle</h2>
+              <h2 className="text-xl font-bold text-[#1B2632]">{t('cmdn.titre')}</h2>
               <button onClick={() => setIsCreateModalOpen(false)} className="text-gray-400 hover:text-[#A35139] text-2xl leading-none">&times;</button>
             </div>
 
@@ -1911,31 +1914,31 @@ export default function GestionCommandesPage() {
               <form id="form-create-cmd" onSubmit={handleCreateCommande} className="space-y-5">
                 
                 <div className="bg-white p-5 rounded-xl border border-[#C9C1B1] shadow-sm space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-2">Informations Client</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-2">{t('cmdn.infosClient')}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Nom complet <span className="text-[#A35139]">*</span></label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('cmdn.nomComplet')} <span className="text-[#A35139]">*</span></label>
                       <input type="text" required value={newCmd.client_nom} onChange={(e) => setNewCmd({...newCmd, client_nom: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Ex: Jean Dupont" />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Téléphone <span className="text-[#A35139]">*</span></label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('commun.telephone')} <span className="text-[#A35139]">*</span></label>
                       <input type="tel" required value={newCmd.client_telephone} onChange={(e) => setNewCmd({...newCmd, client_telephone: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] font-mono" placeholder="+212 600 000 000" />
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Pays <span className="text-[#A35139]">*</span></label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('commun.pays')} <span className="text-[#A35139]">*</span></label>
                       <select required value={newCmd.pays_id} onChange={(e) => setNewCmd({...newCmd, pays_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
-                        <option value="">-- Choisir --</option>
+                        <option value="">{t('cmdn.choisir')}</option>
                         {/* Un pays sans entrepôt reste visible, pas choisissable : la commande ne pourrait jamais partir. */}
                         {listePays.map(p => {
                           const livrable = paysLivrables.some((x) => x.pays_id === p.id)
-                          return <option key={p.id} value={p.id} disabled={!livrable}>{p.nom}{livrable ? '' : ' — sans entrepôt'}</option>
+                          return <option key={p.id} value={p.id} disabled={!livrable}>{p.nom}{livrable ? '' : t('cmdn.sansEntrepot')}</option>
                         })}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Ville <span className="text-[#A35139]">*</span></label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('ca.ville')} <span className="text-[#A35139]">*</span></label>
                       <input type="text" required value={newCmd.ville_zone} onChange={(e) => setNewCmd({...newCmd, ville_zone: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Ex: Luanda" />
                     </div>
                   </div>
@@ -1943,61 +1946,61 @@ export default function GestionCommandesPage() {
                       l'adresse s'écrit pendant l'appel, par l'agent. */}
                   <div>
                     <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">
-                      Adresse <span className="font-normal text-[#1B2632]/50">— facultative, remplie par l&apos;agent</span>
+                      {t('commun.adresse')} <span className="font-normal text-[#1B2632]/50">{t('cmdn.adresseFac')}</span>
                     </label>
-                    <input type="text" value={newCmd.adresse} onChange={(e) => setNewCmd({...newCmd, adresse: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Laissez vide si vous ne la connaissez pas" />
+                    <input type="text" value={newCmd.adresse} onChange={(e) => setNewCmd({...newCmd, adresse: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder={t('cmdn.adresseAide')} />
                   </div>
                 </div>
 
                 <div className="bg-white p-5 rounded-xl border border-[#C9C1B1] shadow-sm space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-2">Détails Commande</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-2">{t('cmdn.detailsCommande')}</h3>
                   <div>
-                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Produit <span className="text-[#A35139]">*</span></label>
-                    <input type="text" required value={newCmd.produit} onChange={(e) => setNewCmd({...newCmd, produit: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Nom du produit..." />
+                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('commun.produit')} <span className="text-[#A35139]">*</span></label>
+                    <input type="text" required value={newCmd.produit} onChange={(e) => setNewCmd({...newCmd, produit: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder={t('cmdn.produitAide')} />
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Quantité</label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('commun.quantite')}</label>
                       <input type="number" min="1" value={newCmd.quantite} onChange={(e) => setNewCmd({...newCmd, quantite: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Prix total</label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('cmd.prixTotal')}</label>
                       <input type="number" step="0.01" value={newCmd.prix} onChange={(e) => setNewCmd({...newCmd, prix: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" />
                     </div>
                   </div>
 
                   {!estSeller && (
                     <div className="border-t border-[#C9C1B1] pt-4 mt-4">
-                      <label htmlFor="nouvelle-commande-vendeur" className="block text-xs font-semibold text-[#1B2632] mb-1.5">Vendeur <span className="text-[#A35139]">*</span></label>
+                      <label htmlFor="nouvelle-commande-vendeur" className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('commun.vendeur')} <span className="text-[#A35139]">*</span></label>
                       <select id="nouvelle-commande-vendeur" required value={newCmd.vendeur_id} onChange={(e) => setNewCmd({...newCmd, vendeur_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-white">
-                        <option value="">Choisir le vendeur…</option>
+                        <option value="">{t('cmdn.choisirVendeur')}</option>
                         {listeSellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
                       </select>
                       <p className="text-[11px] text-[#1B2632]/60 mt-1.5">
                         {listeSellers.length === 0
-                          ? "Aucun vendeur dans cette entreprise : créez d'abord un compte vendeur."
-                          : 'Le vendeur pour qui la commande est traitée : il la verra et sera payé dans son relevé.'}
+                          ? t('cmdn.aucunVendeur')
+                          : t('cmdn.vendeurAide')}
                       </p>
                     </div>
                   )}
 
                   {peutChoisirAgent && (
                     <div className="border-t border-[#C9C1B1] pt-4 mt-4">
-                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Assigner un agent immédiatement (Optionnel)</label>
+                      <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('cmdn.assignerAgent')}</label>
                       <select value={newCmd.agent_id} onChange={(e) => setNewCmd({...newCmd, agent_id: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162] bg-[#FFB162]/10 text-[#8a5a1f] font-bold">
-                        <option value="">-- Automatique --</option>
+                        <option value="">{t('cmdn.automatique')}</option>
                         {agents.map(ag => <option key={ag.id} value={ag.id}>{ag.nom}</option>)}
                       </select>
-                      <p className="text-[11px] text-[#1B2632]/60 mt-1.5">Laisser vide : le lead est attribué automatiquement.</p>
+                      <p className="text-[11px] text-[#1B2632]/60 mt-1.5">{t('cmdn.automatiqueAide')}</p>
                     </div>
                   )}
                 </div>
 
                 <div className="bg-white p-5 rounded-xl border border-[#C9C1B1] shadow-sm space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-2">Commentaires</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#A35139] mb-2">{t('cmdn.commentaires')}</h3>
                   <div>
-                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">Commentaire 1</label>
-                    <input type="text" value={newCmd.commentaire_1} onChange={(e) => setNewCmd({...newCmd, commentaire_1: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder="Commentaire initial..." />
+                    <label className="block text-xs font-semibold text-[#1B2632] mb-1.5">{t('cmdn.commentaire1')}</label>
+                    <input type="text" value={newCmd.commentaire_1} onChange={(e) => setNewCmd({...newCmd, commentaire_1: e.target.value})} className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg outline-none focus:border-[#FFB162]" placeholder={t('cmdn.commentaireAide')} />
                   </div>
                 </div>
 
@@ -2005,9 +2008,9 @@ export default function GestionCommandesPage() {
             </div>
 
             <div className="px-6 py-4 border-t border-[#C9C1B1] bg-white flex justify-end gap-3 shrink-0">
-              <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#C9C1B1] bg-[#EEE9DF]/50 hover:bg-[#C9C1B1]/50 text-[#1B2632] transition-colors cursor-pointer">Annuler</button>
+              <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-5 py-2.5 rounded-xl text-sm font-semibold border border-[#C9C1B1] bg-[#EEE9DF]/50 hover:bg-[#C9C1B1]/50 text-[#1B2632] transition-colors cursor-pointer">{t('msg.annuler')}</button>
               <button type="submit" form="form-create-cmd" disabled={creationLoading} className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-50 transition-colors shadow-md cursor-pointer">
-                {creationLoading ? 'Création...' : 'Créer la commande'}
+                {creationLoading ? t('cmdn.creation') : t('cmdn.creer')}
               </button>
             </div>
 
@@ -2024,11 +2027,11 @@ export default function GestionCommandesPage() {
             <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[900px] my-8 pop-in-cm">
 
               <div className="flex items-center gap-3 px-8 pt-7 pb-6">
-                <button onClick={() => setModaleImport(false)} title="Retour"
+                <button onClick={() => setModaleImport(false)} title={t('commun.retour')}
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0 cursor-pointer">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <h2 className="text-2xl font-bold text-[#A35139]">Importer des commandes</h2>
+                <h2 className="text-2xl font-bold text-[#A35139]">{t('cmdi.titre')}</h2>
               </div>
 
               <div className="px-8 pb-8 flex flex-col gap-5">
@@ -2038,29 +2041,28 @@ export default function GestionCommandesPage() {
                     décide quel agent prendra les leads. */}
                 <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
                   <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
-                    {estSeller ? 'Pays' : 'Entrepôt'} <span className="text-[#A35139]">*</span>
+                    {estSeller ? t('commun.pays') : t('cmd.entrepot')} <span className="text-[#A35139]">*</span>
                   </legend>
                   <select className="cm-input" value={importCibleId}
                     onChange={(e) => { setImportCibleId(e.target.value); setImportResultat(null) }}>
-                    <option value="">{estSeller ? 'Choisissez un pays...' : 'Choisissez un entrepôt...'}</option>
+                    <option value="">{estSeller ? t('cmdi.choisirPays') : t('cmdi.choisirEntrepot')}</option>
                     {estSeller
                       ? paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)
                       : listeEntrepots.map((e) => (
                           // Sans pays, la commande sortirait sans pays : visible, pas choisissable.
                           <option key={e.id} value={e.id} disabled={!e.pays_id}>
-                            {e.nom}{e.pays?.nom ? ` — ${e.pays.nom}` : ' — pays non renseigné'}
+                            {e.nom}{e.pays?.nom ? ` — ${e.pays.nom}` : t('cmdi.paysNonRenseigne')}
                           </option>
                         ))}
                   </select>
                   {!estSeller && listeEntrepots.length === 0 && (
                     <p className="text-[11px] text-[#A35139] mt-2 font-medium">
-                      Aucun entrepôt. Créez-en un dans Paramètres avant d&apos;importer.
+                      {t('cmdi.aucunEntrepot')}
                     </p>
                   )}
                   {estSeller && paysLivrables.length === 0 && (
                     <p className="text-[11px] text-[#A35139] mt-2 font-medium">
-                      Aucun pays livrable pour l&apos;instant. Prévenez un responsable :
-                      aucun entrepôt n&apos;est rattaché à un pays.
+                      {t('cmdi.aucunPaysLivrable')}
                     </p>
                   )}
                 </fieldset>
@@ -2071,16 +2073,16 @@ export default function GestionCommandesPage() {
                 {!estSeller && (
                   <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
                     <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
-                      Vendeur <span className="text-[#A35139]">*</span>
+                      {t('commun.vendeur')} <span className="text-[#A35139]">*</span>
                     </legend>
                     <select id="import-vendeur" className="cm-input" value={importVendeurId}
                       onChange={(e) => { setImportVendeurId(e.target.value); setImportResultat(null) }}>
-                      <option value="">Choisissez le vendeur de ce fichier...</option>
+                      <option value="">{t('cmdi.choisirVendeur')}</option>
                       {listeSellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
                     </select>
                     {listeSellers.length === 0 && (
                       <p className="text-[11px] text-[#A35139] mt-2 font-medium">
-                        Aucun vendeur dans cette entreprise : créez d&apos;abord un compte vendeur.
+                        {t('cmdn.aucunVendeur')}
                       </p>
                     )}
                   </fieldset>
@@ -2095,7 +2097,7 @@ export default function GestionCommandesPage() {
                              style={{ transform: importAide ? 'rotate(180deg)' : 'none' }}>
                           <polyline points="6 9 12 15 18 9" />
                         </svg>
-                        {importAide ? 'Masquer les colonnes attendues' : 'Voir les colonnes attendues'}
+                        {importAide ? t('cmdi.masquerColonnes') : t('cmdi.voirColonnes')}
                       </button>
                     </div>
 
@@ -2145,37 +2147,35 @@ export default function GestionCommandesPage() {
 
                     <fieldset className="border border-dashed border-[#C9C1B1] rounded-xl px-5 pb-5 pt-1">
                       <legend className="px-2 text-xs font-bold uppercase tracking-wider text-[#1B2632]/55">
-                        Fichier <span className="text-[#A35139]">*</span>
+                        {t('cmdi.fichier')} <span className="text-[#A35139]">*</span>
                       </legend>
                       <div className="flex items-center gap-3 flex-wrap">
                         <label className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
-                          Choisir un fichier
+                          {t('cmdi.choisirFichier')}
                           <input type="file" accept=".csv, .xlsx, .xls" className="hidden"
                             onChange={(e) => analyserFichier(e.target.files[0] || null)} />
                         </label>
                         <span className="text-sm text-[#1B2632]/60">
-                          {importFichier ? importFichier.name : 'Aucun fichier choisi'}
+                          {importFichier ? importFichier.name : t('cmdi.aucunFichier')}
                         </span>
                         <button type="button" onClick={telechargerModele}
                           className="ml-auto flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#A35139] border border-[#A35139]/40 hover:bg-[#A35139]/10 transition-colors cursor-pointer">
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
                           </svg>
-                          Télécharger le modèle
+                          {t('cmdi.telechargerModele')}
                         </button>
                       </div>
                       <p className="text-[11px] text-[#1B2632]/50 mt-2">
-                        La feuille « Commandes » du modèle n&apos;a que les en-têtes : collez vos
-                        commandes dessous, enregistrez, importez. L&apos;exemple et les consignes sont
-                        dans la feuille « À lire ».
+                        {t('cmdi.modeleAide')}
                       </p>
                     </fieldset>
 
                     {apercu && !apercu.erreur && (
                       <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                         <div className="px-4 py-2.5 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-bold text-[#1B2632]">Colonnes reconnues</span>
-                          <span className="text-xs text-[#1B2632]/55">{apercu.nbLignes} ligne{apercu.nbLignes > 1 ? 's' : ''} dans le fichier</span>
+                          <span className="text-sm font-bold text-[#1B2632]">{t('cmdi.colonnesReconnues')}</span>
+                          <span className="text-xs text-[#1B2632]/55">{t('cmdi.lignesFichier', { n: apercu.nbLignes })}</span>
                         </div>
                         <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
                           {apercu.correspondances.map((c) => (
@@ -2185,14 +2185,14 @@ export default function GestionCommandesPage() {
                                 <span className="font-mono font-semibold text-[#2E7D53] text-right truncate">{c.entete}</span>
                               ) : (
                                 <span className={`text-right ${c.requis ? 'text-[#A35139] font-semibold' : 'text-[#1B2632]/35'}`}>
-                                  {c.requis ? 'manquante — obligatoire' : c.note ? `absente — ${c.note}` : 'non trouvée'}
+                                  {c.requis ? t('cmdi.manquante') : c.note ? t('cmdi.absente', { note: c.note }) : t('cmdi.nonTrouvee')}
                                 </span>
                               )}
                             </div>
                           ))}
                         </div>
                         <p className="px-4 pb-3 text-[11px] text-[#1B2632]/50">
-                          En-têtes du fichier : <span className="font-mono">{apercu.entetes.join(' · ') || 'aucune'}</span>
+                          {t('cmdi.entetesFichier')} <span className="font-mono">{apercu.entetes.join(' · ') || t('cmdi.aucune')}</span>
                         </p>
                         {/* Une colonne obligatoire absente, c'est 100 % des lignes
                             refusées : on le dit ICI, avant, et on n'importe pas. */}
@@ -2200,13 +2200,12 @@ export default function GestionCommandesPage() {
                             son nombre de lignes, et quoi faire. Bloquant. */}
                         {!fichierSansLigne && verdictsImport?.etat === 'en_cours' && (
                           <div className="px-4 py-3 border-t border-[#C9C1B1]/50 text-xs text-[#1B2632]/60">
-                            Vérification des produits…
+                            {t('cmdi.verifProduits')}
                           </div>
                         )}
                         {!fichierSansLigne && verdictsImport?.etat === 'erreur' && (
                           <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs font-medium text-[#A35139]">
-                            Impossible de vérifier les produits du fichier. Choisissez le fichier à nouveau ; si
-                            l&apos;erreur revient, prévenez un responsable.
+                            {t('cmdi.verifImpossible')}
                           </div>
                         )}
                         {/* Le stock n'arrête rien : orange, « Importer » reste actif. */}
@@ -2215,7 +2214,7 @@ export default function GestionCommandesPage() {
                             {produitsEnRupture.map((v) => (
                               <p key={v.produit} className="font-medium">{v.message}</p>
                             ))}
-                            <p className="mt-1">Ces commandes entreront quand même.</p>
+                            <p className="mt-1">{t('cmdi.entrerontQuandMeme')}</p>
                           </div>
                         )}
                         {/* Reconnu par le nom : on donne le code, sans bloquer. */}
@@ -2228,7 +2227,7 @@ export default function GestionCommandesPage() {
                         )}
                         {!fichierSansLigne && stockNonVerifie && (
                           <div className="px-4 py-3 border-t border-[#C9C1B1]/50 text-xs text-[#1B2632]/60">
-                            Stock non vérifié pour l&apos;instant : l&apos;import reste possible.
+                            {t('cmdi.stockNonVerifie')}
                           </div>
                         )}
                         {!fichierSansLigne && produitsRefuses.length > 0 && (
@@ -2236,20 +2235,19 @@ export default function GestionCommandesPage() {
                             {produitsRefuses.map((v) => (
                               <p key={v.produit} className="font-medium">{v.message}</p>
                             ))}
-                            <p className="mt-1">Import bloqué tant que ces lignes sont dans le fichier.</p>
+                            <p className="mt-1">{t('cmdi.importBloque')}</p>
                           </div>
                         )}
                         {fichierSansLigne && (
                           <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs font-medium text-[#A35139]">
-                            Aucune ligne dans le fichier : la feuille « Commandes » n&apos;a que ses en-têtes. Ajoutez vos commandes sous les en-têtes.
+                            {t('cmdi.fichierVide')}
                           </div>
                         )}
                         {colonnesManquantes.length > 0 && (
                           <div className="px-4 py-3 border-t border-[#A35139]/30 bg-[#A35139]/10 text-xs text-[#A35139]">
                             {colonnesManquantes.map((c) => (
                               <p key={c.nom} className="font-medium">
-                                Colonne « {c.nom} » introuvable : sans elle, toutes les lignes seraient refusées.
-                                Renommez l&apos;en-tête du fichier ({c.aussi}) puis choisissez-le à nouveau.
+                                {t('cmdi.colonneIntrouvable', { nom: c.nom, aussi: c.aussi })}
                               </p>
                             ))}
                           </div>
@@ -2272,15 +2270,15 @@ export default function GestionCommandesPage() {
                           <span className="font-medium">{importResultat.erreur}</span>
                         ) : (
                           <span className="font-medium">
-                            {importResultat.inserees} commande{importResultat.inserees > 1 ? 's' : ''} importée{importResultat.inserees > 1 ? 's' : ''}
-                            {importResultat.doublons > 0 && ` · ${importResultat.doublons} déjà en base, ignorée${importResultat.doublons > 1 ? 's' : ''}`}
-                            {importResultat.refusees?.length > 0 && ` · ${importResultat.refusees.length} ligne(s) refusée(s)`}
+                            {t('cmdi.importees', { n: importResultat.inserees })}
+                            {importResultat.doublons > 0 && t('cmdi.dejaEnBase', { n: importResultat.doublons })}
+                            {importResultat.refusees?.length > 0 && t('cmdi.lignesRefusees', { n: importResultat.refusees.length })}
                           </span>
                         )}
                         {importResultat.refusees?.length > 0 && (
                           <ul className="mt-2 text-xs text-[#A35139] list-disc list-inside">
                             {importResultat.refusees.slice(0, 10).map((r, i) => <li key={i}>{r}</li>)}
-                            {importResultat.refusees.length > 10 && <li>…et {importResultat.refusees.length - 10} autres</li>}
+                            {importResultat.refusees.length > 10 && <li>{t('cmdi.etAutres', { n: importResultat.refusees.length - 10 })}</li>}
                           </ul>
                         )}
                       </div>
@@ -2289,11 +2287,11 @@ export default function GestionCommandesPage() {
                     <div className="flex justify-end gap-3">
                       <button onClick={() => setModaleImport(false)}
                         className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer">
-                        Fermer
+                        {t('cmdi.fermer')}
                       </button>
                       <button onClick={lancerImport} disabled={!importFichier || importEnCours || !cibleImport || (!estSeller && !importVendeurId) || colonnesManquantes.length > 0 || fichierSansLigne || verdictBloque}
                         className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-50 transition-colors cursor-pointer">
-                        {importEnCours ? 'Import en cours...' : 'Importer'}
+                        {importEnCours ? t('cmdi.enCours') : t('cmdi.importer')}
                       </button>
                     </div>
                   </>
@@ -2312,71 +2310,71 @@ export default function GestionCommandesPage() {
 
               <div className="flex items-center gap-3 px-8 pt-7 pb-6">
                 <button
-                  onClick={() => setDetail(null)} title="Retour"
+                  onClick={() => setDetail(null)} title={t('commun.retour')}
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0"
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <h2 className="text-2xl font-bold text-[#A35139]">Détail de la commande</h2>
+                <h2 className="text-2xl font-bold text-[#A35139]">{t('cmdd.titre')}</h2>
               </div>
 
               <div className="px-8 pb-8 flex flex-col gap-5">
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                  <CarteDetail titre="Commande">
-                    <LigneDetail label="Lead ID" valeur={detail.lead_id} mono />
-                    <LigneDetail label="N° de suivi" valeur={detail.tracking_number} mono />
-                    <LigneDetail label="Source" valeur={detail.source} />
-                    <LigneDetail label="Pays" valeur={detail.pays?.nom} />
-                    <LigneDetail label="Ville / Zone" valeur={detail.ville_zone} />
+                  <CarteDetail titre={t('cmdd.commande')}>
+                    <LigneDetail label={t('commun.leadId')} valeur={detail.lead_id} mono />
+                    <LigneDetail label={t('commun.numSuivi')} valeur={detail.tracking_number} mono />
+                    <LigneDetail label={t('ca.source')} valeur={detail.source} />
+                    <LigneDetail label={t('commun.pays')} valeur={detail.pays?.nom} />
+                    <LigneDetail label={t('commun.villeZone')} valeur={detail.ville_zone} />
                     <LigneDetail
-                      label="Arrivée"
-                      valeur={detail.created_at ? new Date(detail.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                      label={t('cmdd.arrivee')}
+                      valeur={detail.created_at ? new Date(detail.created_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
                     <LigneDetail
-                      label="Rappel prévu"
-                      valeur={detail.date_rappel ? new Date(detail.date_rappel).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                      label={t('cmdd.rappelPrevu')}
+                      valeur={detail.date_rappel ? new Date(detail.date_rappel).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
                   </CarteDetail>
 
-                  <CarteDetail titre="Client">
+                  <CarteDetail titre={t('commun.client')}>
                     <LigneDetail label="Nom" valeur={detail.client_nom} />
                     {detail.client_telephone ? (
                       <div className="flex items-baseline gap-2">
-                        <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">Téléphone</span>
+                        <span className="text-xs text-[#1B2632]/45 w-[110px] shrink-0">{t('commun.telephone')}</span>
                         {/* Texte simple, pas de lien d'appel (sa décision 17/11). */}
                         <span className="text-sm font-mono font-semibold text-[#1B2632]">
                           {detail.client_telephone}
                         </span>
                       </div>
                     ) : <LigneDetail label="Téléphone" valeur={null} />}
-                    <LigneDetail label="Adresse" valeur={detail.adresse} />
+                    <LigneDetail label={t('commun.adresse')} valeur={detail.adresse} />
                   </CarteDetail>
 
-                  <CarteDetail titre="Traitement">
+                  <CarteDetail titre={t('cmdd.traitement')}>
                     {/* Pas pour le vendeur (30/10) : la base ne lui donne plus les agents. */}
-                    {!estSeller && <LigneDetail label="Agent" valeur={detail.agents?.nom} />}
-                    <LigneDetail label="Vendeur" valeur={nomDuVendeur(detail.vendeur_id)} />
-                    <LigneDetail label="Statut d'appel" valeur={libelleStatut(detail.statut_confirmation)} />
-                    <LigneDetail label="Livraison" valeur={libelleDe(LIBELLES_LIVRAISON, detail.statut_livraison)} />
-                    <LigneDetail label="Paiement" valeur={libelleDe(LIBELLES_PAIEMENT, detail.statut_paiement)} />
+                    {!estSeller && <LigneDetail label={t('ca.agent')} valeur={detail.agents?.nom} />}
+                    <LigneDetail label={t('commun.vendeur')} valeur={nomDuVendeur(detail.vendeur_id)} />
+                    <LigneDetail label={t('cmdd.statutAppel')} valeur={libelleStatut(detail.statut_confirmation)} />
+                    <LigneDetail label={t('cmdd.livraison')} valeur={libelleDe(LIBELLES_LIVRAISON, detail.statut_livraison)} />
+                    <LigneDetail label={t('cmdd.paiement')} valeur={libelleDe(LIBELLES_PAIEMENT, detail.statut_paiement)} />
                     <LigneDetail
-                      label="Dernière MAJ"
-                      valeur={detail.updated_at ? new Date(detail.updated_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : null}
+                      label={t('cmdd.derniereMaj')}
+                      valeur={detail.updated_at ? new Date(detail.updated_at).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : null}
                     />
                   </CarteDetail>
                 </div>
 
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50">
-                    <h3 className="text-sm font-bold text-[#1B2632]">Produit commandé</h3>
+                    <h3 className="text-sm font-bold text-[#1B2632]">{t('cmdd.produitCommande')}</h3>
                   </div>
                   <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
-                        <th className="px-5 py-2.5">Produit</th>
-                        <th className="px-5 py-2.5 text-right">Quantité</th>
-                        <th className="px-5 py-2.5 text-right">Prix</th>
+                        <th className="px-5 py-2.5">{t('commun.produit')}</th>
+                        <th className="px-5 py-2.5 text-right">{t('commun.quantite')}</th>
+                        <th className="px-5 py-2.5 text-right">{t('commun.prix')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2389,7 +2387,7 @@ export default function GestionCommandesPage() {
                         </td>
                         <td className="px-5 py-3 text-right font-mono">{detail.quantite ?? 1}</td>
                         <td className="px-5 py-3 text-right font-bold whitespace-nowrap">
-                          {detail.prix != null ? Number(detail.prix).toLocaleString('fr-FR') : '—'} <span className="text-xs font-normal text-[#1B2632]/50">{detail.pays?.devise || ''}</span>
+                          {detail.prix != null ? Number(detail.prix).toLocaleString(locale) : '—'} <span className="text-xs font-normal text-[#1B2632]/50">{detail.pays?.devise || ''}</span>
                         </td>
                       </tr>
                     </tbody>
@@ -2405,50 +2403,50 @@ export default function GestionCommandesPage() {
                     aussi (02/11) — comment son lead a été traité, pas par qui. */}
                 <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                   <div className="px-5 py-3 bg-[#F4F0E6] border-b border-[#C9C1B1]/50 flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-bold text-[#1B2632]">Historique des statuts</h3>
+                    <h3 className="text-sm font-bold text-[#1B2632]">{t('cmdd.historique')}</h3>
                     {historique?.length > 0 && (
                       <span className="text-xs text-[#1B2632]/55">
-                        {historique.length} action{historique.length > 1 ? 's' : ''}
+                        {t('cmdd.actions', { n: historique.length })}
                       </span>
                     )}
                   </div>
 
                   {erreurHistorique ? (
                     <p className="px-5 py-6 text-sm font-medium text-[#A35139] text-center">
-                      Impossible de lire l&apos;historique : {erreurHistorique}
+                      {t('cmdd.historiqueErreur', { erreur: erreurHistorique })}
                     </p>
                   ) : historique === null ? (
-                    <p className="px-5 py-6 text-sm text-[#1B2632]/40 text-center">Lecture de l&apos;historique…</p>
+                    <p className="px-5 py-6 text-sm text-[#1B2632]/40 text-center">{t('cmdd.lectureHistorique')}</p>
                   ) : historique.length === 0 ? (
                     <p className="px-5 py-6 text-sm text-[#1B2632]/50 text-center">
-                      Aucun changement de statut enregistré pour cette commande.
+                      {t('cmdd.aucunChangement')}
                     </p>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[720px] text-left text-sm">
                         <thead>
                           <tr className="text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold border-b border-[#C9C1B1]/40">
-                            <th className="px-4 py-2.5">Date</th>
-                            <th className="px-4 py-2.5">Statut précédent</th>
-                            <th className="px-4 py-2.5">Statut</th>
-                            {!estSeller && <th className="px-4 py-2.5">Par</th>}
-                            <th className="px-4 py-2.5 text-right">Durée</th>
-                            <th className="px-4 py-2.5">Commentaire</th>
+                            <th className="px-4 py-2.5">{t('commun.date')}</th>
+                            <th className="px-4 py-2.5">{t('cmdd.statutPrecedent')}</th>
+                            <th className="px-4 py-2.5">{t('commun.statut')}</th>
+                            {!estSeller && <th className="px-4 py-2.5">{t('cmdd.par')}</th>}
+                            <th className="px-4 py-2.5 text-right">{t('cmdd.duree')}</th>
+                            <th className="px-4 py-2.5">{t('cmdd.commentaire')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#C9C1B1]/25">
                           {historique.map((h) => (
                             <tr key={h.id} className="hover:bg-[#EEE9DF]/25">
                               <td className="px-4 py-2.5 whitespace-nowrap text-[#1B2632]/75">
-                                {h.cree_le ? new Date(h.cree_le).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                                {h.cree_le ? new Date(h.cree_le).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                                 {/* Recopiée des anciens appels le jour de l'installation,
                                     pas écrite au moment du changement. */}
                                 {h.via === 'migration' && (
-                                  <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">repris</span>
+                                  <span className="block text-[10px] uppercase tracking-wider text-[#1B2632]/40">{t('cmdd.repris')}</span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-[#1B2632]/55">
-                                {libelleStatut(h.statut_precedent) || <span className="text-[#1B2632]/30">Nouveau lead</span>}
+                                {libelleStatut(h.statut_precedent) || <span className="text-[#1B2632]/30">{t('cmdd.nouveauLead')}</span>}
                               </td>
                               <td className="px-4 py-2.5">
                                 <StatutPill statut={h.statut} listeStatutsDB={listeStatutsDB} />
@@ -2456,7 +2454,7 @@ export default function GestionCommandesPage() {
                               {!estSeller && (
                                 <td className="px-4 py-2.5 text-[#1B2632]/75">
                                   {h.fait_par_nom
-                                    || <span className="text-[#1B2632]/30">{h.via === 'systeme' ? 'Système' : '—'}</span>}
+                                    || <span className="text-[#1B2632]/30">{h.via === 'systeme' ? t('cmdd.systeme') : '—'}</span>}
                                 </td>
                               )}
                               <td className="px-4 py-2.5 text-right font-mono text-[#1B2632]/70 whitespace-nowrap">
@@ -2478,7 +2476,7 @@ export default function GestionCommandesPage() {
                     <div className="px-5 py-4 border-t border-[#C9C1B1]/40 bg-[#EEE9DF]/20 flex flex-wrap items-end gap-3">
                       <div className="w-full">
                         <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
-                          Adresse de livraison
+                          {t('cmd.adresseLivraison')}
                           {listeStatutsDB.some((s) => s.nom === nouveauStatut && s.declenche_assignation) && <span className="text-[#A35139]"> *</span>}
                         </label>
                         <input
@@ -2486,17 +2484,17 @@ export default function GestionCommandesPage() {
                           className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
                           value={adresseCorrigee}
                           onChange={(e) => { setAdresseCorrigee(e.target.value); setErreurStatut('') }}
-                          placeholder="Rue, quartier ou repère : « près du marché, maison bleue »"
+                          placeholder={t('ca.adresseAide')}
                         />
                       </div>
                       <div className="flex-1 min-w-[180px]">
-                        <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">Changer le statut</label>
+                        <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">{t('cmdd.changerStatut')}</label>
                         <select
                           className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
                           value={nouveauStatut}
                           onChange={(e) => setNouveauStatut(e.target.value)}
                         >
-                          <option value="">Choisir...</option>
+                          <option value="">{t('cmdd.choisir')}</option>
                           {listeStatutsDB
                             .filter((s) => s.code !== 'pending' && s.nom !== 'Pending')
                             .filter((s) => !s.pays_id || !detail.pays_id || s.pays_id === detail.pays_id)
@@ -2506,7 +2504,7 @@ export default function GestionCommandesPage() {
                       {rappelDemandeDrawer && (
                         <div className="flex-1 min-w-[200px]">
                           <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
-                            Rappel <span className="text-[#A35139]">*</span>
+                            {t('cmdd.rappel')} <span className="text-[#A35139]">*</span>
                           </label>
                           <input
                             type="datetime-local"
@@ -2527,7 +2525,7 @@ export default function GestionCommandesPage() {
                               && !(rappelDemandeDrawer && depuisChampLocal(rappelCorrige) !== (detail.date_rappel ? new Date(detail.date_rappel).toISOString() : '')))}
                         className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40 transition-colors cursor-pointer"
                       >
-                        {changementEnCours ? 'Enregistrement...' : 'Appliquer'}
+                        {changementEnCours ? t('commun.enregistrement') : t('cmd.appliquer')}
                       </button>
                       {erreurStatut && (
                         <p className="w-full text-xs font-medium text-[#A35139]">{erreurStatut}</p>
@@ -2541,42 +2539,41 @@ export default function GestionCommandesPage() {
                       {detail.statut_confirmation && detail.statut_confirmation !== 'Pending' && (
                         <div className="w-full pt-3 mt-1 border-t border-[#C9C1B1]/40">
                           {livraisonDetail === undefined ? (
-                            <p className="text-xs text-[#1B2632]/40">Vérification de la livraison…</p>
+                            <p className="text-xs text-[#1B2632]/40">{t('cmdd.verifLivraison')}</p>
                           ) : livraisonDetail?.erreur ? (
                             <p className="text-xs font-medium text-[#A35139]">
-                              Impossible de vérifier la livraison : {livraisonDetail.erreur}. Renvoi en attente indisponible.
+                              {t('cmdd.verifLivraisonErreur', { erreur: livraisonDetail.erreur })}
                             </p>
                           ) : livraisonDetail ? (
                             <p className="text-xs text-[#1B2632]/60">
-                              <span className="font-semibold">Renvoyer en attente : impossible.</span>{' '}
-                              Le livreur {livraisonDetail.livreur} a cette commande (livraison {LIVRAISON_LIBELLES[livraisonDetail.statut] || livraisonDetail.statut}).
-                              Un litige sur la livraison se règle dans Livraisons.
+                              <span className="font-semibold">{t('cmdd.renvoiImpossible')}</span>{' '}
+                              {t('cmdd.livreurALaCommande', { livreur: livraisonDetail.livreur, statut: LIVRAISON_LIBELLES[livraisonDetail.statut] || livraisonDetail.statut })}
                             </p>
                           ) : !renvoiOuvert ? (
                             <button onClick={() => { setRenvoiOuvert(true); setErreurStatut('') }}
                               className="px-4 py-2 rounded-xl text-sm font-semibold border border-[#A35139]/50 text-[#A35139] bg-white hover:bg-[#A35139]/5 transition-colors cursor-pointer">
-                              Renvoyer en attente
+                              {t('cmdd.renvoyer')}
                             </button>
                           ) : (
                             <div className="flex flex-wrap items-end gap-3">
                               <div className="flex-1 min-w-[240px]">
                                 <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
-                                  Motif du renvoi <span className="text-[#A35139]">*</span>
+                                  {t('cmdd.motifRenvoi')} <span className="text-[#A35139]">*</span>
                                 </label>
                                 <input type="text" autoFocus
                                   className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
                                   value={motifRenvoi}
                                   onChange={(e) => { setMotifRenvoi(e.target.value); setErreurStatut('') }}
-                                  placeholder="Ex. : confirmée par erreur, le client n'a jamais répondu"
+                                  placeholder={t('cmdd.motifRenvoiAide')}
                                 />
                               </div>
                               <button onClick={renvoyerEnAttente} disabled={changementEnCours || !motifRenvoi.trim()}
                                 className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-40 transition-colors cursor-pointer">
-                                {changementEnCours ? 'Renvoi…' : 'Confirmer le renvoi'}
+                                {changementEnCours ? t('cmdd.renvoi') : t('cmdd.confirmerRenvoi')}
                               </button>
                               <button onClick={() => { setRenvoiOuvert(false); setMotifRenvoi('') }}
                                 className="px-4 py-2.5 rounded-xl text-sm font-medium text-[#1B2632]/60 hover:text-[#1B2632] cursor-pointer">
-                                Annuler
+                                {t('msg.annuler')}
                               </button>
                             </div>
                           )}
@@ -2588,9 +2585,9 @@ export default function GestionCommandesPage() {
 
                 {peutSupprimer && droitSuppression !== undefined && (
                   <div className="border border-[#A35139]/30 rounded-xl p-5" data-suppression>
-                    <h3 className="text-sm font-bold text-[#A35139] mb-3">Supprimer la commande</h3>
+                    <h3 className="text-sm font-bold text-[#A35139] mb-3">{t('cmd.supprimerTitre')}</h3>
                     {droitSuppression === null ? (
-                      <p className="text-xs text-[#1B2632]/50">Vérification…</p>
+                      <p className="text-xs text-[#1B2632]/50">{t('cmdd.verification')}</p>
                     ) : !droitSuppression.permis ? (
                       <p className="text-xs text-[#1B2632]/60">{droitSuppression.motif}</p>
                     ) : (
@@ -2601,22 +2598,22 @@ export default function GestionCommandesPage() {
                         <div className="flex flex-wrap items-end gap-3">
                           <div className="flex-1 min-w-[240px]">
                             <label className="block text-[11px] font-bold text-[#1B2632]/50 uppercase mb-1">
-                              Raison <span className="text-[#A35139]">*</span>
+                              {t('msg.raison')} <span className="text-[#A35139]">*</span>
                             </label>
                             <input type="text"
                               className="w-full px-3 py-2 border border-[#C9C1B1] rounded-lg bg-white outline-none focus:border-[#FFB162] text-sm"
                               value={raisonSuppression}
                               onChange={(e) => { setRaisonSuppression(e.target.value); setErreurSuppression('') }}
-                              placeholder="Ex. : doublon, test, client a annulé avant l'appel"
+                              placeholder={t('cmdd.raisonAide')}
                             />
                           </div>
                           <button onClick={supprimerDetail} disabled={suppressionEnCours || !raisonSuppression.trim()}
                             className="px-5 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] disabled:opacity-40 transition-colors cursor-pointer">
-                            {suppressionEnCours ? 'Suppression…' : 'Supprimer'}
+                            {suppressionEnCours ? t('cmdd.suppression') : t('cmd.supprimer')}
                           </button>
                         </div>
                         <p className="text-[11px] text-[#1B2632]/45">
-                          Elle disparaît de Commandes et du Centre d&apos;appel. Le stock déjà sorti revient à l&apos;entrepôt. Si la boutique renvoie ce lead, il revient comme un nouveau lead.
+                          {t('cmdd.supprimerAide')}
                         </p>
                       </div>
                     )}
@@ -2626,7 +2623,7 @@ export default function GestionCommandesPage() {
 
                 {(detail.commentaire_1 || detail.commentaire_2 || detail.notes) && (
                   <div className="border border-[#C9C1B1] rounded-xl p-5">
-                    <h3 className="text-sm font-bold text-[#1B2632] mb-3">Commentaires</h3>
+                    <h3 className="text-sm font-bold text-[#1B2632] mb-3">{t('cmdn.commentaires')}</h3>
                     <div className="flex flex-col gap-2 text-sm">
                       {detail.commentaire_1 && <p className="text-amber-900 italic">{detail.commentaire_1}</p>}
                       {detail.commentaire_2 && <p className="text-purple-900 italic">{detail.commentaire_2}</p>}
