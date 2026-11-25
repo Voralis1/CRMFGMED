@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { usePermissions } from '../context/PermissionsContext'
 import ReglementsVendeurs from '../components/paiements/ReglementsVendeurs'
 import CaisseLivreurs from '../components/paiements/CaisseLivreurs'
+import { useLangue } from '../context/LangueContext'
 
 // Un seul menu « Paiements », et chacun y trouve ce qui le concerne :
 //
@@ -20,6 +21,8 @@ import CaisseLivreurs from '../components/paiements/CaisseLivreurs'
 export default function PaiementsPage() {
   const { user, loading: authLoading } = useAuth()
   const { hasPermission, loading: permsLoading } = usePermissions()
+  // Les textes suivent la langue choisie (25/11).
+  const { t } = useLangue()
   const router = useRouter()
 
   // Ce que cette personne a le droit de voir ici. On se fie aux permissions,
@@ -32,11 +35,11 @@ export default function PaiementsPage() {
     // livreurs », qui chargeait la liste de tous les livreurs PUIS le
     // renvoyait ailleurs — les données étaient déjà dans son navigateur.
     if (!hasPermission('menu_paiements')) return liste
-    if (hasPermission('menu_reglements')) liste.push({ cle: 'vendeurs', nom: 'Relevés vendeurs' })
+    if (hasPermission('menu_reglements')) liste.push({ cle: 'vendeurs', nom: 'pai.ongletVendeurs' })
     // `voir_caisse`, pas `menu_paiements` : le seller a bien le menu Paiements
     // — ce sont ses relevés — mais l'argent encaissé par les livreurs ne le
     // regarde pas. La fiche de passation le dit en toutes lettres (8.5).
-    if (hasPermission('voir_caisse')) liste.push({ cle: 'livreurs', nom: 'Caisse livreurs' })
+    if (hasPermission('voir_caisse')) liste.push({ cle: 'livreurs', nom: 'pai.ongletLivreurs' })
     return liste
   }, [hasPermission])
 
@@ -55,7 +58,7 @@ export default function PaiementsPage() {
   }, [user, authLoading, permsLoading, vues, router])
 
   if (authLoading || permsLoading || !onglet) {
-    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">Chargement...</div>
+    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">{t('commun.chargement')}</div>
   }
 
   return (
@@ -66,7 +69,7 @@ export default function PaiementsPage() {
           onglets. Avant, les onglets venaient avant deux titres différents
           (« Paiements vendeurs », « Gestion des Paiements »). */}
       <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 pt-4 sm:pt-2 flex flex-col gap-3 sans-impression">
-        <h1 className="text-2xl font-bold text-[#1B2632]">Paiements</h1>
+        <h1 className="text-2xl font-bold text-[#1B2632]">{t('pai.titre')}</h1>
       {vues.length > 1 && (
           <div className="flex flex-wrap gap-2">
             {vues.map((v) => (
@@ -79,7 +82,7 @@ export default function PaiementsPage() {
                     : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
                 }`}
               >
-                {v.nom}
+                {t(v.nom)}
               </button>
             ))}
           </div>

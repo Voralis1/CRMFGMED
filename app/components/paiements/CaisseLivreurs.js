@@ -8,6 +8,7 @@ import { useEntrepot } from '../../context/EntrepotContext'
 import { usePermissions } from '../../context/PermissionsContext' // 🚀 Import du contexte des permissions
 import { useMessages } from '../Messages'
 import { messageErreur } from '../../../lib/messageErreur.mjs'
+import { useLangue } from '../../context/LangueContext'
 
 const TAILLE_PAGE = 50
 
@@ -20,6 +21,8 @@ export default function CaisseLivreurs() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const [paiements, setPaiements] = useState([])
   const [totalPaiements, setTotalPaiements] = useState(0)
@@ -58,7 +61,7 @@ export default function CaisseLivreurs() {
       .range(debut, debut + TAILLE_PAGE - 1)
 
     if (error) {
-      annoncer(`Paiements illisibles : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('caisse.paiementsIllisibles', { erreur: messageErreur(error) }), 'erreur')
       setPaiements([])
       setTotalPaiements(0)
     } else {
@@ -80,7 +83,7 @@ export default function CaisseLivreurs() {
       .order('livreur_nom')
 
     if (error) {
-      annoncer(`Caisses illisibles : ${messageErreur(error)}`, 'erreur')
+      annoncer(t('caisse.caissesIllisibles', { erreur: messageErreur(error) }), 'erreur')
       return
     }
 
@@ -170,7 +173,7 @@ export default function CaisseLivreurs() {
     resultat = await reponse.json()
     } catch (e) {
       setEnvoiEnCoursId(null)
-      annoncer(messageErreur(e, 'Encaissement non enregistré.'), 'erreur')
+      annoncer(messageErreur(e, t('caisse.encaissementNon')), 'erreur')
       return
     }
     setEnvoiEnCoursId(null)
@@ -207,7 +210,7 @@ export default function CaisseLivreurs() {
     resultat = await reponse.json()
     } catch (e) {
       setEnvoiEnCoursId(null)
-      annoncer(messageErreur(e, 'Remise non enregistrée.'), 'erreur')
+      annoncer(messageErreur(e, t('caisse.remiseNon')), 'erreur')
       return
     }
     setEnvoiEnCoursId(null)
@@ -217,13 +220,13 @@ export default function CaisseLivreurs() {
       return
     }
 
-    annoncer(`Remise validée : ${Number(resultat.total_remis).toLocaleString('fr-FR')} ${devise} encaissés pour ${resultat.nombre_paiements} paiement${resultat.nombre_paiements > 1 ? 's' : ''}.`, 'succes')
+    annoncer(t('caisse.remiseValidee', { montant: Number(resultat.total_remis).toLocaleString(locale), devise, n: resultat.nombre_paiements }), 'succes')
     await chargerTout()
   }
 
   // 🚀 Écran de chargement et de vérification sécurisée
   if (authLoading || permsLoading || !hasPermission('menu_paiements')) {
-    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">Vérification des accès en cours...</div>
+    return <div className="p-20 text-center text-sm text-[#1B2632]/60 font-medium">{t('caisse.verif')}</div>
   }
 
   // 🚀 Vérification dynamique des droits financiers (remplace l'ancienne variable role)
@@ -242,26 +245,26 @@ export default function CaisseLivreurs() {
         {/* Section 1 : Paiements à encaisser */}
         <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-6">
           <h2 className="text-lg font-bold text-[#1B2632] mb-4">
-            Paiements à encaisser ({totalPaiements})
+            {t('caisse.aEncaisser', { n: totalPaiements })}
           </h2>
 
           {paiements.length === 0 ? (
-            <p className="text-sm text-[#1B2632]/60 py-4">Aucun paiement en attente.</p>
+            <p className="text-sm text-[#1B2632]/60 py-4">{t('caisse.aucunPaiement')}</p>
           ) : (
             <div className="overflow-x-auto -mx-6 px-6">
             <table className="w-full min-w-[560px] text-left border-collapse text-sm">
               <thead>
                 <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
-                  <th className="p-3">Client</th>
-                  <th className="p-3">Livreur</th>
-                  <th className="p-3">Montant</th>
-                  <th className="p-3 text-right">Actions</th>
+                  <th className="p-3">{t('caisse.client')}</th>
+                  <th className="p-3">{t('caisse.livreur')}</th>
+                  <th className="p-3">{t('caisse.montant')}</th>
+                  <th className="p-3 text-right">{t('caisse.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#C9C1B1]/30">
                 {paiements.map((p) => (
                   <tr key={p.id} className="hover:bg-[#EEE9DF]/20 transition">
-                    <td className="p-3 font-medium text-[#1B2632]">{p.commandes?.client_nom || 'Client inconnu'}</td>
+                    <td className="p-3 font-medium text-[#1B2632]">{p.commandes?.client_nom || t('caisse.clientInconnu')}</td>
                     <td className="p-3 text-[#1B2632]/70">{p.livreurs?.nom || 'Inconnu'}</td>
                     <td className="p-3 font-bold text-[#1B2632]">{p.montant} {p.commandes?.pays?.devise || ''}</td>
                     <td className="p-3 text-right">
@@ -270,7 +273,7 @@ export default function CaisseLivreurs() {
                         disabled={envoiEnCoursId === p.id || !peutEncaisser}
                         className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
                       >
-                        {envoiEnCoursId === p.id ? '...' : 'Marquer encaissé'}
+                        {envoiEnCoursId === p.id ? '...' : t('caisse.marquerEncaisse')}
                       </button>
                     </td>
                   </tr>
@@ -283,7 +286,7 @@ export default function CaisseLivreurs() {
           {totalPaiements > TAILLE_PAGE && (
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-4 border-t border-[#C9C1B1]/40">
               <span className="text-sm text-[#1B2632]/70 font-medium">
-                Page {pagePaiements + 1} sur {Math.max(1, Math.ceil(totalPaiements / TAILLE_PAGE))}
+                {t('commun.pageSur', { page: pagePaiements + 1, total: Math.max(1, Math.ceil(totalPaiements / TAILLE_PAGE)) })}
               </span>
               <div className="flex gap-2">
                 <button
@@ -291,7 +294,7 @@ export default function CaisseLivreurs() {
                   disabled={pagePaiements === 0 || chargement}
                   className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
                 >
-                  Précédent
+                  {t('caisse.precedent')}
                 </button>
                 <button
                   onClick={() => setPagePaiements((p) =>
@@ -299,7 +302,7 @@ export default function CaisseLivreurs() {
                   disabled={pagePaiements >= Math.ceil(totalPaiements / TAILLE_PAGE) - 1 || chargement}
                   className="px-4 py-2 rounded-lg text-sm font-medium border border-[#C9C1B1] bg-white text-[#1B2632] disabled:opacity-50 hover:bg-[#EEE9DF]/50 transition-colors cursor-pointer"
                 >
-                  Suivant
+                  {t('caisse.suivant')}
                 </button>
               </div>
             </div>
@@ -310,26 +313,25 @@ export default function CaisseLivreurs() {
         {peutVoirCashflow && (
           <div className="bg-white border border-[#C9C1B1] rounded-2xl shadow-sm overflow-hidden p-6">
             <h2 className="text-lg font-bold text-[#1B2632] mb-4">
-              Caisse par livreur (à remettre)
+              {t('caisse.parLivreur')}
             </h2>
             <p className="text-xs text-[#1B2632]/50 -mt-2 mb-4">
-              Toute l&apos;équipe est listée, y compris les livreurs à zéro. Un livreur apparaît sur
-              plusieurs lignes s&apos;il détient du cash dans plusieurs devises.
+              {t('caisse.equipeAide')}
             </p>
 
             {caissesParLivreur.length === 0 ? (
-              <p className="text-sm text-[#1B2632]/60 py-4">Aucun livreur actif.</p>
+              <p className="text-sm text-[#1B2632]/60 py-4">{t('caisse.aucunLivreur')}</p>
             ) : (
               <div className="overflow-x-auto -mx-6 px-6">
             <table className="w-full min-w-[560px] text-left border-collapse text-sm">
                 <thead>
                   <tr className="bg-[#EEE9DF]/30 border-b border-[#C9C1B1]/50 text-xs uppercase text-[#1B2632]/60 font-semibold">
-                    <th className="p-3">Livreur</th>
-                    <th className="p-3">Zone</th>
-                    <th className="p-3">Devise</th>
-                    <th className="p-3 text-right">Total détenu</th>
-                    <th className="p-3 text-center">Encaissements</th>
-                    <th className="p-3 text-right">Actions</th>
+                    <th className="p-3">{t('caisse.livreur')}</th>
+                    <th className="p-3">{t('caisse.zone')}</th>
+                    <th className="p-3">{t('caisse.devise')}</th>
+                    <th className="p-3 text-right">{t('caisse.totalDetenu')}</th>
+                    <th className="p-3 text-center">{t('caisse.encaissements')}</th>
+                    <th className="p-3 text-right">{t('caisse.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -345,7 +347,7 @@ export default function CaisseLivreurs() {
                             : <span className="fg-badge dark">{c.devise}</span>}
                         </td>
                         <td className={`p-3 text-right font-bold font-mono ${c.total > 0 ? 'text-[#1B2632]' : 'text-[#1B2632]/30'}`}>
-                          {Number(c.total).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {Number(c.total).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                         <td className="p-3 text-center text-[#1B2632]/60">{c.nb_paiements || '—'}</td>
                         <td className="p-3 text-right">
@@ -356,7 +358,7 @@ export default function CaisseLivreurs() {
                             disabled={envoiEnCoursId === cleBouton || !peutValiderRemise || c.devise === '—' || c.total <= 0}
                             className="px-4 py-1.5 bg-[#1B2632] hover:bg-[#2C3B4D] text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer"
                           >
-                            {envoiEnCoursId === cleBouton ? '...' : 'Confirmer remise'}
+                            {envoiEnCoursId === cleBouton ? '...' : t('caisse.confirmerRemise')}
                           </button>
                           )}
                         </td>

@@ -10,6 +10,8 @@ import { LIBELLES_RELEVE } from '../../../lib/libellesStatuts.mjs'
 import PlageDates from '../PlageDates'
 import { useMessages } from '../Messages'
 import { messageErreur } from '../../../lib/messageErreur.mjs'
+import { useLangue } from '../../context/LangueContext'
+import { localeDe, traduire } from '../../../lib/langues/index.mjs'
 
 // Le relevé de paiement du vendeur. À ne pas confondre avec « Paiements »,
 // qui suit l'argent encaissé par le livreur chez le client : ici c'est ce que
@@ -26,11 +28,12 @@ const STATUTS = {
   paye:       { label: LIBELLES_RELEVE.paye,       classe: 'border-green-500 text-green-700 bg-green-50' },
   annule:     { label: LIBELLES_RELEVE.annule,     classe: 'border-red-400 text-red-700 bg-red-50' },
 }
-const METHODES = { especes: 'Espèces', virement: 'Virement', cheque: 'Chèque' }
+// Codes enregistrés → clés de texte (25/11) : l'écran affiche t(METHODES[code]).
+const METHODES = { especes: 'meth.especes', virement: 'meth.virement', cheque: 'meth.cheque' }
 
 // Les ajustements d'un relevé (retenues_releve.sql, 09/11). Le sens suit le
 // type ; seule la correction le laisse choisir (la base fait la même règle).
-const TYPES_AJUST = { penalite: 'Pénalité', remboursement: 'Remboursement', correction: 'Correction', autre: 'Autre' }
+const TYPES_AJUST = { penalite: 'ajust.penalite', remboursement: 'ajust.remboursement', correction: 'ajust.correction', autre: 'ajust.autre' }
 const AJUST_VIDE = { type: 'penalite', montant: '', sens: '', note: '' }
 
 // Le montant d'une commande dans un relevé = ce que le livreur a RÉELLEMENT
@@ -64,14 +67,14 @@ function Montant({ valeur, devise, grand }) {
     <span className={`whitespace-nowrap ${n < 0 ? 'text-[#A35139]' : 'text-[#1B2632]'}`}>
       <span className={`font-mono font-bold ${grand ? 'text-xl' : ''}`}>{sou(valeur)}</span>{' '}
       <span className="text-xs font-sans font-normal opacity-60">{devise || ''}</span>
-      {n < 0 && <span className="block text-[11px] font-sans font-semibold">dû par le vendeur</span>}
+      {n < 0 && <span className="block text-[11px] font-sans font-semibold">{traduire('rel.duParVendeur')}</span>}
     </span>
   )
 }
 
-const jour = (v) => (v ? new Date(v).toLocaleDateString('fr-FR') : '—')
-const jourHeure = (v) => (v ? new Date(v).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—')
-const sou = (n) => Number(n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const jour = (v) => (v ? new Date(v).toLocaleDateString(localeDe()) : '—')
+const jourHeure = (v) => (v ? new Date(v).toLocaleString(localeDe(), { dateStyle: 'short', timeStyle: 'short' }) : '—')
+const sou = (n) => Number(n || 0).toLocaleString(localeDe(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // Les dates partent vides : on règle d'abord TOUT ce qui attend. Pré-remplir
 // la semaine passée écartait les livraisons du jour, la recherche ne trouvait
@@ -83,6 +86,8 @@ export default function ReglementsVendeurs() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
   const peutGerer = hasPermission('gerer_reglements')
@@ -244,7 +249,7 @@ export default function ReglementsVendeurs() {
       .from('reglements_commandes')
       .select('commande_id, montant, quantite, total_commande, frais_commande, frais_livraison, frais_upsell, net, commandes(lead_id, client_nom, produit, quantite, prix, updated_at, produits(product))')
       .eq('reglement_id', r.id)
-    if (error) { annonce('Détail illisible : ' + messageErreur(error), 'erreur'); return }
+    if (error) { annonce(t('rel.detailIllisible', { erreur: messageErreur(error) }), 'erreur'); return }
     setLignes(data || [])
   }
 
@@ -257,7 +262,7 @@ export default function ReglementsVendeurs() {
   }
 
   async function chercherCommandes() {
-    if (!brouillon.vendeur_id) return annonce('Choisissez un vendeur.', 'erreur')
+    if (!brouillon.vendeur_id) return annonce(t('rel.choisirVendeur'), 'erreur')
     setRechercheEnCours(true)
 
     // La vue ne renvoie que les commandes livrées qui ne sont dans aucun
@@ -276,15 +281,15 @@ export default function ReglementsVendeurs() {
     const { data, error } = await requete.order('updated_at')
 
     setRechercheEnCours(false)
-    if (error) return annonce('Recherche impossible : ' + messageErreur(error), 'erreur')
+    if (error) return annonce(t('rel.rechercheImpossible', { erreur: messageErreur(error) }), 'erreur')
 
     setCandidates(data || [])
     setChoisies((data || []).map((c) => c.commande_id))
     if ((data || []).length === 0) {
       annonce(
         brouillon.debut || brouillon.fin
-          ? "Aucune commande à régler pour ce vendeur sur cette période (livrée ET argent remis au bureau). Essayez sans dates."
-          : "Aucune commande à régler pour ce vendeur. Une commande livrée n'apparaît ici qu'une fois son argent remis au bureau (« Valider la remise »).",
+          ? t('rel.aucuneSurPeriode')
+          : t('rel.aucunePourVendeur'),
         'erreur',
       )
     }
@@ -295,7 +300,7 @@ export default function ReglementsVendeurs() {
   const deviseRetenue = retenues[0]?.devise || ''
 
   async function enregistrerReleve() {
-    if (retenues.length === 0) return annonce('Aucune commande retenue.', 'erreur')
+    if (retenues.length === 0) return annonce(t('rel.aucuneRetenue'), 'erreur')
 
     // Deux devises dans un même relevé donneraient un total faux : on refuse
     // plutôt que d'additionner des monnaies différentes.
@@ -323,10 +328,10 @@ export default function ReglementsVendeurs() {
     })
 
     setEnregistrement(false)
-    if (error) return annonce('Relevé refusé : ' + messageErreur(error), 'erreur')
+    if (error) return annonce(t('rel.releveRefuse', { erreur: messageErreur(error) }), 'erreur')
 
     const r = data?.[0]
-    annonce(`Relevé ${r?.reference || ''} établi : ${r?.nb_commandes ?? retenues.length} commande${(r?.nb_commandes ?? retenues.length) > 1 ? 's' : ''}.`, 'succes')
+    annonce(t('rel.etabli', { ref: r?.reference || '', n: r?.nb_commandes ?? retenues.length }), 'succes')
     setModale(false)
     charger()
   }
@@ -369,10 +374,10 @@ export default function ReglementsVendeurs() {
     const poids = Number(credit.poids), prix = Number(credit.prix), montant = Number(credit.montant)
     if (!vide) {
       if (champs.some((x) => x === '')) {
-        annonce('Crédit d\u2019expédition : donnez la date, le poids, le prix au kg ET le montant (ou videz tout).', 'erreur'); return false
+        annonce(t('rel.creditIncomplet'), 'erreur'); return false
       }
       if (![poids, prix, montant].every(Number.isFinite) || poids <= 0 || prix < 0 || montant < 0) {
-        annonce('Crédit d\u2019expédition : poids, prix au kg ou montant invalide.', 'erreur'); return false
+        annonce(t('rel.creditInvalide'), 'erreur'); return false
       }
     }
     setCreditEnCours(true)
@@ -385,8 +390,8 @@ export default function ReglementsVendeurs() {
       p_note: credit.note,
     })
     setCreditEnCours(false)
-    if (error) { annonce('Refusé : ' + messageErreur(error), 'erreur'); return false }
-    annonce(vide ? 'Pas d\u2019expédition sur ce relevé.' : 'Crédit d\u2019expédition enregistré.', 'succes')
+    if (error) { annonce(t('rel.refuse', { erreur: messageErreur(error) }), 'erreur'); return false }
+    annonce(vide ? t('rel.pasExpedition') : t('rel.creditEnregistreMsg'), 'succes')
     await rechargerFiche(fiche.id)
     return true
   }
@@ -396,11 +401,12 @@ export default function ReglementsVendeurs() {
   // Le taux MAD : la base vérifie (> 0, relevé non payé, droits). Vide = enlevé.
   async function enregistrerTaux() {
     if (!fiche) return false
-    const t = tauxMad === '' ? null : Number(tauxMad)
-    if (t !== null && (!Number.isFinite(t) || t <= 0)) { annonce('Le taux MAD doit être plus grand que 0 (ou vide).', 'erreur'); return false }
-    const { error } = await supabase.rpc('fixer_taux_mad', { p_reglement: fiche.id, p_taux: t })
-    if (error) { annonce('Refusé : ' + messageErreur(error), 'erreur'); return false }
-    annonce(t === null ? 'Équivalent MAD retiré.' : 'Taux MAD enregistré.', 'succes')
+    // `taux`, pas `t` (25/11) : `t` est la fonction de traduction.
+    const taux = tauxMad === '' ? null : Number(tauxMad)
+    if (taux !== null && (!Number.isFinite(taux) || taux <= 0)) { annonce(t('rel.tauxInvalide'), 'erreur'); return false }
+    const { error } = await supabase.rpc('fixer_taux_mad', { p_reglement: fiche.id, p_taux: taux })
+    if (error) { annonce(t('rel.refuse', { erreur: messageErreur(error) }), 'erreur'); return false }
+    annonce(taux === null ? t('rel.madRetire') : t('rel.tauxEnregistre'), 'succes')
     await rechargerFiche(fiche.id)
     return true
   }
@@ -410,56 +416,56 @@ export default function ReglementsVendeurs() {
     const a = nouvelAjust
     const montant = Number(a.montant)
     if (a.montant === '' || !Number.isFinite(montant) || montant <= 0) return annonce('Le montant doit être plus grand que 0.', 'erreur')
-    if (!a.note.trim()) return annonce('Écrivez la raison de cet ajustement.', 'erreur')
-    if (a.type === 'correction' && !a.sens) return annonce('Correction : retenue au vendeur ou rendue au vendeur ?', 'erreur')
+    if (!a.note.trim()) return annonce(t('rel.raisonAjust'), 'erreur')
+    if (a.type === 'correction' && !a.sens) return annonce(t('rel.sensCorrection'), 'erreur')
     setAjustEnCours(true)
     const { error } = await supabase.rpc('ajouter_ajustement', {
       p_reglement: fiche.id, p_type: a.type, p_montant: montant,
       p_en_plus: a.type === 'correction' ? a.sens === 'plus' : null, p_note: a.note,
     })
     setAjustEnCours(false)
-    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
+    if (error) return annonce(t('rel.refuse', { erreur: messageErreur(error) }), 'erreur')
     setNouvelAjust(AJUST_VIDE)
-    annonce('Ajustement ajouté.', 'succes')
+    annonce(t('rel.ajustAjoute'), 'succes')
     await rechargerFiche(fiche.id)
   }
 
   async function retirerAjustement(a) {
-    if (!fiche || !(await confirmer({ titre: 'Retirer l\u2019ajustement', message: `Retirer « ${TYPES_AJUST[a.type] || a.type} — ${a.note} » ?`, bouton: 'Retirer', danger: true }))) return
+    if (!fiche || !(await confirmer({ titre: t('rel.retirerAjust'), message: t('rel.retirerAjustMsg', { type: TYPES_AJUST[a.type] ? t(TYPES_AJUST[a.type]) : a.type, note: a.note }), bouton: t('rel.retirer'), danger: true }))) return
     const { error } = await supabase.rpc('retirer_ajustement', { p_ajustement: a.id })
-    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
-    annonce('Ajustement retiré.', 'succes')
+    if (error) return annonce(t('rel.refuse', { erreur: messageErreur(error) }), 'erreur')
+    annonce(t('rel.ajustRetire'), 'succes')
     await rechargerFiche(fiche.id)
   }
 
   async function marquerPaye(r) {
-    if (!(await confirmer({ titre: 'Marquer comme payé', message: `Marquer ${r.reference} comme payé ?\n\nAprès cela, ses montants et ses commandes ne pourront plus changer.`, bouton: 'Marquer payé' }))) return
+    if (!(await confirmer({ titre: t('rel.marquerCommePaye'), message: t('rel.payeMsg', { ref: r.reference }), bouton: t('rel.marquerPaye') }))) return
     // Rien de ce qui est tapé n'est perdu au paiement : le crédit modifié part
     // d'abord ; un ajustement tapé mais pas ajouté arrête (on ne devine pas).
-    if (ajustTape) return annonce('Un ajustement est tapé mais pas ajouté : cliquez « Ajouter » ou videz-le.', 'erreur')
+    if (ajustTape) return annonce(t('rel.ajustNonAjoute'), 'erreur')
     if (creditModifie && !(await enregistrerCredit())) return
     if (tauxModifie && !(await enregistrerTaux())) return
     const { data, error } = await supabase
       .from('reglements').update({ statut: 'paye' })
       .eq('id', r.id).eq('tenant_id', tenantKey).select()
-    if (error) return annonce('Refusé : ' + messageErreur(error), 'erreur')
-    if (!data || data.length === 0) return annonce("Votre rôle ne permet pas de payer un relevé.", 'erreur')
-    annonce('Relevé marqué payé.', 'succes')
+    if (error) return annonce(t('rel.refuse', { erreur: messageErreur(error) }), 'erreur')
+    if (!data || data.length === 0) return annonce(t('rel.rolePayer'), 'erreur')
+    annonce(t('rel.marquePaye'), 'succes')
     setFiche(null)
     charger()
   }
 
   async function supprimer(r) {
-    if (!(await confirmer({ titre: 'Supprimer le relevé', message: `Supprimer ${r.reference} ?\n\nSes commandes redeviendront disponibles pour un autre relevé.`, bouton: 'Supprimer', danger: true }))) return
+    if (!(await confirmer({ titre: t('rel.supprimerReleve'), message: t('rel.supprimerMsg', { ref: r.reference }), bouton: t('rel.supprimer'), danger: true }))) return
     const { error } = await supabase.from('reglements').delete().eq('id', r.id).eq('tenant_id', tenantKey)
-    if (error) return annonce('Suppression refusée : ' + messageErreur(error), 'erreur')
-    annonce('Relevé supprimé.', 'succes')
+    if (error) return annonce(t('rel.suppressionRefusee', { erreur: messageErreur(error) }), 'erreur')
+    annonce(t('rel.supprime'), 'succes')
     setFiche(null)
     charger()
   }
 
   if (authLoading || permsLoading) {
-    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">Chargement...</div>
+    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">{t('rel.chargement')}</div>
   }
 
   return (
@@ -494,14 +500,14 @@ export default function ReglementsVendeurs() {
 
           <select value={filtreStatut} onChange={(e) => setFiltreStatut(e.target.value)}
             className="px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-sm font-semibold text-[#1B2632] outline-none cursor-pointer">
-            <option value="">Tous les statuts</option>
+            <option value="">{t('rel.tousStatuts')}</option>
             {Object.entries(STATUTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
 
           {sellers.length > 0 && (
             <select value={filtreVendeur} onChange={(e) => setFiltreVendeur(e.target.value)}
               className="px-4 py-2.5 bg-white border border-[#C9C1B1] rounded-xl text-sm font-semibold text-[#1B2632] outline-none cursor-pointer">
-              <option value="">Tous les vendeurs</option>
+              <option value="">{t('rel.tousVendeurs')}</option>
               {sellers.map((v) => <option key={v.user_id} value={v.user_id}>{v.nom || v.email}</option>)}
             </select>
           )}
@@ -512,7 +518,7 @@ export default function ReglementsVendeurs() {
             <div className="sm:ml-auto flex items-center gap-3">
               {enAttenteDeReglement > 0 && (
                 <span className="text-xs font-semibold text-[#8a5a1f] text-right leading-tight">
-                  {enAttenteDeReglement} commande{enAttenteDeReglement > 1 ? 's' : ''} livrée{enAttenteDeReglement > 1 ? 's' : ''}<br />à régler
+                  {t('rel.livreesARegler', { n: enAttenteDeReglement })}<br />{t('rel.aReglerMot')}
                 </span>
               )}
               <button onClick={ouvrirCreation}
@@ -535,11 +541,10 @@ export default function ReglementsVendeurs() {
 
       {erreur && (
         <div className="px-4 py-3 rounded-xl text-sm bg-red-50 text-red-800 border border-red-200 sans-impression">
-          <p className="font-bold mb-1">Lecture impossible</p>
+          <p className="font-bold mb-1">{t('rel.lectureImpossible')}</p>
           <p className="font-mono text-xs">{erreur}</p>
           <p className="mt-2 text-xs opacity-80">
-            Si le message dit que la table n&apos;existe pas, le fichier
-            <span className="font-mono"> reglements_vendeurs.sql </span>n&apos;a pas encore été lancé.
+            {t('rel.lectureAide')}
           </p>
         </div>
       )}
@@ -555,25 +560,25 @@ export default function ReglementsVendeurs() {
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
                 <th className="px-5 py-4">ID</th>
-                <th className="px-5 py-4">Vendeur</th>
-                <th className="px-5 py-4 text-center">Commandes</th>
-                <th className="px-5 py-4">Période</th>
-                <th className="px-5 py-4">Date</th>
-                <th className="px-5 py-4 text-right">Net à payer</th>
-                <th className="px-5 py-4">Statut</th>
+                <th className="px-5 py-4">{t('rel.vendeur')}</th>
+                <th className="px-5 py-4 text-center">{t('rel.commandes')}</th>
+                <th className="px-5 py-4">{t('rel.periode')}</th>
+                <th className="px-5 py-4">{t('rel.date')}</th>
+                <th className="px-5 py-4 text-right">{t('rel.netAPayer')}</th>
+                <th className="px-5 py-4">{t('rel.statut')}</th>
                 <th className="px-5 py-4 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">{t('rel.chargement')}</td></tr>
               ) : affiches.length === 0 ? (
                 <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">
                   {releves.length > 0
-                    ? 'Aucun relevé ne correspond à cette recherche.'
+                    ? t('rel.aucunRecherche')
                     : enAttenteDeReglement > 0
-                      ? `Aucun relevé établi pour l'instant — ${enAttenteDeReglement} commande${enAttenteDeReglement > 1 ? 's livrées attendent' : ' livrée attend'} d'être réglée${enAttenteDeReglement > 1 ? 's' : ''}.`
-                      : "Aucun relevé établi. Les relevés se créent à partir des commandes livrées : il n'y en a aucune en attente."}
+                      ? t('rel.aucunEtabliAttente', { n: enAttenteDeReglement })
+                      : t('rel.aucunEtabli')}
                 </td></tr>
               ) : (
                 affiches.map((r) => (
@@ -604,7 +609,7 @@ export default function ReglementsVendeurs() {
                     <td className="px-5 py-4 text-right"><Montant valeur={r.net_a_payer} devise={r.devise} /></td>
                     <td className="px-5 py-4"><Statut valeur={r.statut} /></td>
                     <td className="px-5 py-4 text-right sticky right-0 bg-inherit" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => ouvrirFiche(r)} title="Voir le relevé"
+                      <button onClick={() => ouvrirFiche(r)} title={t('rel.voir')}
                         className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-[#1B2632]/50 hover:text-[#1B2632] hover:bg-[#EEE9DF] transition-colors">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
                       </button>
@@ -625,29 +630,29 @@ export default function ReglementsVendeurs() {
             <div className="zone-impression bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[1000px] my-8 pop-in">
 
               <div className="flex items-center gap-3 px-8 pt-7 pb-6 sans-impression">
-                <button onClick={() => setFiche(null)} title="Retour"
+                <button onClick={() => setFiche(null)} title={t('rel.retour')}
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <h2 className="text-2xl font-bold text-[#A35139]">Relevé de paiement</h2>
+                <h2 className="text-2xl font-bold text-[#A35139]">{t('rel.releveTitre')}</h2>
                 <span className="ml-auto"><Statut valeur={fiche.statut} /></span>
               </div>
 
               <div className="px-8 pb-8 flex flex-col gap-6">
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                  <Ligne label="ID du relevé" valeur={fiche.reference} mono />
-                  <Ligne label="Vendeur" valeur={nomVendeur(fiche.vendeur_id)} />
-                  <Ligne label="Période" valeur={`${jour(fiche.periode_debut)} → ${jour(fiche.periode_fin)}`} />
-                  <Ligne label="Méthode de paiement" valeur={METHODES[fiche.methode] || fiche.methode} />
-                  <Ligne label="Établi le" valeur={jourHeure(fiche.created_at)} />
+                  <Ligne label={t('rel.idReleve')} valeur={fiche.reference} mono />
+                  <Ligne label={t('rel.vendeur')} valeur={nomVendeur(fiche.vendeur_id)} />
+                  <Ligne label={t('rel.periode')} valeur={`${jour(fiche.periode_debut)} → ${jour(fiche.periode_fin)}`} />
+                  <Ligne label={t('rel.methodePaiement')} valeur={METHODES[fiche.methode] ? t(METHODES[fiche.methode]) : fiche.methode} />
+                  <Ligne label={t('rel.etabliLe')} valeur={jourHeure(fiche.created_at)} />
                   <Ligne
-                    label="Date de paiement"
-                    valeur={fiche.date_paiement ? jourHeure(fiche.date_paiement) : 'Pas encore payé'}
+                    label={t('rel.datePaiement')}
+                    valeur={fiche.date_paiement ? jourHeure(fiche.date_paiement) : t('rel.pasPaye')}
                   />
-                  <Ligne label="Nombre de commandes" valeur={String(fiche.nb_commandes)} />
-                  {emailDe(fiche.cree_par) && <Ligne label="Établi par" valeur={emailDe(fiche.cree_par)} />}
-                  {emailDe(fiche.paye_par) && <Ligne label="Marqué payé par" valeur={emailDe(fiche.paye_par)} />}
+                  <Ligne label={t('rel.nbCommandes')} valeur={String(fiche.nb_commandes)} />
+                  {emailDe(fiche.cree_par) && <Ligne label={t('rel.etabliPar')} valeur={emailDe(fiche.cree_par)} />}
+                  {emailDe(fiche.paye_par) && <Ligne label={t('rel.payePar')} valeur={emailDe(fiche.paye_par)} />}
                 </div>
 
                 {/* Résumé par produit (sa décision 09/11 : plus de détail par lead —
@@ -656,18 +661,18 @@ export default function ReglementsVendeurs() {
                   <table className="w-full min-w-[760px] text-left text-sm">
                     <thead>
                       <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#A35139] font-bold">
-                        <th className="px-4 py-3">Produit</th>
-                        <th className="px-4 py-3 text-center">Qté vendue</th>
-                        <th className="px-4 py-3 text-right">Total des ventes</th>
-                        <th className="px-4 py-3 text-right">Frais confirmation</th>
-                        <th className="px-4 py-3 text-right">Frais livraison</th>
-                        <th className="px-4 py-3 text-right">Upsell</th>
-                        <th className="px-4 py-3 text-right">Paiement</th>
+                        <th className="px-4 py-3">{t('rel.produit')}</th>
+                        <th className="px-4 py-3 text-center">{t('rel.qteVendue')}</th>
+                        <th className="px-4 py-3 text-right">{t('rel.totalVentes')}</th>
+                        <th className="px-4 py-3 text-right">{t('rel.fraisConfirmation')}</th>
+                        <th className="px-4 py-3 text-right">{t('rel.fraisLivraison')}</th>
+                        <th className="px-4 py-3 text-right">{t('rel.upsell')}</th>
+                        <th className="px-4 py-3 text-right">{t('rel.paiement')}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#C9C1B1]/30">
                       {parProduit.length === 0 ? (
-                        <tr><td colSpan="7" className="px-4 py-6 text-center text-[#1B2632]/50">Aucune commande rattachée.</td></tr>
+                        <tr><td colSpan="7" className="px-4 py-6 text-center text-[#1B2632]/50">{t('rel.aucuneCommande')}</td></tr>
                       ) : parProduit.map((x) => (
                         <tr key={x.nom}>
                           <td className="px-4 py-3 font-semibold text-[#1B2632]">{x.nom}</td>
@@ -683,7 +688,7 @@ export default function ReglementsVendeurs() {
                     {parProduit.length > 0 && (
                       <tfoot>
                         <tr className="border-t-2 border-dashed border-[#C9C1B1] font-bold text-[#1B2632]">
-                          <td className="px-4 py-3">Total</td>
+                          <td className="px-4 py-3">{t('rel.total')}</td>
                           <td className="px-4 py-3 text-center font-mono">{parProduit.reduce((t, x) => t + x.qte, 0)}</td>
                           <td className="px-4 py-3 text-right font-mono">{sou(fiche.total_ventes)}</td>
                           <td className="px-4 py-3 text-right font-mono">{sou(fiche.frais_confirmation)}</td>
@@ -700,15 +705,15 @@ export default function ReglementsVendeurs() {
                     vendeur compris ; ajout / retrait seulement avant « payé ». */}
                 {(ajustements.length > 0 || (peutGerer && fiche.statut !== 'paye')) && (
                   <div className="border border-[#C9C1B1] rounded-xl overflow-x-auto">
-                    <div className="px-4 py-3 bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#A35139] font-bold">Ajustements</div>
+                    <div className="px-4 py-3 bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#A35139] font-bold">{t('rel.ajustements')}</div>
                     {ajustements.length === 0 ? (
-                      <p className="px-4 py-4 text-sm text-[#1B2632]/50">Aucun ajustement.</p>
+                      <p className="px-4 py-4 text-sm text-[#1B2632]/50">{t('rel.aucunAjust')}</p>
                     ) : (
                       <table className="w-full min-w-[640px] text-left text-sm">
                         <tbody className="divide-y divide-[#C9C1B1]/30">
                           {ajustements.map((a) => (
                             <tr key={a.id}>
-                              <td className="px-4 py-2.5 font-semibold text-[#1B2632] whitespace-nowrap">{TYPES_AJUST[a.type] || a.type}</td>
+                              <td className="px-4 py-2.5 font-semibold text-[#1B2632] whitespace-nowrap">{TYPES_AJUST[a.type] ? t(TYPES_AJUST[a.type]) : a.type}</td>
                               <td className="px-4 py-2.5 text-[#1B2632]">{a.note}</td>
                               <td className="px-4 py-2.5 text-xs text-[#1B2632]/50 whitespace-nowrap">
                                 {emailDe(a.cree_par) ? `${emailDe(a.cree_par)} · ` : ''}{jourHeure(a.cree_le)}
@@ -718,7 +723,7 @@ export default function ReglementsVendeurs() {
                               </td>
                               {peutGerer && fiche.statut !== 'paye' && (
                                 <td className="px-2 py-2.5 text-right sans-impression">
-                                  <button onClick={() => retirerAjustement(a)} title="Retirer"
+                                  <button onClick={() => retirerAjustement(a)} title={t('rel.retirer')}
                                     className="w-7 h-7 rounded-full text-[#A35139] hover:bg-[#A35139]/10">×</button>
                                 </td>
                               )}
@@ -731,20 +736,20 @@ export default function ReglementsVendeurs() {
                       <div className="grid grid-cols-1 sm:grid-cols-[150px_120px_1fr_auto] gap-2 p-3 border-t border-dashed border-[#C9C1B1] bg-[#faf9f7] sans-impression">
                         <select className="rg-input" value={nouvelAjust.type}
                           onChange={(e) => setNouvelAjust({ ...nouvelAjust, type: e.target.value, sens: '' })}>
-                          {Object.entries(TYPES_AJUST).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                          {Object.entries(TYPES_AJUST).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
                         </select>
-                        <input type="number" min="0" step="any" className="rg-input" placeholder="Montant" value={nouvelAjust.montant}
+                        <input type="number" min="0" step="any" className="rg-input" placeholder={t('rel.montant')} value={nouvelAjust.montant}
                           onChange={(e) => setNouvelAjust({ ...nouvelAjust, montant: e.target.value })} />
                         <div className="flex gap-2">
                           {nouvelAjust.type === 'correction' && (
                             <select className="rg-input !w-[170px]" value={nouvelAjust.sens}
                               onChange={(e) => setNouvelAjust({ ...nouvelAjust, sens: e.target.value })}>
-                              <option value="">Sens…</option>
-                              <option value="moins">− retenue au vendeur</option>
-                              <option value="plus">+ rendue au vendeur</option>
+                              <option value="">{t('rel.sens')}</option>
+                              <option value="moins">{t('rel.retenue')}</option>
+                              <option value="plus">{t('rel.rendue')}</option>
                             </select>
                           )}
-                          <input type="text" className="rg-input" placeholder="Note (obligatoire)" value={nouvelAjust.note}
+                          <input type="text" className="rg-input" placeholder={t('rel.noteObl')} value={nouvelAjust.note}
                             onChange={(e) => setNouvelAjust({ ...nouvelAjust, note: e.target.value })} />
                         </div>
                         <button onClick={ajouterAjustement} disabled={ajustEnCours}
@@ -761,17 +766,17 @@ export default function ReglementsVendeurs() {
                   {peutGerer && fiche.statut !== 'paye' ? (
                     <div className="w-full sm:w-[360px] flex flex-col gap-2 p-4 bg-[#faf9f7] border border-dashed border-[#C9C1B1] rounded-xl sans-impression">
                       <label className="rg-label !mb-0">Crédit d&apos;expédition ({fiche.devise || ''})</label>
-                      <input type="date" className="rg-input" value={credit.date} title="Date de l'expédition"
+                      <input type="date" className="rg-input" value={credit.date} title={t('rel.dateExpedition')}
                         onChange={(e) => setCredit({ ...credit, date: e.target.value })} />
                       <div className="grid grid-cols-2 gap-2">
-                        <input type="number" min="0" step="any" className="rg-input" placeholder="Poids (kg)" value={credit.poids}
+                        <input type="number" min="0" step="any" className="rg-input" placeholder={t('rel.poids')} value={credit.poids}
                           onChange={(e) => setCredit({ ...credit, poids: e.target.value })} />
-                        <input type="number" min="0" step="any" className="rg-input" placeholder="Prix par kg" value={credit.prix}
+                        <input type="number" min="0" step="any" className="rg-input" placeholder={t('rel.prixKg')} value={credit.prix}
                           onChange={(e) => setCredit({ ...credit, prix: e.target.value })} />
                       </div>
-                      <input type="number" min="0" step="any" className="rg-input" placeholder="Montant" value={credit.montant}
+                      <input type="number" min="0" step="any" className="rg-input" placeholder={t('rel.montant')} value={credit.montant}
                         onChange={(e) => setCredit({ ...credit, montant: e.target.value })} />
-                      <input type="text" className="rg-input" value={credit.note} placeholder="Note (transport, trajet…) — facultatif"
+                      <input type="text" className="rg-input" value={credit.note} placeholder={t('rel.noteTransport')}
                         onChange={(e) => setCredit({ ...credit, note: e.target.value })} />
                       <button onClick={enregistrerCredit} disabled={creditEnCours || !creditModifie}
                         className={`mt-1 px-5 py-2 rounded-xl text-sm font-bold transition-colors ${
@@ -779,41 +784,41 @@ export default function ReglementsVendeurs() {
                             ? 'bg-[#1B2632] text-white hover:bg-[#2C3B4D] disabled:opacity-40'
                             : 'bg-green-50 text-green-800 border border-green-200'}`}>
                         {creditEnCours ? 'Enregistrement...'
-                          : creditModifie || !creditSaisi ? 'Enregistrer le crédit' : 'Crédit enregistré ✓'}
+                          : creditModifie || !creditSaisi ? t('rel.enregistrerCredit') : t('rel.creditEnregistre')}
                       </button>
                     </div>
                   ) : <div />}
                   <div className="w-full sm:w-[360px] flex flex-col gap-2">
-                    <LigneTotal label="Total des ventes" valeur={sou(fiche.total_ventes)} devise={fiche.devise} />
-                    <LigneTotal label="Frais commande" valeur={'− ' + sou(fiche.frais_confirmation)} devise={fiche.devise} />
-                    <LigneTotal label="Frais livraison" valeur={'− ' + sou(fiche.frais_livraison)} devise={fiche.devise} />
-                    <LigneTotal label="Frais upsell" valeur={'− ' + sou(fiche.frais_upsell)} devise={fiche.devise} />
+                    <LigneTotal label={t('rel.totalVentes')} valeur={sou(fiche.total_ventes)} devise={fiche.devise} />
+                    <LigneTotal label={t('rel.fraisCommande')} valeur={'− ' + sou(fiche.frais_confirmation)} devise={fiche.devise} />
+                    <LigneTotal label={t('rel.fraisLivraison')} valeur={'− ' + sou(fiche.frais_livraison)} devise={fiche.devise} />
+                    <LigneTotal label={t('rel.fraisUpsell')} valeur={'− ' + sou(fiche.frais_upsell)} devise={fiche.devise} />
                     {Number(fiche.frais_service || 0) > 0 && (
-                      <LigneTotal label="Frais de service" valeur={'− ' + sou(fiche.frais_service)} devise={fiche.devise} />
+                      <LigneTotal label={t('rel.fraisService')} valeur={'− ' + sou(fiche.frais_service)} devise={fiche.devise} />
                     )}
-                    <LigneTotal label="Crédit d'expédition" valeur={'− ' + sou(fiche.credit_expedition)} devise={fiche.devise} />
+                    <LigneTotal label={t('rel.creditExpedition')} valeur={'− ' + sou(fiche.credit_expedition)} devise={fiche.devise} />
                     {fiche.credit_expedition_poids != null && (
                       <p className="px-4 text-sm text-[#1B2632] text-right">
-                        {fiche.credit_expedition_date && `Expédition du ${jour(fiche.credit_expedition_date)} — `}
-                        {Number(fiche.credit_expedition_poids).toLocaleString('fr-FR')} kg × {sou(fiche.credit_expedition_prix_kg)} / kg
+                        {fiche.credit_expedition_date && t('rel.expeditionDu', { date: jour(fiche.credit_expedition_date) })}
+                        {Number(fiche.credit_expedition_poids).toLocaleString(locale)} kg × {sou(fiche.credit_expedition_prix_kg)} / kg
                         {fiche.credit_expedition_note && ` — ${fiche.credit_expedition_note}`}
                       </p>
                     )}
-                    <LigneTotal label="Ajustements"
+                    <LigneTotal label={t('rel.ajustements')}
                       valeur={(Number(fiche.frais_divers || 0) < 0 ? '+ ' : '− ') + sou(Math.abs(Number(fiche.frais_divers || 0)))} devise={fiche.devise} />
-                    <LigneTotal label={`Frais de transfert (${Number(fiche.frais_transfert_pct || 0).toLocaleString('fr-FR')} %)`}
+                    <LigneTotal label={t('rel.fraisTransfert', { pct: Number(fiche.frais_transfert_pct || 0).toLocaleString(locale) })}
                       valeur={'− ' + sou(fiche.frais_transfert)} devise={fiche.devise} />
                     <div className="flex justify-between items-baseline px-4 py-3 bg-[#EEE9DF] rounded-xl mt-1">
-                      <span className="text-sm font-bold text-[#1B2632]">À payer</span>
+                      <span className="text-sm font-bold text-[#1B2632]">{t('rel.aPayer')}</span>
                       <span className="text-right"><Montant valeur={fiche.net_a_payer} devise={fiche.devise} grand /></span>
                     </div>
                     {fiche.taux_mad != null && (
                       // Une ligne (20/11) : le montant d'abord, le taux en petit.
                       <div className="flex justify-between items-baseline gap-3 px-4">
-                        <span className="text-sm text-[#1B2632]/60 whitespace-nowrap">Équivalent MAD</span>
+                        <span className="text-sm text-[#1B2632]/60 whitespace-nowrap">{t('rel.equivMad')}</span>
                         <span className="text-right">
                           <span className="text-base font-mono font-bold text-[#1B2632] whitespace-nowrap">≈ {sou(Number(fiche.net_a_payer || 0) * Number(fiche.taux_mad))} MAD</span>
-                          <span className="block text-[11px] text-[#1B2632]/45">taux {Number(fiche.taux_mad).toLocaleString('fr-FR', { maximumFractionDigits: 6 })} MAD pour 1 {fiche.devise || ''}</span>
+                          <span className="block text-[11px] text-[#1B2632]/45">{t('rel.tauxMad', { taux: Number(fiche.taux_mad).toLocaleString(locale, { maximumFractionDigits: 6 }), devise: fiche.devise || '' })}</span>
                         </span>
                       </div>
                     )}
@@ -821,8 +826,8 @@ export default function ReglementsVendeurs() {
                         change aucun montant, il reste modifiable même payé. */}
                     {peutGerer && (
                       <div className="flex items-center gap-2 px-4 sans-impression">
-                        <label className="text-xs text-[#1B2632]/60 whitespace-nowrap">Taux MAD (facultatif)</label>
-                        <input type="number" min="0" step="any" className="rg-input !py-1.5" placeholder={`MAD pour 1 ${fiche.devise || ''}`}
+                        <label className="text-xs text-[#1B2632]/60 whitespace-nowrap">{t('rel.tauxMadFac')}</label>
+                        <input type="number" min="0" step="any" className="rg-input !py-1.5" placeholder={t('rel.madPour1', { devise: fiche.devise || '' })}
                           value={tauxMad} onChange={(e) => setTauxMad(e.target.value)} />
                         <button onClick={enregistrerTaux} disabled={!tauxModifie}
                           className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#1B2632] text-white disabled:opacity-30">OK</button>
@@ -840,18 +845,18 @@ export default function ReglementsVendeurs() {
               <div className="flex flex-col sm:flex-row justify-end gap-3 px-8 py-5 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-b-2xl sans-impression">
                 <button onClick={() => window.print()}
                   className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
-                  Imprimer
+                  {t('rel.imprimer')}
                 </button>
                 {peutGerer && fiche.statut !== 'paye' && (
                   <>
                     <button onClick={() => supprimer(fiche)}
                       className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-red-700 border border-red-300 hover:bg-red-50 transition-colors">
-                      Supprimer
+                      {t('rel.supprimer')}
                     </button>
                     {peutPayer && (
                       <button onClick={() => marquerPaye(fiche)}
                         className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#2E7D53] text-white hover:bg-[#256946] transition-colors">
-                        Marquer payé
+                        {t('rel.marquerPaye')}
                       </button>
                     )}
                   </>
@@ -870,24 +875,24 @@ export default function ReglementsVendeurs() {
             <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[900px] my-8 pop-in">
 
               <div className="flex items-center gap-3 px-8 pt-7 pb-6">
-                <button onClick={() => setModale(false)} title="Retour"
+                <button onClick={() => setModale(false)} title={t('rel.retour')}
                   className="w-9 h-9 rounded-full bg-[#C9C1B1]/50 text-[#1B2632] hover:bg-[#C9C1B1] transition-colors flex items-center justify-center shrink-0">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
                 </button>
-                <h2 className="text-2xl font-bold text-[#A35139]">Établir un relevé</h2>
+                <h2 className="text-2xl font-bold text-[#A35139]">{t('rel.etablirUn')}</h2>
               </div>
 
               <div className="px-8 pb-8 flex flex-col gap-6">
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                   <div className="sm:col-span-2">
-                    <label className="rg-label">Vendeur *</label>
+                    <label className="rg-label">{t('rel.vendeurObl')}</label>
                     <select className="rg-input" value={brouillon.vendeur_id}
                       onChange={(e) => { setBrouillon({ ...brouillon, vendeur_id: e.target.value }); setCandidates([]) }}>
-                      <option value="">Choisir...</option>
+                      <option value="">{t('rel.choisir')}</option>
                       {sellers.map((v) => (
                         <option key={v.user_id} value={v.user_id}>
                           {v.nom || v.email}
-                          {attenteParVendeur[v.user_id] ? ` — ${attenteParVendeur[v.user_id]} à régler` : ' — rien à régler'}
+                          {attenteParVendeur[v.user_id] ? t('rel.aRegler', { n: attenteParVendeur[v.user_id] }) : t('rel.rienARegler')}
                         </option>
                       ))}
                     </select>
@@ -895,23 +900,23 @@ export default function ReglementsVendeurs() {
                   {/* Une seule case « du → au » en français (20/11), au lieu de deux
                       champs mm/dd/yyyy. Mêmes valeurs AAAA-MM-JJ qu'avant. */}
                   <div className="sm:col-span-2">
-                    <label className="rg-label">Période (facultatif)</label>
-                    <PlageDates etiquette="releve" du={brouillon.debut} au={brouillon.fin} placeholder="Toutes les commandes livrées"
+                    <label className="rg-label">{t('rel.periodeFac')}</label>
+                    <PlageDates etiquette="releve" du={brouillon.debut} au={brouillon.fin} placeholder={t('rel.toutesLivrees')}
                       onChange={(du, au) => { setBrouillon({ ...brouillon, debut: du, fin: au }); setCandidates([]) }} />
                   </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-end">
                   <div className="sm:w-[200px]">
-                    <label className="rg-label">Méthode</label>
+                    <label className="rg-label">{t('rel.methode')}</label>
                     <select className="rg-input" value={brouillon.methode}
                       onChange={(e) => setBrouillon({ ...brouillon, methode: e.target.value })}>
-                      {Object.entries(METHODES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      {Object.entries(METHODES).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
                     </select>
                   </div>
                   <button onClick={chercherCommandes} disabled={rechercheEnCours}
                     className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors disabled:opacity-50">
-                    {rechercheEnCours ? 'Recherche...' : 'Chercher les commandes livrées'}
+                    {rechercheEnCours ? 'Recherche...' : t('rel.chercherLivrees')}
                   </button>
                 </div>
 
@@ -922,11 +927,11 @@ export default function ReglementsVendeurs() {
                         <thead className="sticky top-0 bg-[#F4F0E6]">
                           <tr className="text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-semibold">
                             <th className="px-4 py-3 w-10"></th>
-                            <th className="px-4 py-3">Lead ID</th>
-                            <th className="px-4 py-3">Client</th>
-                            <th className="px-4 py-3">Produit</th>
-                            <th className="px-4 py-3">Livrée le</th>
-                            <th className="px-4 py-3 text-right">Montant</th>
+                            <th className="px-4 py-3">{t('rel.leadId')}</th>
+                            <th className="px-4 py-3">{t('rel.client')}</th>
+                            <th className="px-4 py-3">{t('rel.produit')}</th>
+                            <th className="px-4 py-3">{t('rel.livreeLe')}</th>
+                            <th className="px-4 py-3 text-right">{t('rel.montant')}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -954,8 +959,8 @@ export default function ReglementsVendeurs() {
 
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-[#EEE9DF] rounded-xl">
                       <span className="text-sm font-semibold text-[#1B2632]">
-                        {retenues.length} commande{retenues.length > 1 ? 's' : ''} retenue{retenues.length > 1 ? 's' : ''}
-                        {retenues.length !== candidates.length && ` sur ${candidates.length}`}
+                        {t('rel.retenues', { n: retenues.length })}
+                        {retenues.length !== candidates.length && t('rel.surN', { n: candidates.length })}
                       </span>
                       <span className="text-lg font-bold text-[#1B2632] font-mono">
                         {sou(totalRetenu)} <span className="text-xs font-sans text-[#1B2632]/50">{deviseRetenue}</span>
@@ -968,11 +973,11 @@ export default function ReglementsVendeurs() {
               <div className="flex flex-col sm:flex-row justify-end gap-3 px-8 py-5 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-b-2xl">
                 <button onClick={() => setModale(false)}
                   className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
-                  Annuler
+                  {t('rel.annuler')}
                 </button>
                 <button onClick={enregistrerReleve} disabled={enregistrement || retenues.length === 0}
                   className="px-8 py-2.5 rounded-xl text-sm font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors disabled:opacity-40">
-                  {enregistrement ? 'Enregistrement...' : 'Établir le relevé'}
+                  {enregistrement ? 'Enregistrement...' : t('rel.etablir')}
                 </button>
               </div>
             </div>

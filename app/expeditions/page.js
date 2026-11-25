@@ -11,6 +11,8 @@ import VignetteProduit from '../components/VignetteProduit'
 import { useMessages } from '../components/Messages'
 import { messageErreur } from '../../lib/messageErreur.mjs'
 import { LIBELLES_EXPEDITION } from '../../lib/libellesStatuts.mjs'
+import { useLangue } from '../context/LangueContext'
+import { localeDe } from '../../lib/langues/index.mjs'
 // Export CSV : chaque cellule entre guillemets, jamais une formule (16/11).
 import { contenuCSV } from '../../lib/celluleCSV.mjs'
 
@@ -55,7 +57,7 @@ function Statut({ valeur }) {
 function dateCourte(v) {
   if (!v) return '—'
   const d = new Date(v)
-  return `${d.toLocaleDateString('fr-FR')} ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+  return `${d.toLocaleDateString(localeDe())} ${d.toLocaleTimeString(localeDe(), { hour: '2-digit', minute: '2-digit' })}`
 }
 
 // `datetime-local` veut "YYYY-MM-DDTHH:mm" et rien d'autre.
@@ -79,6 +81,8 @@ export default function ExpeditionsPage() {
   const router = useRouter()
   // Messages du CRM (24/11) au lieu du bandeau de la page et des fenêtres du navigateur.
   const { annoncer, confirmer } = useMessages()
+  // Les textes suivent la langue choisie (25/11).
+  const { t, locale } = useLangue()
 
   const tenantKey = typeof tenantId === 'object' ? tenantId?.id : tenantId
   const peutCreer = hasPermission('creer_expedition')
@@ -218,7 +222,7 @@ export default function ExpeditionsPage() {
       compte[l.expedition_id].lignes.push({
         // `prodDB` et non `catalogue` : un produit passé inactif reste le nom
         // de ce qui a été expédié. Le filtrer ici effacerait l'historique.
-        nom: (supprime ? l.produit_nom : (nomDuProduit.get(l.produit_id) || l.produit_nom)) || 'Produit inconnu',
+        nom: (supprime ? l.produit_nom : (nomDuProduit.get(l.produit_id) || l.produit_nom)) || t('exp.produitInconnu'),
         image: (l.produit_id && imageDuProduit.get(l.produit_id)) || null,
         quantite: l.quantite || 0,
         recue: l.quantite_recue,
@@ -274,7 +278,7 @@ export default function ExpeditionsPage() {
     const autres = [...new Set(expeditions.map((e) => e.vendeur_id).filter((id) => id && !ids.has(id)))]
     return [
       ...vendeursFiltre.map((v) => ({ id: v.user_id, nom: v.nom || v.email || '—' })),
-      ...autres.map((id) => ({ id, nom: `${nomVendeur(id)} (pas vendeur)` })),
+      ...autres.map((id) => ({ id, nom: t('exp.vendeurPasVendeur', { nom: nomVendeur(id) }) })),
     ]
   }, [vendeursFiltre, expeditions, nomVendeur])
   const nomFiltreVendeur = filtreVendeur ? (optionsVendeur.find((o) => o.id === filtreVendeur)?.nom || nomVendeur(filtreVendeur)) : ''
@@ -379,20 +383,20 @@ export default function ExpeditionsPage() {
   }
 
   function nomProduit(l) {
-    if (l.supprime) return l.nom || 'Produit inconnu'
+    if (l.supprime) return l.nom || t('exp.produitInconnu')
     const p = catalogue.find((x) => x.id === l.produit_id)
     // Pas dans le catalogue de ce compte : le nom écrit sur la ligne d'abord.
-    return p ? p.product : (l.nom || 'Produit retiré du catalogue')
+    return p ? p.product : (l.nom || t('exp.produitRetire'))
   }
 
   async function enregistrer(ev) {
     ev.preventDefault()
     if (!tenantKey) return
-    if (!formulaire.pays.trim()) return annonce('Le pays de provenance est obligatoire.', 'erreur')
+    if (!formulaire.pays.trim()) return annonce(t('exp.paysObligatoire'), 'erreur')
     // Le vendeur de l'expédition (11/11) : un responsable le choisit, comme pour
     // l'import des leads ; un vendeur, c'est lui. La base le vérifie aussi
     // (expedition_vendeur.sql).
-    if (!estSeller && !formulaire.vendeur_id) return annonce('Choisissez le vendeur de cette expédition.', 'erreur')
+    if (!estSeller && !formulaire.vendeur_id) return annonce(t('exp.choisirVendeur'), 'erreur')
 
     const donnees = {
       poids_kg: formulaire.poids_kg === '' ? null : Number(formulaire.poids_kg),
@@ -426,7 +430,7 @@ export default function ExpeditionsPage() {
       const { data: recues } = await supabase.from('expeditions_produits')
         .select('produit_id').eq('expedition_id', idEnEdition).not('produit_id', 'is', null)
       if ((recues || []).some((r) => !gardes.has(r.produit_id))) {
-        return annonce('Cette expédition est déjà reçue : un produit ne se retire pas. Corrigez sa quantité si elle est fausse.', 'erreur')
+        return annonce(t('exp.dejaRecue'), 'erreur')
       }
     }
 
@@ -440,11 +444,11 @@ export default function ExpeditionsPage() {
 
     if (error) {
       setEnregistrement(false)
-      return annonce('Enregistrement refusé : ' + messageErreur(error), 'erreur')
+      return annonce(t('exp.enregistrementRefuse', { erreur: messageErreur(error) }), 'erreur')
     }
     if (!data || data.length === 0) {
       setEnregistrement(false)
-      return annonce("Aucune modification enregistrée : cette expédition ne vous appartient plus.", 'erreur')
+      return annonce(t('exp.plusAVous'), 'erreur')
     }
 
     // Les produits transportés, mis à jour LIGNE PAR LIGNE (29/10). Avant :
@@ -463,7 +467,7 @@ export default function ExpeditionsPage() {
       .eq('expedition_id', expeditionId).not('produit_id', 'is', null)
     if (erreurLecture) {
       setEnregistrement(false)
-      return annonce("Expédition enregistrée, mais ses produits n'ont pas pu être relus : " + messageErreur(erreurLecture), 'erreur')
+      return annonce(t('exp.produitsNonRelus', { erreur: messageErreur(erreurLecture) }), 'erreur')
     }
 
     const voulues = lignes.filter((l) => !l.supprime)
@@ -478,14 +482,14 @@ export default function ExpeditionsPage() {
         .update({ quantite: v.quantite }).eq('id', parProduit.get(v.produit_id).id)
       if (e1) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais une quantité a été refusée : " + messageErreur(e1), 'erreur')
+        return annonce(t('exp.quantiteRefusee', { erreur: messageErreur(e1) }), 'erreur')
       }
     }
     if (aRetirer.length > 0) {
       const { error: e2 } = await supabase.from('expeditions_produits').delete().in('id', aRetirer.map((r) => r.id))
       if (e2) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais un produit retiré n'a pas pu être supprimé : " + messageErreur(e2), 'erreur')
+        return annonce(t('exp.produitNonSupprime', { erreur: messageErreur(e2) }), 'erreur')
       }
     }
     if (aAjouter.length > 0) {
@@ -494,7 +498,7 @@ export default function ExpeditionsPage() {
       )
       if (e3) {
         setEnregistrement(false)
-        return annonce("Expédition enregistrée, mais ses produits ont été refusés : " + messageErreur(e3), 'erreur')
+        return annonce(t('exp.produitsRefuses', { erreur: messageErreur(e3) }), 'erreur')
       }
     }
 
@@ -502,10 +506,10 @@ export default function ExpeditionsPage() {
 
     annonce(
       idEnEdition
-        ? 'Expédition modifiée.'
+        ? t('exp.modifiee')
         : peutConfirmer
-          ? 'Expédition créée.'
-          : 'Expédition déclarée. Elle attend la confirmation d\'un responsable.',
+          ? t('exp.creee')
+          : t('exp.declaree'),
       'succes',
     )
     setModale(false)
@@ -520,11 +524,11 @@ export default function ExpeditionsPage() {
       .from('expeditions').update(maj)
       .eq('id', e.id).eq('tenant_id', tenantKey).select()
 
-    if (error) return annonce('Refusé par la base : ' + messageErreur(error), 'erreur')
+    if (error) return annonce(t('exp.refuseBase', { erreur: messageErreur(error) }), 'erreur')
     if (!data || data.length === 0) {
-      return annonce("Votre rôle ne permet pas de confirmer une expédition.", 'erreur')
+      return annonce(t('exp.roleConfirmer'), 'erreur')
     }
-    annonce(`Expédition ${STATUTS[statut]?.label.toLowerCase() || statut}.`, 'succes')
+    annonce(t('exp.statutChange', { statut: STATUTS[statut]?.label || statut }), 'succes')
     setRefusEnCours(null)
     setMotifRefus('')
     charger()
@@ -543,13 +547,12 @@ export default function ExpeditionsPage() {
   async function confirmerEtRecevoir(e) {
     const sansStock = (nbProduits[e.id]?.lignes || []).filter((l) => l.sansMouvement)
     if (!(await confirmer({
-      titre: 'Confirmer la réception',
-      message: `Confirmer ${e.reference} ?\n\n`
-        + "Les quantités déclarées entrent en stock, et cela ne se défait pas."
+      titre: t('exp.confirmerReception'),
+      message: t('exp.confirmerMessage', { ref: e.reference })
         + (sansStock.length
-          ? '\n\n' + sansStock.map((l) => `${l.nom} ×${l.quantite} : produit supprimé — aucun mouvement de stock.`).join('\n')
+          ? '\n\n' + sansStock.map((l) => t('exp.ligneSansStock', { nom: l.nom, n: l.quantite })).join('\n')
           : ''),
-      bouton: 'Confirmer',
+      bouton: t('exp.confirmer'),
     }))) return
 
     setReceptionEnvoi(true)
@@ -567,15 +570,15 @@ export default function ExpeditionsPage() {
     if (error) return annonce(messageErreur(error), 'erreur')
 
     const r = Array.isArray(data) ? data[0] : data
-    annonce(`Expédition confirmée : ${r?.total_recu ?? 0} pièce(s) entrées en stock.`, 'succes')
+    annonce(t('exp.confirmee', { n: r?.total_recu ?? 0 }), 'succes')
     charger()
   }
 
   async function supprimer(e) {
-    if (!(await confirmer({ titre: 'Supprimer l\u2019expédition', message: `Supprimer l'expédition ${e.reference} ?`, bouton: 'Supprimer', danger: true }))) return
+    if (!(await confirmer({ titre: t('exp.supprimerTitre'), message: t('exp.supprimerMessage', { ref: e.reference }), bouton: 'Supprimer', danger: true }))) return
     const { error } = await supabase.from('expeditions').delete().eq('id', e.id).eq('tenant_id', tenantKey)
-    if (error) return annonce('Suppression refusée : ' + messageErreur(error), 'erreur')
-    annonce('Expédition supprimée.', 'succes')
+    if (error) return annonce(t('exp.suppressionRefusee', { erreur: messageErreur(error) }), 'erreur')
+    annonce(t('exp.supprimee'), 'succes')
     charger()
   }
 
@@ -628,7 +631,7 @@ export default function ExpeditionsPage() {
   }
 
   if (authLoading || permsLoading) {
-    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">Chargement...</div>
+    return <div className="p-12 text-center text-[#1B2632]/60 font-medium">{t('exp.chargement')}</div>
   }
 
   return (
@@ -644,7 +647,7 @@ export default function ExpeditionsPage() {
       <header className="flex flex-col gap-3 border-b border-[#C9C1B1]/50 pb-4">
         {/* En-tête compact (19/11) : le titre et le nombre affiché. */}
         <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-[#1B2632]">Expéditions</h1>
+          <h1 className="text-2xl font-bold text-[#1B2632]">{t('exp.titre')}</h1>
           <span className="text-sm font-semibold text-[#1B2632]/50">{affichees.length}</span>
         </div>
 
@@ -672,7 +675,7 @@ export default function ExpeditionsPage() {
                   : 'bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50'
               }`}
             >
-              Filtres
+              {t('exp.filtres')}
               {nombreFiltres > 0 && (
                 <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FFB162] text-[#1B2632] text-[11px] font-bold flex items-center justify-center">
                   {nombreFiltres}
@@ -685,41 +688,41 @@ export default function ExpeditionsPage() {
                 <div className="fixed inset-0 z-40 bg-black/30 sm:bg-transparent" onClick={() => setPanneauFiltres(false)} />
                 <div className="fixed inset-x-3 bottom-3 max-h-[85dvh] overflow-y-auto z-50 sm:absolute sm:inset-x-auto sm:bottom-auto sm:left-0 sm:top-full sm:mt-2 sm:w-[280px] sm:max-h-none bg-white rounded-2xl border border-[#C9C1B1] shadow-xl p-5 pop-in">
                   <div className="flex items-center justify-between mb-4">
-                    <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">Filtres</span>
+                    <span className="text-xs font-bold uppercase tracking-widest text-[#1B2632]/50">{t('exp.filtres')}</span>
                     {nombreFiltres > 0 && (
                       <button
                         onClick={() => { setFiltreStatut(''); setFiltreMode(''); setFiltrePays('') }}
                         className="text-xs font-semibold text-[#A35139] hover:underline"
                       >
-                        Tout effacer
+                        {t('exp.toutEffacer')}
                       </button>
                     )}
                   </div>
                   <div className="flex flex-col gap-4">
                     <div>
-                      <label className="ex-label">Statut</label>
+                      <label className="ex-label">{t('exp.statut')}</label>
                       <select value={filtreStatut} onChange={(e) => setFiltreStatut(e.target.value)} className="ex-input">
-                        <option value="">Tous les statuts</option>
+                        <option value="">{t('exp.tousStatuts')}</option>
                         {Object.entries(STATUTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="ex-label">Mode de transport</label>
+                      <label className="ex-label">{t('exp.modeTransport')}</label>
                       <select value={filtreMode} onChange={(e) => setFiltreMode(e.target.value)} className="ex-input">
-                        <option value="">Tous les modes</option>
+                        <option value="">{t('exp.tousModes')}</option>
                         {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="ex-label">Pays</label>
+                      <label className="ex-label">{t('exp.pays')}</label>
                       <select value={filtrePays} onChange={(e) => setFiltrePays(e.target.value)} className="ex-input">
-                        <option value="">Tous les pays</option>
+                        <option value="">{t('exp.tousPays')}</option>
                         {listePaysSaisis.map((p) => <option key={p} value={p}>{p}</option>)}
                       </select>
                     </div>
                   </div>
                   <button onClick={() => setPanneauFiltres(false)} className="w-full mt-5 py-3 sm:py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors">
-                    Appliquer
+                    {t('exp.appliquer')}
                   </button>
                 </div>
               </>
@@ -732,12 +735,12 @@ export default function ExpeditionsPage() {
               data-filtre-vendeur
               value={filtreVendeur}
               onChange={(e) => setFiltreVendeur(e.target.value)}
-              title="Ne montrer que les expéditions d'un vendeur. Ne change rien à ce que vous pouvez voir."
+              title={t('exp.filtreVendeurAide')}
               className={`px-3 py-2.5 rounded-xl text-sm font-semibold shadow-sm border outline-none cursor-pointer max-w-full sm:max-w-[220px] ${
                 filtreVendeur ? 'bg-[#1B2632] text-white border-[#1B2632]' : 'bg-white text-[#1B2632] border-[#C9C1B1]'
               }`}
             >
-              <option value="">Tous les vendeurs</option>
+              <option value="">{t('exp.tousVendeurs')}</option>
               {optionsVendeur.map((o) => <option key={o.id} value={o.id}>{o.nom}</option>)}
             </select>
           )}
@@ -751,16 +754,16 @@ export default function ExpeditionsPage() {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" />
             </svg>
-            {analyseOuverte ? "Masquer l'analyse" : 'Analyse'}
+            {analyseOuverte ? t('exp.masquerAnalyse') : 'Analyse'}
           </button>
 
           <div className="flex items-center gap-2 ml-auto">
             <button onClick={exporter} className="px-4 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors shadow-sm">
-              Exporter CSV
+              {t('exp.exporterCsv')}
             </button>
             {peutCreer && (
               <button onClick={ouvrirCreation} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors shadow-sm">
-                <span className="text-lg leading-none">+</span> Nouvelle expédition
+                <span className="text-lg leading-none">+</span> {t('exp.nouvelle')}
               </button>
             )}
           </div>
@@ -773,7 +776,7 @@ export default function ExpeditionsPage() {
             </span>
             <span className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-full bg-[#1B2632] text-white text-xs font-semibold">
               Vendeur : {nomFiltreVendeur}
-              <button onClick={() => setFiltreVendeur('')} aria-label="Retirer le filtre vendeur" className="w-5 h-5 rounded-full hover:bg-white/20">✕</button>
+              <button onClick={() => setFiltreVendeur('')} aria-label={t('exp.retirerFiltre')} className="w-5 h-5 rounded-full hover:bg-white/20">✕</button>
             </span>
           </div>
         )}
@@ -782,8 +785,7 @@ export default function ExpeditionsPage() {
             validation — sinon il croit l'expédition enregistrée et partie. */}
         {peutCreer && !peutConfirmer && (
           <p className="text-xs text-[#1B2632]/60 bg-[#FFB162]/10 border border-[#FFB162]/40 rounded-xl px-4 py-2.5">
-            Vos expéditions sont enregistrées <strong>en attente</strong> : un admin ou un manager doit les confirmer.
-            Tant que personne n'a tranché, vous pouvez encore les corriger.
+            {t('exp.enAttenteInfo')}
           </p>
         )}
       </header>
@@ -791,11 +793,10 @@ export default function ExpeditionsPage() {
 
       {erreur && (
         <div className="px-4 py-3 rounded-xl text-sm bg-red-50 text-red-800 border border-red-200">
-          <p className="font-bold mb-1">Lecture impossible</p>
+          <p className="font-bold mb-1">{t('exp.lectureImpossible')}</p>
           <p className="font-mono text-xs">{erreur}</p>
           <p className="mt-2 text-xs opacity-80">
-            Si le message dit que la table n&apos;existe pas, le fichier
-            <span className="font-mono"> expeditions.sql </span>n&apos;a pas encore été lancé.
+            {t('exp.lectureAide')}
           </p>
         </div>
       )}
@@ -803,15 +804,15 @@ export default function ExpeditionsPage() {
       {peutConfirmer && (analyse.enAttente > 0 || (filtreVendeur && enAttenteTousVendeurs > 0)) && (
         <div className="px-4 py-3 rounded-xl bg-[#FFB162]/15 border border-[#FFB162]/50 flex items-center justify-between gap-3 flex-wrap">
           <span className="text-sm font-semibold text-[#8a5a1f]">
-            {analyse.enAttente} expédition{analyse.enAttente > 1 ? 's' : ''} attend{analyse.enAttente > 1 ? 'ent' : ''} votre confirmation
+            {t('exp.attendent', { n: analyse.enAttente })}
             {/* Filtré par vendeur : le total de l'entreprise reste lisible. */}
-            {filtreVendeur && ` — pour ${nomFiltreVendeur} ; ${enAttenteTousVendeurs} tous vendeurs confondus`}
+            {filtreVendeur && t('exp.pourVendeur', { nom: nomFiltreVendeur, n: enAttenteTousVendeurs })}
           </span>
           <button
             onClick={() => setFiltreStatut('en_attente')}
             className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors"
           >
-            Les afficher
+            {t('exp.lesAfficher')}
           </button>
         </div>
       )}
@@ -824,19 +825,19 @@ export default function ExpeditionsPage() {
             </p>
           )}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-5">
-            <Chiffre label="Expéditions" valeur={analyse.total} />
-            <Chiffre label="En attente" valeur={analyse.enAttente} alerte={analyse.enAttente > 0} />
-            <Chiffre label="Confirmées" valeur={analyse.confirmees} />
+            <Chiffre label={t('exp.titre')} valeur={analyse.total} />
+            <Chiffre label={t('exp.enAttente')} valeur={analyse.enAttente} alerte={analyse.enAttente > 0} />
+            <Chiffre label={t('exp.confirmees')} valeur={analyse.confirmees} />
             {analyse.anciennes > 0 && (
-              <Chiffre label="Avant 14/10" valeur={analyse.anciennes} />
+              <Chiffre label={t('exp.avant1410')} valeur={analyse.anciennes} />
             )}
-            <Chiffre label="Refusées" valeur={analyse.refusees} alerte={analyse.refusees > 0} />
-            <Chiffre label="Poids total" valeur={`${analyse.poids.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kg`} />
+            <Chiffre label={t('exp.refusees')} valeur={analyse.refusees} alerte={analyse.refusees > 0} />
+            <Chiffre label={t('exp.poidsTotal')} valeur={`${analyse.poids.toLocaleString(locale, { maximumFractionDigits: 1 })} kg`} />
           </div>
           {analyse.delai !== null && (
             <p className="text-sm text-[#1B2632]/70 mt-5 pt-5 border-t border-[#C9C1B1]/50">
-              Délai moyen entre expédition et réception : <strong>{analyse.delai.toFixed(1)} jours</strong>
-              <span className="text-xs text-[#1B2632]/50"> — calculé seulement sur les expéditions arrivées.</span>
+              {t('exp.delaiMoyen', { n: analyse.delai.toFixed(1) })}
+              <span className="text-xs text-[#1B2632]/50">{t('exp.delaiAide')}</span>
             </p>
           )}
           <p className="text-[11px] text-[#1B2632]/50 mt-3">
@@ -852,27 +853,27 @@ export default function ExpeditionsPage() {
               <tr className="bg-[#F4F0E6] border-b border-[#C9C1B1]/50 text-xs uppercase tracking-wider text-[#1B2632]/60 font-semibold shadow-[0_1px_0_#C9C1B1]">
                 {/* Poids et mode réunis (19/11) : « Maritime · 5 kg ». */}
                 <th className="px-5 py-4">ID</th>
-                <th className="px-5 py-4">Transport</th>
-                <th className="px-5 py-4">Produits</th>
-                <th className="px-5 py-4">Transporteur</th>
-                <th className="px-5 py-4">Pays</th>
+                <th className="px-5 py-4">{t('exp.transport')}</th>
+                <th className="px-5 py-4">{t('exp.produits')}</th>
+                <th className="px-5 py-4">{t('exp.transporteur')}</th>
+                <th className="px-5 py-4">{t('exp.pays')}</th>
                 {/* Une colonne pour les deux dates (19/11) : la seconde n'existe
                     qu'une fois reçue. */}
-                <th className="px-5 py-4">Dates</th>
-                <th className="px-5 py-4">Statut</th>
+                <th className="px-5 py-4">{t('exp.dates')}</th>
+                <th className="px-5 py-4">{t('exp.statut')}</th>
                 <th className="px-5 py-4 text-right sticky right-0 bg-[#F4F0E6]"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#C9C1B1]/30">
               {chargement ? (
-                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">Chargement...</td></tr>
+                <tr><td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">{t('exp.chargement')}</td></tr>
               ) : affichees.length === 0 ? (
                 <tr>
                   <td colSpan="8" className="px-6 py-12 text-center text-[#1B2632]/60">
-                    {expeditions.length === 0 ? 'Aucune expédition.'
+                    {expeditions.length === 0 ? t('exp.aucune')
                       : filtreVendeur && afficheesTousVendeurs.length > 0
                         ? `Aucune expédition pour « ${nomFiltreVendeur} » — ${afficheesTousVendeurs.length} au total.`
-                        : 'Aucune expédition ne correspond à cette recherche.'}
+                        : t('exp.aucuneRecherche')}
                   </td>
                 </tr>
               ) : (
@@ -893,7 +894,7 @@ export default function ExpeditionsPage() {
                         <span className="px-2.5 py-1 rounded-md bg-[#EEE9DF] text-[#1B2632]/70 text-xs font-medium">
                           {e.mode_transport || '—'}
                         </span>
-                        <span className="ml-2 text-sm font-bold text-[#1B2632]">{e.poids_kg != null ? `${Number(e.poids_kg).toLocaleString('fr-FR')} kg` : ''}</span>
+                        <span className="ml-2 text-sm font-bold text-[#1B2632]">{e.poids_kg != null ? `${Number(e.poids_kg).toLocaleString(locale)} kg` : ''}</span>
                       </td>
                       <td className="px-5 py-4" onClick={(ev) => ev.stopPropagation()}>
                         {e.details ? (
@@ -963,13 +964,13 @@ export default function ExpeditionsPage() {
                                 onClick={() => confirmerEtRecevoir(e)}
                                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2E7D53] text-white hover:bg-[#256946] transition-colors whitespace-nowrap"
                               >
-                                Confirmer
+                                {t('exp.confirmer')}
                               </button>
                               <button
                                 onClick={() => { setRefusEnCours(e); setMotifRefus('') }}
                                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-red-700 border border-red-300 hover:bg-red-50 transition-colors whitespace-nowrap"
                               >
-                                Refuser
+                                {t('exp.refuser')}
                               </button>
                             </>
                           )}
@@ -977,7 +978,7 @@ export default function ExpeditionsPage() {
                               la base refuse le reste, autant ne pas l'afficher. */}
                           {(peutConfirmer || enAttente) && peutCreer && (
                             <button
-                              onClick={() => ouvrirEdition(e)} title="Modifier"
+                              onClick={() => ouvrirEdition(e)} title={t('exp.modifier')}
                               className="w-8 h-8 rounded-lg flex items-center justify-center text-[#1B2632]/50 hover:text-[#1B2632] hover:bg-[#EEE9DF] transition-colors"
                             >
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
@@ -986,7 +987,7 @@ export default function ExpeditionsPage() {
                           {/* Reçue = stock entré : elle ne se supprime plus (T19, 10/11). */}
                           {(peutConfirmer || enAttente) && peutCreer && !e.entrepot_reception_id && (
                             <button
-                              onClick={() => supprimer(e)} title="Supprimer"
+                              onClick={() => supprimer(e)} title={t('exp.supprimer')}
                               className="w-8 h-8 rounded-lg flex items-center justify-center text-[#1B2632]/50 hover:text-red-600 hover:bg-red-50 transition-colors"
                             >
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
@@ -1002,11 +1003,11 @@ export default function ExpeditionsPage() {
                           <table className="w-full text-left text-sm border border-[#C9C1B1]/60 rounded-xl overflow-hidden bg-white">
                             <thead>
                               <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/55 font-semibold">
-                                <th className="px-4 py-2.5 w-[60px]">Image</th>
-                                <th className="px-4 py-2.5">Entrepôt</th>
-                                <th className="px-4 py-2.5">Produit</th>
-                                <th className="px-4 py-2.5 text-right">Quantité envoyée</th>
-                                <th className="px-4 py-2.5 text-right">Quantité reçue</th>
+                                <th className="px-4 py-2.5 w-[60px]">{t('exp.image')}</th>
+                                <th className="px-4 py-2.5">{t('exp.entrepot')}</th>
+                                <th className="px-4 py-2.5">{t('exp.produit')}</th>
+                                <th className="px-4 py-2.5 text-right">{t('exp.qteEnvoyee')}</th>
+                                <th className="px-4 py-2.5 text-right">{t('exp.qteRecue')}</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-[#C9C1B1]/30">
@@ -1018,7 +1019,7 @@ export default function ExpeditionsPage() {
                                     {l.nom}
                                     {l.supprime && (
                                       <div className="text-[11px] font-semibold text-[#A35139] mt-0.5">
-                                        {l.sansMouvement ? 'produit supprimé — aucun mouvement de stock' : 'produit supprimé'}
+                                        {l.sansMouvement ? t('exp.produitSupprimeSans') : t('exp.produitSupprime')}
                                       </div>
                                     )}
                                   </td>
@@ -1027,7 +1028,7 @@ export default function ExpeditionsPage() {
                                       n'est pas la même chose que « zéro reçu ». */}
                                   <td className="px-4 py-2.5 text-right font-mono font-bold">
                                     {l.recue == null
-                                      ? <span className="font-normal text-[#1B2632]/35">En attente</span>
+                                      ? <span className="font-normal text-[#1B2632]/35">{t('exp.enAttente')}</span>
                                       : l.recue}
                                   </td>
                                 </tr>
@@ -1061,11 +1062,11 @@ export default function ExpeditionsPage() {
             <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[460px] pop-in flex flex-col max-h-[70vh]">
               <div className="px-5 py-4 border-b border-[#C9C1B1]/50">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-base font-bold text-[#1B2632]">Pays d&apos;achat</h3>
+                  <h3 className="text-base font-bold text-[#1B2632]">{t('exp.paysAchat')}</h3>
                   <button type="button" onClick={() => setSelecteurPays(false)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">✕</button>
                 </div>
                 <input
-                  autoFocus className="ex-input" placeholder="Taper les premières lettres..."
+                  autoFocus className="ex-input" placeholder={t('exp.taper')}
                   value={recherchePays}
                   onChange={(ev) => setRecherchePays(ev.target.value)}
                 />
@@ -1080,7 +1081,7 @@ export default function ExpeditionsPage() {
                     .filter((pa) => !r || pa.nom.toLowerCase().includes(r) || pa.code.toLowerCase() === r)
                     .sort((a, b) => (deja.has(b.code) ? 1 : 0) - (deja.has(a.code) ? 1 : 0))
                   if (trouves.length === 0) {
-                    return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">Aucun pays ne correspond.</p>
+                    return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">{t('exp.aucunPays')}</p>
                   }
                   return trouves.map((pa) => (
                     <button
@@ -1094,7 +1095,7 @@ export default function ExpeditionsPage() {
                       <span className="text-xl leading-none">{drapeau(pa.code)}</span>
                       <span className="text-sm font-medium text-[#1B2632]">{pa.nom}</span>
                       {deja.has(pa.code) && (
-                        <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded bg-[#EEE9DF] text-[#1B2632]/50">déjà utilisé</span>
+                        <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded bg-[#EEE9DF] text-[#1B2632]/50">{t('exp.dejaUtilise')}</span>
                       )}
                     </button>
                   ))
@@ -1112,13 +1113,13 @@ export default function ExpeditionsPage() {
             <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[520px] pop-in flex flex-col max-h-[70vh]">
               <div className="px-5 py-4 border-b border-[#C9C1B1]/50">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-base font-bold text-[#1B2632]">Choisir un produit</h3>
+                  <h3 className="text-base font-bold text-[#1B2632]">{t('exp.choisirProduit')}</h3>
                   <button type="button" onClick={() => setSelecteurProduit(false)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">✕</button>
                 </div>
                 <input
                   autoFocus
                   className="ex-input"
-                  placeholder="Nom ou code..."
+                  placeholder={t('exp.nomCode')}
                   value={rechercheProduit}
                   onChange={(ev) => setRechercheProduit(ev.target.value)}
                 />
@@ -1127,7 +1128,7 @@ export default function ExpeditionsPage() {
               <div className="overflow-y-auto">
                 {catalogue.length === 0 ? (
                   <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">
-                    Aucun produit actif dans le catalogue. À créer dans le menu Produits.
+                    {t('exp.aucunProduitActif')}
                   </p>
                 ) : (
                   (() => {
@@ -1135,13 +1136,13 @@ export default function ExpeditionsPage() {
                     // Un responsable : les produits du vendeur choisi, et ceux sans
                     // vendeur (communs) — jamais ceux d'un autre vendeur (11/11).
                     if (!estSeller && !formulaire.vendeur_id) {
-                      return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">Choisissez d&apos;abord le vendeur de l&apos;expédition.</p>
+                      return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">{t('exp.choisirVendeurDabord')}</p>
                     }
                     const trouves = catalogue.filter((p) =>
                       (estSeller || !p.vendeur_id || p.vendeur_id === formulaire.vendeur_id)
                       && (!r || `${p.product || ''} ${p.code || ''}`.toLowerCase().includes(r)))
                     if (trouves.length === 0) {
-                      return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">Aucun produit ne correspond.</p>
+                      return <p className="px-5 py-8 text-sm text-center text-[#1B2632]/60">{t('exp.aucunProduit')}</p>
                     }
                     return trouves.map((p) => {
                       const deja = lignes.find((l) => l.produit_id === p.id)
@@ -1177,24 +1178,24 @@ export default function ExpeditionsPage() {
             <div className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[460px] p-6 pop-in">
               <h2 className="text-lg font-bold text-[#1B2632] mb-1">Refuser {refusEnCours.reference}</h2>
               <p className="text-sm text-[#1B2632]/60 mb-4">
-                Le motif reste attaché à l&apos;expédition : le vendeur saura quoi corriger.
+                {t('exp.motifAide')}
               </p>
               <textarea
                 value={motifRefus}
                 onChange={(ev) => setMotifRefus(ev.target.value)}
                 rows={3}
-                placeholder="Poids incohérent, transporteur manquant..."
+                placeholder={t('exp.motifExemple')}
                 className="ex-input resize-none"
               />
               <div className="flex justify-end gap-3 mt-5">
                 <button onClick={() => setRefusEnCours(null)} className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
-                  Annuler
+                  {t('exp.annuler')}
                 </button>
                 <button
                   onClick={() => changerStatut(refusEnCours, 'refusee', motifRefus.trim() || null)}
                   className="px-5 py-2.5 rounded-xl text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors"
                 >
-                  Refuser
+                  {t('exp.refuser')}
                 </button>
               </div>
             </div>
@@ -1209,7 +1210,7 @@ export default function ExpeditionsPage() {
             <form onSubmit={enregistrer} className="bg-white rounded-2xl border border-[#C9C1B1] shadow-2xl w-full max-w-[680px] my-8 pop-in">
               <div className="flex justify-between items-center px-6 py-5 border-b border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-t-2xl">
                 <h2 className="text-lg font-bold text-[#1B2632]">
-                  {idEnEdition ? "Modifier l'expédition" : 'Nouvelle expédition'}
+                  {idEnEdition ? t('exp.modifierTitre') : t('exp.nouvelle')}
                 </h2>
                 <button type="button" onClick={() => setModale(false)} className="w-8 h-8 rounded-lg text-[#1B2632]/40 hover:text-[#A35139] hover:bg-[#A35139]/10 transition-colors text-lg flex items-center justify-center">✕</button>
               </div>
@@ -1219,9 +1220,9 @@ export default function ExpeditionsPage() {
                 {/* items-start (19/11) : la carte de gauche ne s'étire plus à la
                     hauteur des trois cartes de droite. */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-                  <Bloc titre="Informations du colis">
+                  <Bloc titre={t('exp.infosColis')}>
                     <div>
-                      <label className="ex-label">Depuis (pays d&apos;achat) *</label>
+                      <label className="ex-label">{t('exp.depuis')}</label>
                       <button
                         type="button"
                         onClick={() => { setSelecteurPays(true); setRecherchePays('') }}
@@ -1233,14 +1234,14 @@ export default function ExpeditionsPage() {
                             <span>{formulaire.pays}</span>
                           </span>
                         ) : (
-                          <span className="text-[#1B2632]/40">Choisir un pays...</span>
+                          <span className="text-[#1B2632]/40">{t('exp.choisirPays')}</span>
                         )}
                         <span className="text-[#1B2632]/30 text-xs">▾</span>
                       </button>
                     </div>
 
                     <div>
-                      <label className="ex-label">Poids *</label>
+                      <label className="ex-label">{t('exp.poidsObl')}</label>
                       <div className="flex items-center gap-2">
                         <input type="number" step="0.01" className="ex-input" required
                           value={formulaire.poids_kg}
@@ -1249,13 +1250,13 @@ export default function ExpeditionsPage() {
                       </div>
                     </div>
                     <div>
-                      <label className="ex-label">Date d&apos;expédition *</label>
+                      <label className="ex-label">{t('exp.dateExpObl')}</label>
                       <input type="datetime-local" className="ex-input" required
                         value={formulaire.date_expedition}
                         onChange={(ev) => setFormulaire({ ...formulaire, date_expedition: ev.target.value })} />
                     </div>
                     <div>
-                      <label className="ex-label">Mode de transport *</label>
+                      <label className="ex-label">{t('exp.modeObl')}</label>
                       <select className="ex-input" required value={formulaire.mode_transport}
                         onChange={(ev) => setFormulaire({ ...formulaire, mode_transport: ev.target.value })}>
                         {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -1265,14 +1266,14 @@ export default function ExpeditionsPage() {
 
                   <div className="flex flex-col gap-5">
                     {!estSeller && (
-                      <Bloc titre="Vendeur">
+                      <Bloc titre={t('exp.vendeur')}>
                         <div>
-                          <label className="ex-label">Vendeur *</label>
+                          <label className="ex-label">{t('exp.vendeurObl')}</label>
                           {(() => {
                             const recue = !!expeditions.find((x) => x.id === idEnEdition)?.entrepot_reception_id
                             return (
                               <select className="ex-input" required value={formulaire.vendeur_id} disabled={recue}
-                                title={recue ? 'Expédition reçue : son vendeur ne change plus.' : undefined}
+                                title={recue ? t('exp.recueVendeurFige') : undefined}
                                 onChange={(ev) => {
                                   const v = ev.target.value
                                   setFormulaire({ ...formulaire, vendeur_id: v })
@@ -1282,7 +1283,7 @@ export default function ExpeditionsPage() {
                                     return !p || !p.vendeur_id || p.vendeur_id === v
                                   }))
                                 }}>
-                                <option value="">Choisir...</option>
+                                <option value="">{t('exp.choisir')}</option>
                                 {vendeurs.filter((x) => String(x.role || '').toLowerCase() === 'seller').map((x) => (
                                   <option key={x.user_id} value={x.user_id}>{x.nom || x.email}</option>
                                 ))}
@@ -1294,28 +1295,28 @@ export default function ExpeditionsPage() {
                     )}
                     <Bloc titre={estSeller ? 'Destination' : 'Entrepôt'}>
                       <div>
-                        <label className="ex-label">{estSeller ? 'Vers (pays) *' : 'Vers (entrepôt) *'}</label>
+                        <label className="ex-label">{estSeller ? t('exp.versPays') : t('exp.versEntrepot')}</label>
                         {estSeller ? (
                           <select className="ex-input" required value={formulaire.pays_destination_id}
                             onChange={(ev) => setFormulaire({ ...formulaire, pays_destination_id: ev.target.value })}>
-                            <option value="">Choisir...</option>
+                            <option value="">{t('exp.choisir')}</option>
                             {paysLivrables.map((p) => <option key={p.pays_id} value={p.pays_id}>{p.nom}</option>)}
                           </select>
                         ) : (
                           <select className="ex-input" required value={formulaire.entrepot_destination_id}
                             onChange={(ev) => setFormulaire({ ...formulaire, entrepot_destination_id: ev.target.value })}>
-                            <option value="">Choisir...</option>
+                            <option value="">{t('exp.choisir')}</option>
                             {entrepots.map((en) => <option key={en.id} value={en.id}>{en.nom}{en.pays?.nom ? ` — ${en.pays.nom}` : ''}</option>)}
                           </select>
                         )}
                         {!estSeller && entrepots.length === 0 && (
                           <p className="text-[11px] text-[#A35139] mt-1">
-                            Aucun entrepôt. À créer dans Paramètres → Entrepôts.
+                            {t('exp.aucunEntrepot')}
                           </p>
                         )}
                         {estSeller && paysLivrables.length === 0 && (
                           <p className="text-[11px] text-[#A35139] mt-1">
-                            Aucun pays de destination. Prévenez un responsable.
+                            {t('exp.aucunDestination')}
                           </p>
                         )}
                       </div>
@@ -1326,15 +1327,15 @@ export default function ExpeditionsPage() {
                           la confirmation et laissait le stock à zéro. */}
                     </Bloc>
 
-                    <Bloc titre="Transporteur">
+                    <Bloc titre={t('exp.transporteur')}>
                       <div>
-                        <label className="ex-label">Nom du transporteur *</label>
+                        <label className="ex-label">{t('exp.nomTransporteur')}</label>
                         <input className="ex-input" required placeholder="DHL, Maersk..."
                           value={formulaire.transporteur}
                           onChange={(ev) => setFormulaire({ ...formulaire, transporteur: ev.target.value })} />
                       </div>
                       <div>
-                        <label className="ex-label">Téléphone du transporteur *</label>
+                        <label className="ex-label">{t('exp.telTransporteur')}</label>
                         <input className="ex-input" required placeholder="+212 ..."
                           value={formulaire.transporteur_telephone}
                           onChange={(ev) => setFormulaire({ ...formulaire, transporteur_telephone: ev.target.value })} />
@@ -1343,24 +1344,24 @@ export default function ExpeditionsPage() {
                   </div>
                 </div>
 
-                <Bloc titre="Produits" action={
+                <Bloc titre={t('exp.produits')} action={
                   <button type="button" onClick={() => setSelecteurProduit(true)}
                     className="px-4 py-2 rounded-lg text-xs font-bold bg-[#A35139] text-white hover:bg-[#8a422d] transition-colors whitespace-nowrap">
-                    Choisir un produit
+                    {t('exp.choisirProduit')}
                   </button>
                 }>
                   {lignes.length === 0 ? (
                     <p className="text-sm text-[#1B2632]/50 py-3">
-                      Aucun produit. Une expédition sans contenu dit qu&apos;un colis arrive, sans dire ce qu&apos;il y a dedans.
+                      {t('exp.sansContenu')}
                     </p>
                   ) : (
                     <div className="border border-[#C9C1B1] rounded-xl overflow-hidden">
                       <table className="w-full text-left text-sm">
                         <thead>
                           <tr className="bg-[#F4F0E6] text-[11px] uppercase tracking-wider text-[#1B2632]/60 font-semibold">
-                            <th className="px-4 py-2.5 w-[60px]">Image</th>
-                            <th className="px-4 py-2.5">Produit</th>
-                            <th className="px-4 py-2.5 w-[130px]">Quantité</th>
+                            <th className="px-4 py-2.5 w-[60px]">{t('exp.image')}</th>
+                            <th className="px-4 py-2.5">{t('exp.produit')}</th>
+                            <th className="px-4 py-2.5 w-[130px]">{t('exp.quantite')}</th>
                             <th className="px-4 py-2.5 w-[60px] text-right"></th>
                           </tr>
                         </thead>
@@ -1372,7 +1373,7 @@ export default function ExpeditionsPage() {
                               <td className="px-4 py-2.5 font-medium text-[#1B2632]">
                                 {nomProduit(l)}
                                 <div className="text-[11px] font-semibold text-[#A35139] mt-0.5">
-                                  {l.sansMouvement ? 'produit supprimé — aucun mouvement de stock' : 'produit supprimé'}
+                                  {l.sansMouvement ? t('exp.produitSupprimeSans') : t('exp.produitSupprime')}
                                 </div>
                               </td>
                               <td className="px-4 py-2.5 font-mono text-[#1B2632]/70">{l.quantite}</td>
@@ -1396,7 +1397,7 @@ export default function ExpeditionsPage() {
                                 />
                               </td>
                               <td className="px-4 py-2 text-right">
-                                <button type="button" title="Retirer"
+                                <button type="button" title={t('exp.retirer')}
                                   onClick={() => setLignes((prec) => prec.filter((x) => x.supprime || x.produit_id !== l.produit_id))}
                                   className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-[#1B2632]/40 hover:text-red-600 hover:bg-red-50 transition-colors">
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
@@ -1411,26 +1412,26 @@ export default function ExpeditionsPage() {
                 </Bloc>
 
                 <div>
-                  <label className="ex-label">Détails</label>
+                  <label className="ex-label">{t('exp.details')}</label>
                   <textarea rows={2} className="ex-input resize-none"
-                    placeholder="Nombre de colis, numéro de conteneur..."
+                    placeholder={t('exp.detailsAide')}
                     value={formulaire.details}
                     onChange={(ev) => setFormulaire({ ...formulaire, details: ev.target.value })} />
                 </div>
 
                 {!peutConfirmer && (
                   <p className="text-xs text-[#1B2632]/60 bg-[#FFB162]/10 border border-[#FFB162]/40 rounded-xl px-4 py-2.5">
-                    Cette expédition sera enregistrée <strong>en attente</strong> de confirmation.
+                    {t('exp.enAttenteForm')}
                   </p>
                 )}
               </div>
 
               <div className="flex justify-end gap-3 px-6 py-4 border-t border-[#C9C1B1]/50 bg-[#EEE9DF]/20 rounded-b-2xl">
                 <button type="button" onClick={() => setModale(false)} className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-white text-[#1B2632] border border-[#C9C1B1] hover:bg-[#EEE9DF]/50 transition-colors">
-                  Annuler
+                  {t('exp.annuler')}
                 </button>
                 <button type="submit" disabled={enregistrement} className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#1B2632] text-white hover:bg-[#2C3B4D] transition-colors disabled:opacity-50">
-                  {enregistrement ? 'Enregistrement...' : idEnEdition ? 'Enregistrer' : "Déclarer l'expédition"}
+                  {enregistrement ? 'Enregistrement...' : idEnEdition ? 'Enregistrer' : t('exp.declarerTitre')}
                 </button>
               </div>
             </form>
